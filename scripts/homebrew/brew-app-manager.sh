@@ -546,7 +546,20 @@ render_separator() {
     printf "%s" "$(repeat_char "-" "$separator_width")"
 }
 
+clear_screen() {
+    if command_exists clear; then
+        clear
+    else
+        printf "\033c"
+    fi
+}
+
 print_section_title() {
+    print_blank_line
+    print_title_box "$1"
+}
+
+print_title_box() {
     local title="$1"
     local terminal_width=0
     local inner_width=0
@@ -566,10 +579,16 @@ print_section_title() {
     border="+$(repeat_char "=" "$((terminal_width - 2))")+"
     printf -v title_line "| %-*s |" "$inner_width" "$title"
 
-    print_blank_line
     print_message "$(paint_text "2" "$border")"
     print_message "$(paint_text "1;36" "$title_line")"
     print_message "$(paint_text "2" "$border")"
+}
+
+print_page_title() {
+    local title="$1"
+
+    clear_screen
+    print_title_box "$title"
 }
 
 print_output_boundary() {
@@ -1092,7 +1111,7 @@ prompt_for_multi_selection() {
     PROMPT_MULTI_SELECT_RESULT=""
 
     while true; do
-        print_section_title "$title"
+        print_page_title "$title"
         print_multi_select_hint
         render_numbered_list "selection" "${items[@]+"${items[@]}"}"
         print_blank_line
@@ -1106,6 +1125,7 @@ prompt_for_multi_selection() {
         case "$parsed_choice" in
             invalid)
                 print_status_message "warn" "输入无效，请输入 all、空格分隔序号或 b。"
+                pause_before_return
                 ;;
             *)
                 PROMPT_MULTI_SELECT_RESULT="$parsed_choice"
@@ -1480,7 +1500,7 @@ print_installation_summary() {
         esac
     done
 
-    print_section_title "安装项目总结"
+    print_page_title "安装项目总结"
     print_message "计划安装数量：$total"
     print_message "新安装数量：$installed_count"
     print_message "已满足数量：$already_installed_count"
@@ -1517,7 +1537,7 @@ run_install_flow() {
     local total="${#INSTALLABLE_CASKS[@]}"
     local executor_status=0
 
-    print_section_title "安装项目"
+    print_page_title "安装项目"
     print_message "将按内置清单安装以下 Homebrew cask 项目："
     print_compact_value_list "待安装项目：" "${INSTALLABLE_CASKS[@]+"${INSTALLABLE_CASKS[@]}"}"
     print_message "计划安装数量：$total"
@@ -1702,13 +1722,14 @@ collect_formula_managed_paths() {
 
 print_formula_plan() {
     local formula="${1:-$FORMULA_PLAN_TARGET}"
+    local title="${2:-Formula 卸载扫描结果}"
     local managed_paths=()
     local managed_paths_status=0
 
     read_command_output_into_array managed_paths collect_formula_managed_paths "$formula"
     managed_paths_status="$?"
 
-    print_section_title "Formula 卸载扫描结果"
+    print_page_title "$title"
     print_message "目标：$formula"
     print_compact_value_list "直接依赖：" "${FORMULA_PLAN_DEPENDENCIES[@]+"${FORMULA_PLAN_DEPENDENCIES[@]}"}"
     print_compact_value_list "可一并移除的孤儿依赖：" "${FORMULA_PLAN_ORPHANS[@]+"${FORMULA_PLAN_ORPHANS[@]}"}"
@@ -1741,7 +1762,7 @@ run_formula_uninstall_flow() {
     fi
 
     if [ "$main_uninstall_succeeded" != "1" ]; then
-        print_section_title "Formula 卸载总结"
+        print_page_title "Formula 卸载总结"
         print_message "已移除：${removed[*]:-<none>}"
         print_message "已跳过：${skipped[*]:-<none>}"
         print_message "主 formula 卸载失败，未继续移除孤儿依赖，也未执行 brew autoremove。"
@@ -1760,7 +1781,7 @@ run_formula_uninstall_flow() {
 
     brew autoremove >/dev/null 2>&1 || true
 
-    print_section_title "Formula 卸载总结"
+    print_page_title "Formula 卸载总结"
     print_message "已移除：${removed[*]:-<none>}"
     print_message "已跳过：${skipped[*]:-<none>}"
 
@@ -1783,20 +1804,21 @@ run_formula_uninstall_batch() {
         [ -n "$formula" ] || continue
         index=$((index + 1))
 
-        print_section_title "Formula 批量卸载 $index/$total"
         if ! brew list --formula "$formula" >/dev/null 2>&1; then
+            print_page_title "Formula 卸载扫描结果 $index/$total"
             print_status_message "skip" "formula 未安装，跳过：$formula"
             skipped_targets+=("$formula")
             continue
         fi
 
         if ! load_formula_uninstall_plan "$formula"; then
+            print_page_title "Formula 卸载扫描结果 $index/$total"
             print_status_message "err" "未能生成 formula 卸载计划，已跳过：$formula"
             print_message "请检查 brew deps / brew uses 是否能正常返回该项目的依赖关系。"
             skipped_targets+=("$formula")
             continue
         fi
-        print_formula_plan "$formula"
+        print_formula_plan "$formula" "Formula 卸载扫描结果 $index/$total"
 
         if ! prompt_yes_no "是否继续卸载这个 formula，并按上面扫描结果移除可清理的孤儿依赖？" "n"; then
             print_status_message "skip" "已跳过当前 formula：$formula"
@@ -1811,7 +1833,7 @@ run_formula_uninstall_batch() {
         fi
     done
 
-    print_section_title "Formula 批量卸载总结"
+    print_page_title "Formula 批量卸载总结"
     print_message "选择目标数量：$total"
     print_message "成功卸载目标数量：${#removed_targets[@]}"
     print_message "跳过或失败目标数量：${#skipped_targets[@]}"
@@ -2451,7 +2473,7 @@ run_cask_uninstall_flow() {
     fi
 
     if [ "$uninstall_status" = "failed" ]; then
-        print_section_title "Cask 卸载总结"
+        print_page_title "Cask 卸载总结"
         print_message "目标：$cask"
         print_message "应用名：${app_name:-<unknown>}"
         print_message "Homebrew 卸载状态：$uninstall_status"
@@ -2480,7 +2502,7 @@ run_cask_uninstall_flow() {
     permission_skipped=("${DELETE_REPORT_PERMISSION_SKIPPED[@]+"${DELETE_REPORT_PERMISSION_SKIPPED[@]}"}")
     skipped=("${DELETE_REPORT_FAILED[@]+"${DELETE_REPORT_FAILED[@]}"}")
 
-    print_section_title "Cask 卸载总结"
+    print_page_title "Cask 卸载总结"
     print_message "目标：$cask"
     print_message "应用名：${app_name:-<unknown>}"
     print_message "Homebrew 卸载状态：$uninstall_status"
@@ -2538,10 +2560,12 @@ run_formula_selection_menu() {
     while true; do
         if ! read_command_output_into_array formulas load_formula_inventory; then
             print_command_query_failure "已安装 formula 列表" "brew list --formula"
+            pause_before_return
             return 0
         fi
         if [ "${#formulas[@]}" -eq 0 ]; then
             print_message "当前没有已安装的 formula 项目。"
+            pause_before_return
             return 0
         fi
 
@@ -2552,7 +2576,7 @@ run_formula_selection_menu() {
         fi
 
         populate_array_from_selection selected_formulas "$parsed_choice" "${formulas[@]+"${formulas[@]}"}"
-        print_section_title "Formula 批量卸载确认"
+        print_page_title "Formula 批量卸载确认"
         print_compact_value_list "已选择的 formula：" "${selected_formulas[@]+"${selected_formulas[@]}"}"
 
         if prompt_yes_no "是否继续卸载这些 formula，并按当前依赖关系逐个处理？" "n"; then
@@ -2584,6 +2608,7 @@ run_cask_uninstall_batch() {
     local receipt_paths=()
     local receipt_path=""
     local metadata_status=0
+    local scan_title=""
 
     removed_targets=()
     skipped_targets=()
@@ -2605,8 +2630,10 @@ run_cask_uninstall_batch() {
         metadata_mode="full"
         receipt_paths=()
         receipt_path=""
+        scan_title="Cask 卸载扫描结果 $index/$total"
 
-        print_section_title "Cask 批量卸载 $index/$total"
+        print_page_title "$scan_title"
+
         if metadata_json="$(fetch_cask_metadata_json "$cask")"; then
             if load_cask_metadata_from_json "$metadata_json"; then
                 app_name="$CASK_METADATA_APP_NAME"
@@ -2654,7 +2681,6 @@ run_cask_uninstall_batch() {
         candidate_count="$(extract_key_value "$candidate_summary" "count")"
         candidate_total_kib="$(extract_key_value "$candidate_summary" "total_kib")"
 
-        print_section_title "Cask 卸载扫描结果"
         print_message "目标：$cask"
         print_message "应用名：${app_name:-<unknown>}"
         print_message "Bundle Identifier：${bundle_id:-<unknown>}"
@@ -2679,7 +2705,7 @@ run_cask_uninstall_batch() {
         [ -n "$metadata_json" ] && rm -f "$metadata_json"
     done
 
-    print_section_title "Cask 批量卸载总结"
+    print_page_title "Cask 批量卸载总结"
     print_message "选择目标数量：$total"
     print_message "成功卸载目标数量：${#removed_targets[@]}"
     print_message "跳过或失败目标数量：${#skipped_targets[@]}"
@@ -2695,10 +2721,12 @@ run_cask_selection_menu() {
     while true; do
         if ! read_command_output_into_array casks load_cask_inventory; then
             print_command_query_failure "已安装 cask 列表" "brew list --cask"
+            pause_before_return
             return 0
         fi
         if [ "${#casks[@]}" -eq 0 ]; then
             print_message "当前没有已安装的 cask 项目。"
+            pause_before_return
             return 0
         fi
 
@@ -2709,7 +2737,7 @@ run_cask_selection_menu() {
         fi
 
         populate_array_from_selection selected_casks "$parsed_choice" "${casks[@]+"${casks[@]}"}"
-        print_section_title "Cask 批量卸载确认"
+        print_page_title "Cask 批量卸载确认"
         print_compact_value_list "已选择的 cask：" "${selected_casks[@]+"${selected_casks[@]}"}"
 
         if prompt_yes_no "是否继续卸载这些 cask，并删除各自扫描到的全部候选项？" "n"; then
@@ -2731,7 +2759,7 @@ run_uninstall_menu() {
     fi
 
     while true; do
-        print_section_title "卸载项目"
+        print_page_title "卸载项目"
         printf "%s\n" "$(render_uninstall_menu)"
         printf "请输入序号（b 返回）: "
         if ! read -r choice; then
@@ -2752,6 +2780,7 @@ run_uninstall_menu() {
                 ;;
             *)
                 print_status_message "warn" "输入无效，请输入 1、2 或 b。"
+                pause_before_return
                 ;;
         esac
     done
@@ -2766,7 +2795,7 @@ run_update_menu() {
     fi
 
     while true; do
-        print_section_title "更新与升级"
+        print_page_title "更新与升级"
         printf "%s\n" "$(render_update_menu)"
         printf "请输入序号（b 返回）: "
         if ! read -r choice; then
@@ -2787,13 +2816,14 @@ run_update_menu() {
                 ;;
             *)
                 print_status_message "warn" "输入无效，请输入 1、2 或 b。"
+                pause_before_return
                 ;;
         esac
     done
 }
 
 run_install_xcode_command_line_tools_flow() {
-    print_section_title "安装 Xcode Command Line Tools"
+    print_page_title "安装 Xcode Command Line Tools"
 
     if is_xcode_command_line_tools_installed; then
         print_status_message "ok" "已检测到 Xcode Command Line Tools。"
@@ -2838,7 +2868,7 @@ run_install_homebrew_flow() {
     local shell_name=""
     local shellenv_config_status=1
 
-    print_section_title "安装 Homebrew"
+    print_page_title "安装 Homebrew"
 
     if is_homebrew_installed; then
         if initialize_homebrew_shellenv; then
@@ -2892,7 +2922,7 @@ run_install_homebrew_flow() {
     print_output_boundary "Homebrew 官方安装脚本执行结束"
     rm -f "$install_script_path"
 
-    print_section_title "安装 Homebrew 总结"
+    print_page_title "安装 Homebrew 总结"
     if [ "$install_status" = "success" ] && ensure_homebrew_available; then
         version_line="$(brew --version | head -n 1 2>/dev/null || true)"
         shell_name="$(current_login_shell_name)"
@@ -2945,7 +2975,7 @@ run_environment_menu() {
     local action=""
 
     while true; do
-        print_section_title "环境与依赖"
+        print_page_title "环境与依赖"
         printf "%s\n" "$(render_environment_menu)"
         printf "请输入序号（b 返回）: "
         if ! read -r choice; then
@@ -2971,6 +3001,7 @@ run_environment_menu() {
                 ;;
             *)
                 print_status_message "warn" "输入无效，请输入 1、2、3 或 b。"
+                pause_before_return
                 ;;
         esac
     done
@@ -3189,7 +3220,7 @@ run_tap_add_flow() {
     local tap_name=""
     local add_status="failed"
 
-    print_section_title "添加 Tap"
+    print_page_title "添加 Tap"
     printf "请输入要添加的 tap 名称（例如 owner/repo，b 返回）: "
     if ! read -r tap_name; then
         return 0
@@ -3211,7 +3242,7 @@ run_tap_add_flow() {
     fi
     print_output_boundary "brew tap 执行结束"
 
-    print_section_title "Tap 添加总结"
+    print_page_title "Tap 添加总结"
     print_message "目标 Tap：$tap_name"
     print_message "执行状态：$add_status"
 }
@@ -3236,7 +3267,7 @@ run_tap_remove_flow() {
     fi
 
     while true; do
-        print_section_title "选择要删除的 Tap"
+        print_page_title "选择要删除的 Tap"
         print_numbered_entries "tap" "${taps[@]+"${taps[@]}"}"
         print_blank_line
         printf "请输入序号（b 返回）: "
@@ -3251,6 +3282,7 @@ run_tap_remove_flow() {
                 ;;
             invalid)
                 print_status_message "warn" "输入无效，请输入正确的序号或 b。"
+                pause_before_return
                 ;;
             *)
                 tap_name="${taps[$((parsed_choice - 1))]}"
@@ -3267,7 +3299,7 @@ run_tap_remove_flow() {
         fi
         build_tap_association_display_items associated_items "${associated_refs[@]+"${associated_refs[@]}"}"
 
-        print_section_title "Tap 删除扫描结果"
+        print_page_title "Tap 删除扫描结果"
         print_message "目标 Tap：$tap_name"
         if [ "${#associated_refs[@]}" -eq 0 ]; then
             print_message "当前未发现该 tap 下仍安装的项目。"
@@ -3310,7 +3342,7 @@ run_tap_remove_flow() {
     fi
     print_output_boundary "brew untap 执行结束"
 
-    print_section_title "Tap 删除总结"
+    print_page_title "Tap 删除总结"
     print_message "目标 Tap：$tap_name"
     print_message "执行状态：$untap_status"
 }
@@ -3327,10 +3359,11 @@ run_tap_management_flow() {
     while true; do
         if ! read_command_output_into_array taps load_tap_inventory; then
             print_command_query_failure "Tap 列表" "brew tap"
+            pause_before_return
             return 0
         fi
 
-        print_section_title "Tap 管理"
+        print_page_title "Tap 管理"
         print_message "当前 Tap 列表："
         if [ "${#taps[@]}" -eq 0 ]; then
             print_message "<none>"
@@ -3359,6 +3392,7 @@ run_tap_management_flow() {
                 ;;
             *)
                 print_status_message "warn" "输入无效，请输入 1、2 或 b。"
+                pause_before_return
                 ;;
         esac
     done
@@ -3371,7 +3405,7 @@ run_update_homebrew_flow() {
         return 0
     fi
 
-    print_section_title "更新 Homebrew"
+    print_page_title "更新 Homebrew"
     print_message "将执行：brew update"
 
     if ! prompt_yes_no "是否继续更新 Homebrew？" "n"; then
@@ -3385,7 +3419,7 @@ run_update_homebrew_flow() {
     fi
     print_output_boundary "brew update 执行结束"
 
-    print_section_title "更新 Homebrew 总结"
+    print_page_title "更新 Homebrew 总结"
     if [ "$update_status" = "success" ]; then
         print_status_message "ok" "Homebrew 更新完成。"
     else
@@ -3584,7 +3618,7 @@ run_cleanup_flow() {
 
     homebrew_prefix="$(brew --prefix 2>/dev/null || true)"
 
-    print_section_title "清理 Homebrew 环境"
+    print_page_title "清理 Homebrew 环境"
     print_message "清理计划："
     printf "%s\n" "$(render_cleanup_plan)"
     print_message "附加本地清理："
@@ -3638,7 +3672,7 @@ run_cleanup_flow() {
     reclaimed_kib="$(calculate_reclaimed_kib "$before_cleanup_kib" "$after_cleanup_kib")"
     local_measurement_note="统计范围仅覆盖本地缓存、日志与临时目录候选路径；Homebrew cleanup/autoremove 在其他位置释放的空间未计入下方统计。"
 
-    print_section_title "清理总结"
+    print_page_title "清理总结"
     print_message "纳入本地路径统计的清理前空间：$(format_kib_human_readable "$before_cleanup_kib")"
     print_message "纳入本地路径统计的清理后空间：$(format_kib_human_readable "$after_cleanup_kib")"
     print_message "本地路径统计释放空间：$(format_kib_human_readable "$reclaimed_kib")"
@@ -3684,7 +3718,7 @@ run_update_projects_flow() {
         selected_formulas=()
         selected_casks=()
 
-        print_section_title "更新已安装项目"
+        print_page_title "更新已安装项目"
         print_outdated_inventory_report
 
         if [ "${#UPDATABLE_ITEMS[@]}" -eq 0 ]; then
@@ -3710,6 +3744,7 @@ run_update_projects_flow() {
                 ;;
             invalid)
                 print_status_message "warn" "输入无效，请输入 all、空格分隔序号或 b。"
+                pause_before_return
                 continue
                 ;;
             all)
@@ -3765,7 +3800,7 @@ run_update_projects_flow() {
     fi
     print_output_boundary "Homebrew 升级执行结束"
 
-    print_section_title "更新项目总结"
+    print_page_title "更新项目总结"
     print_message "本次选择 formula 数量：${#selected_formulas[@]}"
     print_message "本次选择 cask 数量：${#selected_casks[@]}"
     print_message "Formula 升级状态：$upgrade_formula_status"
@@ -3787,7 +3822,7 @@ main() {
     initialize_homebrew_shellenv || true
 
     while true; do
-        print_section_title "Homebrew 管理"
+        print_page_title "Homebrew 管理"
         printf "%s\n" "$(render_main_menu)"
         printf "请输入序号（q 退出）: "
         if ! read -r choice; then
@@ -3821,6 +3856,7 @@ main() {
                 ;;
             back)
                 print_status_message "warn" "输入无效，请输入 1、2、3、4、5 或 q。"
+                pause_before_return
                 ;;
         esac
     done

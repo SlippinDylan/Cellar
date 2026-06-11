@@ -1,0 +1,20 @@
+{
+  "casks": [
+    {
+      "token": "spotify",
+      "artifacts": [
+        { "app": ["Spotify.app"] },
+        {
+          "zap": [
+            {
+              "trash": [
+                "~/Library/Application Support/Spotify",
+                "~/Library/Caches/com.spotify.client"
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

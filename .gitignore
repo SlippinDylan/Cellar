@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors and shell temp files
+*.log
+*.out
+*.swp
+*.swo
+*~
+.env
+.env.*
+
+# Local scratch and caches
+.cache/
+tmp/
+
+# Xcode and macOS app build artifacts
+DerivedData/
+build/
+.build/
+.swiftpm/
+*.app
+*.dSYM/
+*.xcarchive
+
+# Xcode user-specific files
+xcuserdata/
+*.xcuserdatad/
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint

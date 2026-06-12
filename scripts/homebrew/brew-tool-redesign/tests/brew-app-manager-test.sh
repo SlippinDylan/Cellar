@@ -205,6 +205,27 @@ test_load_cask_app_name_from_receipt_uses_structured_parser() {
     rm -f "$receipt_path"
 }
 
+test_load_cask_receipt_artifacts_parses_structured_artifact_types() {
+    local receipt_path=""
+
+    receipt_path="$(mktemp "/tmp/brew-app-manager-receipt.XXXXXX")"
+    printf '%s\n' \
+        '{"uninstall_artifacts":[{"app":["Wireshark.app"],"binary":["/Applications/Wireshark.app/Contents/MacOS/tshark"],"manpage":["share/man/man1/tshark.1"],"uninstall":[{"pkgutil":"org.wireshark.ChmodBPF.pkg","launchctl":"org.wireshark.ChmodBPF","early_script":{"executable":"/usr/local/bin/wireshark-uninstall"}}]}]}' \
+        >"$receipt_path"
+
+    load_cask_receipt_artifacts "$receipt_path"
+
+    assert_equal "apps=Wireshark.app
+binaries=/Applications/Wireshark.app/Contents/MacOS/tshark
+manpages=share/man/man1/tshark.1
+pkgutil=org.wireshark.ChmodBPF.pkg
+launchctl=org.wireshark.ChmodBPF
+early_scripts=/usr/local/bin/wireshark-uninstall" "$(serialize_cask_receipt_artifact_state)" "receipt parser should recover structured cask artifact types from INSTALL_RECEIPT.json"
+
+    rm -f "$receipt_path"
+    source "$script_dir/brew-app-manager.sh"
+}
+
 test_extract_tap_from_install_receipt_uses_structured_parser() {
     local receipt_path=""
 
@@ -214,6 +235,75 @@ test_extract_tap_from_install_receipt_uses_structured_parser() {
     assert_equal "farion1231/ccswitch" "$(extract_tap_from_install_receipt "$receipt_path")" "tap extraction should read the structured receipt field instead of relying on line-oriented regex parsing"
 
     rm -f "$receipt_path"
+}
+
+test_build_cask_homebrew_managed_artifact_labels_includes_structured_artifacts() {
+    CASK_RECEIPT_APP_ARTIFACTS=("Wireshark.app")
+    CASK_RECEIPT_BINARY_ARTIFACTS=("/Applications/Wireshark.app/Contents/MacOS/tshark")
+    CASK_RECEIPT_MANPAGE_ARTIFACTS=("share/man/man1/tshark.1")
+    CASK_RECEIPT_LAUNCHCTL_ARTIFACTS=("org.wireshark.ChmodBPF")
+    CASK_RECEIPT_PKGUTIL_ARTIFACTS=("org.wireshark.ChmodBPF.pkg")
+    CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS=("/usr/local/bin/wireshark-uninstall")
+
+    assert_equal "app: /Applications/Wireshark.app
+binary: /opt/homebrew/bin/tshark
+manpage: /opt/homebrew/share/man/man1/tshark.1
+launchctl: org.wireshark.ChmodBPF
+pkgutil: org.wireshark.ChmodBPF.pkg
+uninstall-script: /usr/local/bin/wireshark-uninstall" "$(build_cask_homebrew_managed_artifact_labels "/opt/homebrew" "/Applications/Wireshark.app" "Wireshark")" "managed artifact list should include structured Homebrew-owned cask artifacts"
+
+    source "$script_dir/brew-app-manager.sh"
+}
+
+test_collect_cask_post_uninstall_artifact_state_reports_residual_and_manual_artifacts() {
+    local temp_root=""
+    local temp_manpage=""
+
+    CASK_RECEIPT_BINARY_ARTIFACTS=("/Applications/Wireshark.app/Contents/MacOS/tshark")
+    CASK_RECEIPT_MANPAGE_ARTIFACTS=("share/man/man1/tshark.1")
+    CASK_RECEIPT_LAUNCHCTL_ARTIFACTS=("org.wireshark.ChmodBPF")
+    CASK_RECEIPT_PKGUTIL_ARTIFACTS=("org.wireshark.ChmodBPF.pkg")
+    CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS=("/usr/local/bin/wireshark-uninstall")
+
+    temp_root="$(mktemp -d "/tmp/brew-app-manager-manpage.XXXXXX")"
+    temp_manpage="$temp_root/tshark.1"
+    : >"$temp_manpage"
+
+    symlink_points_to_exact_path() {
+        [ "$1" = "/opt/homebrew/bin/tshark" ]
+    }
+
+    derive_cask_manpage_link_path() {
+        printf "%s" "$temp_manpage"
+    }
+
+    find_launchctl_plist_paths_for_label() {
+        if [ "$1" = "org.wireshark.ChmodBPF" ]; then
+            printf "/Library/LaunchDaemons/org.wireshark.ChmodBPF.plist\n"
+        fi
+    }
+
+    launchctl_label_exists() {
+        return 1
+    }
+
+    pkgutil_receipts_matching_pattern() {
+        if [ "$1" = "org.wireshark.ChmodBPF.pkg" ]; then
+            printf "org.wireshark.ChmodBPF.pkg\n"
+        fi
+    }
+
+    collect_cask_post_uninstall_artifact_state "/opt/homebrew" "/tmp/BrewAppManagerWireshark.app"
+
+    assert_equal "/opt/homebrew/bin/tshark" "$(printf "%s\n" "${CASK_POSTCHECK_RESIDUAL_DELETE_PATHS[@]}")" "post-uninstall artifact check should only auto-delete residual links that still point to the cask payload"
+    assert_equal "manpage: $temp_manpage
+launchctl: org.wireshark.ChmodBPF
+launchctl-plist: /Library/LaunchDaemons/org.wireshark.ChmodBPF.plist
+pkgutil: org.wireshark.ChmodBPF.pkg" "$(printf "%s\n" "${CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS[@]}")" "post-uninstall artifact check should surface manual-follow-up items for non-trivial cask artifacts"
+    assert_equal "uninstall-script: /usr/local/bin/wireshark-uninstall" "$(printf "%s\n" "${CASK_POSTCHECK_DELEGATED_ITEMS[@]}")" "post-uninstall artifact check should remember uninstall scripts as Homebrew-delegated work"
+
+    rm -rf "$temp_root"
+    source "$script_dir/brew-app-manager.sh"
 }
 
 test_build_tap_association_display_items() {
@@ -557,6 +647,28 @@ test_print_candidate_list_with_no_items() {
 " "$output" "empty candidate lists should print only the title and <none>"
 }
 
+test_print_candidate_list_supports_custom_size_label() {
+    local output=""
+
+    print_blank_line() {
+        true
+    }
+
+    print_message() {
+        output="${output}${1}\n"
+    }
+
+    collect_disk_usage_summary() {
+        printf "count=1\ntotal_kib=84\nunreadable=0"
+    }
+
+    print_candidate_list "脚本补充清理候选项" "脚本补充清理预计释放空间" "/tmp/example"
+
+    printf "%b" "$output" | grep -F "脚本补充清理预计释放空间：84 KiB" >/dev/null
+
+    source "$script_dir/brew-app-manager.sh"
+}
+
 test_create_temp_cask_metadata_file() {
     mktemp() {
         printf "%s" "$1"
@@ -605,6 +717,42 @@ test_require_homebrew_for_feature_fails_when_shellenv_initialization_fails() {
     }
 
     assert_equal "1" "$(require_homebrew_for_feature "feature-test" >/dev/null; printf "%s" "$?")" "feature gate should fail closed when Homebrew shellenv cannot be initialized"
+}
+
+test_initialize_homebrew_shellenv_accepts_empty_shellenv_when_brew_is_already_available() {
+    local status=0
+
+    resolve_homebrew_binary_path() {
+        printf "/opt/homebrew/bin/brew"
+    }
+
+    env() {
+        if [ "$1" = "SHELL=/bin/bash" ] && [ "$2" = "/opt/homebrew/bin/brew" ] && [ "$3" = "shellenv" ]; then
+            if [ -z "${BREW_APP_MANAGER_TEST_SHELLENV_SEEN:-}" ]; then
+                BREW_APP_MANAGER_TEST_SHELLENV_SEEN=1
+                printf "export PATH=\"/opt/homebrew/bin:/usr/bin:/bin\";\n"
+            fi
+            return 0
+        fi
+
+        command env "$@"
+    }
+
+    if initialize_homebrew_shellenv >/dev/null; then
+        status=0
+    else
+        status="$?"
+    fi
+    assert_equal "0" "$status" "shellenv initialization should succeed when Homebrew returns export statements"
+
+    if initialize_homebrew_shellenv >/dev/null; then
+        status=0
+    else
+        status="$?"
+    fi
+    assert_equal "0" "$status" "shellenv initialization should also succeed when Homebrew returns an empty shellenv after PATH is already initialized"
+
+    source "$script_dir/brew-app-manager.sh"
 }
 
 test_persist_homebrew_shellenv_to_zprofile_is_idempotent() {
@@ -1340,12 +1488,11 @@ test_run_cask_uninstall_flow_order() {
         true
     }
 
-    run_cask_uninstall_flow "spotify" "Spotify" "2048" "2" "/Applications/Spotify.app" "$HOME/Library/Caches/com.spotify.client"
+    run_cask_uninstall_flow "spotify" "Spotify" "/tmp/BrewAppManagerSpotify.app" "2048" "1" "$HOME/Library/Caches/com.spotify.client"
 
     assert_equal "service-stop:spotify
 brew-uninstall:spotify
 delete-prompt:检测到权限问题，是否使用 sudo 删除这些 cask 残留路径？
-delete:/Applications/Spotify.app
 delete:$HOME/Library/Caches/com.spotify.client" "$(printf "%s\n" "${call_log[@]}")" "cask uninstall should run brew uninstall before deleting residue paths"
 
     source "$script_dir/brew-app-manager.sh"
@@ -1379,7 +1526,7 @@ test_run_cask_uninstall_flow_skips_residue_deletion_when_homebrew_uninstall_fail
         true
     }
 
-    run_cask_uninstall_flow "spotify" "Spotify" "2048" "2" "/Applications/Spotify.app" "$HOME/Library/Caches/com.spotify.client" || true
+    run_cask_uninstall_flow "spotify" "Spotify" "/tmp/BrewAppManagerSpotify.app" "2048" "1" "$HOME/Library/Caches/com.spotify.client" || true
 
     assert_equal "0" "$deletion_called" "cask residue deletion should not run after Homebrew uninstall fails"
 
@@ -1420,13 +1567,67 @@ test_run_cask_uninstall_flow_with_no_candidates() {
         true
     }
 
-    run_cask_uninstall_flow "spotify" "Spotify" "0" "0"
+    run_cask_uninstall_flow "spotify" "Spotify" "" "0" "0"
 
     assert_equal "1" "$deletion_called" "cask uninstall should still run the deletion helper even when no residue paths are found"
     printf "%b" "$output" | grep -F "普通删除成功路径数：0" >/dev/null
     printf "%b" "$output" | grep -F "提权删除成功路径数：0" >/dev/null
     printf "%b" "$output" | grep -F "因权限跳过路径数：0" >/dev/null
     printf "%b" "$output" | grep -F "其他失败路径数：0" >/dev/null
+
+    source "$script_dir/brew-app-manager.sh"
+}
+
+test_run_cask_uninstall_flow_reports_cleared_artifacts_and_deleted_paths() {
+    local output=""
+
+    brew() {
+        if [ "$1" = "services" ] && [ "$2" = "stop" ]; then
+            return 0
+        fi
+
+        if [ "$1" = "uninstall" ] && [ "$2" = "--zap" ]; then
+            return 0
+        fi
+
+        if [ "$1" = "--prefix" ]; then
+            printf "/tmp/homebrew"
+            return 0
+        fi
+
+        return 1
+    }
+
+    collect_cask_post_uninstall_artifact_state() {
+        CASK_POSTCHECK_RESIDUAL_DELETE_PATHS=()
+        CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS=()
+        CASK_POSTCHECK_CLEARED_ITEMS=("app: /Applications/Test App.app" "binary: /opt/homebrew/bin/test-cli")
+        CASK_POSTCHECK_DELEGATED_ITEMS=()
+    }
+
+    delete_paths_with_optional_elevation() {
+        DELETE_REPORT_DELETED=("$HOME/Library/Caches/com.example.test")
+        DELETE_REPORT_ELEVATED=()
+        DELETE_REPORT_PERMISSION_SKIPPED=()
+        DELETE_REPORT_FAILED=()
+        return 0
+    }
+
+    print_message() {
+        output="${output}$1\n"
+    }
+
+    print_blank_line() {
+        true
+    }
+
+    run_cask_uninstall_flow "test-cask" "Test App" "/Applications/Test App.app" "1024" "1" "$HOME/Library/Caches/com.example.test"
+
+    printf "%b" "$output" | grep -F "已由 Homebrew 清除的 managed artifact：" >/dev/null
+    printf "%b" "$output" | grep -F "app: /Applications/Test App.app" >/dev/null
+    printf "%b" "$output" | grep -F "binary: /opt/homebrew/bin/test-cli" >/dev/null
+    printf "%b" "$output" | grep -F "普通删除路径：" >/dev/null
+    printf "%b" "$output" | grep -F "$HOME/Library/Caches/com.example.test" >/dev/null
 
     source "$script_dir/brew-app-manager.sh"
 }
@@ -1556,6 +1757,291 @@ test_run_cask_uninstall_batch_respects_per_item_confirmation() {
     assert_equal "0" "$uninstall_called" "batch cask uninstall should skip execution when per-item confirmation is declined"
 
     rm -f "$metadata_json"
+    source "$script_dir/brew-app-manager.sh"
+}
+
+test_run_cask_uninstall_batch_filters_homebrew_managed_paths_from_local_candidates() {
+    local uninstall_log=""
+    local fixture_receipt_path=""
+
+    fixture_receipt_path="$(mktemp "/tmp/brew-app-manager-receipt.XXXXXX")"
+    printf '{"uninstall_artifacts":[{"app":["Test App.app"],"binary":["/Applications/Test App.app/Contents/MacOS/test-cli"]}]}\n' >"$fixture_receipt_path"
+
+    fetch_cask_metadata_json() {
+        return 1
+    }
+
+    brew() {
+        if [ "$1" = "--prefix" ]; then
+            printf "/opt/homebrew"
+            return 0
+        fi
+        return 1
+    }
+
+    find_cask_install_receipts() {
+        printf "%s\n" "$fixture_receipt_path"
+    }
+
+    load_cask_receipt_artifacts() {
+        CASK_RECEIPT_APP_ARTIFACTS=("Test App.app")
+        CASK_RECEIPT_BINARY_ARTIFACTS=("/Applications/Test App.app/Contents/MacOS/test-cli")
+        CASK_RECEIPT_MANPAGE_ARTIFACTS=()
+        CASK_RECEIPT_PKGUTIL_ARTIFACTS=()
+        CASK_RECEIPT_LAUNCHCTL_ARTIFACTS=()
+        CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS=()
+        return 0
+    }
+
+    collect_cask_cleanup_candidates() {
+        printf "/Applications/Test App.app\n"
+        printf "/opt/homebrew/bin/test-cli\n"
+        printf "%s/Library/Caches/com.example.test\n" "$HOME"
+    }
+
+    load_cask_app_name_from_receipt() {
+        printf "Test App"
+    }
+
+    find_app_bundle_path() {
+        printf "/Applications/Test App.app"
+    }
+
+    get_bundle_identifier_for_app_path() {
+        printf "com.example.test"
+    }
+
+    collect_disk_usage_summary() {
+        printf "count=1\ntotal_kib=512\nunreadable=0"
+    }
+
+    prompt_yes_no() {
+        return 0
+    }
+
+    run_cask_uninstall_flow() {
+        uninstall_log="$(printf "%s\n" "$@")"
+        return 0
+    }
+
+    print_blank_line() {
+        true
+    }
+
+    print_message() {
+        true
+    }
+
+    print_section_title() {
+        true
+    }
+
+    print_status_message() {
+        true
+    }
+
+    print_candidate_list() {
+        true
+    }
+
+    print_cask_managed_artifact_list() {
+        true
+    }
+
+    run_cask_uninstall_batch "test-cask"
+
+    assert_equal "test-cask
+Test App
+/Applications/Test App.app
+512
+1
+$HOME/Library/Caches/com.example.test" "$uninstall_log" "batch cask uninstall should not pass Homebrew-managed artifact paths into the supplemental deletion list"
+
+    rm -f "$fixture_receipt_path"
+    source "$script_dir/brew-app-manager.sh"
+}
+
+test_run_cask_uninstall_batch_reports_total_release_estimate_separately_from_supplemental_candidates() {
+    local output=""
+    local fixture_receipt_path=""
+
+    fixture_receipt_path="$(mktemp "/tmp/brew-app-manager-receipt.XXXXXX")"
+    printf '{"uninstall_artifacts":[{"app":["Test App.app"],"binary":["/Applications/Test App.app/Contents/MacOS/test-cli"]}]}\n' >"$fixture_receipt_path"
+
+    fetch_cask_metadata_json() {
+        return 1
+    }
+
+    brew() {
+        if [ "$1" = "--prefix" ]; then
+            printf "/opt/homebrew"
+            return 0
+        fi
+        return 1
+    }
+
+    find_cask_install_receipts() {
+        printf "%s\n" "$fixture_receipt_path"
+    }
+
+    load_cask_receipt_artifacts() {
+        CASK_RECEIPT_APP_ARTIFACTS=("Test App.app")
+        CASK_RECEIPT_BINARY_ARTIFACTS=("/Applications/Test App.app/Contents/MacOS/test-cli")
+        CASK_RECEIPT_MANPAGE_ARTIFACTS=()
+        CASK_RECEIPT_PKGUTIL_ARTIFACTS=()
+        CASK_RECEIPT_LAUNCHCTL_ARTIFACTS=()
+        CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS=()
+        return 0
+    }
+
+    collect_cask_cleanup_candidates() {
+        printf "/Applications/Test App.app\n"
+        printf "/opt/homebrew/bin/test-cli\n"
+        printf "%s/Library/Caches/com.example.test\n" "$HOME"
+    }
+
+    load_cask_app_name_from_receipt() {
+        printf "Test App"
+    }
+
+    find_app_bundle_path() {
+        printf "/Applications/Test App.app"
+    }
+
+    get_bundle_identifier_for_app_path() {
+        printf "com.example.test"
+    }
+
+    collect_disk_usage_summary() {
+        if [ "$#" -eq 2 ] && [ "$1" = "/Applications/Test App.app" ] && [ "$2" = "$HOME/Library/Caches/com.example.test" ]; then
+            printf "count=2\ntotal_kib=524288\nunreadable=0"
+            return 0
+        fi
+
+        if [ "$#" -eq 1 ] && [ "$1" = "$HOME/Library/Caches/com.example.test" ]; then
+            printf "count=1\ntotal_kib=84\nunreadable=0"
+            return 0
+        fi
+
+        printf "count=%s\ntotal_kib=0\nunreadable=0" "$#"
+    }
+
+    prompt_yes_no() {
+        return 1
+    }
+
+    print_page_title() {
+        true
+    }
+
+    print_blank_line() {
+        true
+    }
+
+    print_status_message() {
+        true
+    }
+
+    output="$(run_cask_uninstall_batch "test-cask")"
+
+    printf "%s\n" "$output" | grep -Fq "本次卸载预计释放空间：512 MiB"
+    printf "%s\n" "$output" | grep -Fq "脚本补充清理候选项"
+    printf "%s\n" "$output" | grep -Fq "预计释放空间：84 KiB"
+
+    rm -f "$fixture_receipt_path"
+    source "$script_dir/brew-app-manager.sh"
+}
+
+test_run_cask_uninstall_batch_summary_reports_deleted_paths_and_cleared_artifacts() {
+    local output=""
+
+    fetch_cask_metadata_json() {
+        return 1
+    }
+
+    find_cask_install_receipts() {
+        true
+    }
+
+    find_app_bundle_path() {
+        printf "/Applications/Test App.app"
+    }
+
+    get_bundle_identifier_for_app_path() {
+        printf "com.example.test"
+    }
+
+    load_cask_app_name_from_receipt() {
+        printf "Test App"
+    }
+
+    read_command_output_into_array() {
+        local array_name="$1"
+        shift
+
+        case "$1" in
+            find_cask_install_receipts|collect_cask_cleanup_candidates)
+                reset_named_array "$array_name"
+                return 0
+                ;;
+            *)
+                reset_named_array "$array_name"
+                return 0
+                ;;
+        esac
+    }
+
+    collect_disk_usage_summary() {
+        printf "count=0\ntotal_kib=0\nunreadable=0"
+    }
+
+    prompt_yes_no() {
+        return 0
+    }
+
+    run_cask_uninstall_flow() {
+        CASK_UNINSTALL_LAST_CLEARED_ARTIFACTS=("app: /Applications/Test App.app" "binary: /opt/homebrew/bin/test-cli")
+        CASK_UNINSTALL_LAST_DELETED_PATHS=("$HOME/Library/Caches/com.example.test")
+        CASK_UNINSTALL_LAST_ELEVATED_DELETED_PATHS=()
+        CASK_UNINSTALL_LAST_PERMISSION_SKIPPED_PATHS=()
+        CASK_UNINSTALL_LAST_FAILED_PATHS=()
+        CASK_UNINSTALL_LAST_MANUAL_ATTENTION_ITEMS=()
+        CASK_UNINSTALL_LAST_DELEGATED_ITEMS=()
+        return 0
+    }
+
+    print_blank_line() {
+        true
+    }
+
+    print_message() {
+        output="${output}$1\n"
+    }
+
+    print_section_title() {
+        true
+    }
+
+    print_status_message() {
+        true
+    }
+
+    print_candidate_list() {
+        true
+    }
+
+    print_cask_managed_artifact_list() {
+        true
+    }
+
+    run_cask_uninstall_batch "test-cask"
+
+    printf "%b" "$output" | grep -F "已由 Homebrew 清除的 managed artifact：" >/dev/null
+    printf "%b" "$output" | grep -F "[test-cask] app: /Applications/Test App.app" >/dev/null
+    printf "%b" "$output" | grep -F "[test-cask] binary: /opt/homebrew/bin/test-cli" >/dev/null
+    printf "%b" "$output" | grep -F "普通删除路径：" >/dev/null
+    printf "%b" "$output" | grep -F "[test-cask] $HOME/Library/Caches/com.example.test" >/dev/null
+
     source "$script_dir/brew-app-manager.sh"
 }
 
@@ -2554,7 +3040,10 @@ run_test_case test_build_typed_display_items
 run_test_case test_describe_tap_associated_cask_state
 run_test_case test_describe_tap_associated_cask_state_reports_scan_failure_when_receipt_discovery_fails
 run_test_case test_load_cask_app_name_from_receipt_uses_structured_parser
+run_test_case test_load_cask_receipt_artifacts_parses_structured_artifact_types
 run_test_case test_extract_tap_from_install_receipt_uses_structured_parser
+run_test_case test_build_cask_homebrew_managed_artifact_labels_includes_structured_artifacts
+run_test_case test_collect_cask_post_uninstall_artifact_state_reports_residual_and_manual_artifacts
 run_test_case test_build_tap_association_display_items
 run_test_case test_run_install_flow_prints_installable_catalog_before_confirmation
 run_test_case test_run_install_flow_aborts_when_log_directory_creation_fails
@@ -2573,9 +3062,11 @@ run_test_case test_get_terminal_width_prefers_live_terminal_measurement
 run_test_case test_get_terminal_width_falls_back_cleanly
 run_test_case test_collect_disk_usage_summary
 run_test_case test_print_candidate_list_with_no_items
+run_test_case test_print_candidate_list_supports_custom_size_label
 run_test_case test_create_temp_cask_metadata_file
 run_test_case test_fetch_cask_metadata_json_fails_cleanly_when_temp_file_creation_fails
 run_test_case test_require_homebrew_for_feature_fails_when_shellenv_initialization_fails
+run_test_case test_initialize_homebrew_shellenv_accepts_empty_shellenv_when_brew_is_already_available
 run_test_case test_persist_homebrew_shellenv_to_zprofile_is_idempotent
 run_test_case test_persist_homebrew_shellenv_to_zprofile_preserves_existing_line_without_trailing_newline
 run_test_case test_configure_homebrew_shellenv_persistence_skips_non_zsh_shells
@@ -2608,9 +3099,13 @@ run_test_case test_scan_cask_roots_for_terms_uses_app_name_fallback_when_bundle_
 run_test_case test_run_cask_uninstall_flow_order
 run_test_case test_run_cask_uninstall_flow_skips_residue_deletion_when_homebrew_uninstall_fails
 run_test_case test_run_cask_uninstall_flow_with_no_candidates
+run_test_case test_run_cask_uninstall_flow_reports_cleared_artifacts_and_deleted_paths
 run_test_case test_remove_path_without_elevation_aborts_when_temp_error_file_creation_fails
 run_test_case test_remove_path_with_elevation_aborts_when_temp_error_file_creation_fails
 run_test_case test_run_cask_uninstall_batch_respects_per_item_confirmation
+run_test_case test_run_cask_uninstall_batch_filters_homebrew_managed_paths_from_local_candidates
+run_test_case test_run_cask_uninstall_batch_reports_total_release_estimate_separately_from_supplemental_candidates
+run_test_case test_run_cask_uninstall_batch_summary_reports_deleted_paths_and_cleared_artifacts
 run_test_case test_run_cask_uninstall_batch_skips_target_when_candidate_scan_fails
 run_test_case test_run_cask_uninstall_batch_falls_back_when_metadata_unavailable
 run_test_case test_run_cask_uninstall_batch_resets_metadata_status_per_item

@@ -28,6 +28,23 @@ HOMEBREW_INSTALL_SCRIPT_URL="${HOMEBREW_INSTALL_SCRIPT_URL:-https://raw.githubus
 CASK_METADATA_TOKEN=""
 CASK_METADATA_APP_NAME=""
 CASK_METADATA_ZAP_PATHS=()
+CASK_RECEIPT_APP_ARTIFACTS=()
+CASK_RECEIPT_BINARY_ARTIFACTS=()
+CASK_RECEIPT_MANPAGE_ARTIFACTS=()
+CASK_RECEIPT_PKGUTIL_ARTIFACTS=()
+CASK_RECEIPT_LAUNCHCTL_ARTIFACTS=()
+CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS=()
+CASK_POSTCHECK_RESIDUAL_DELETE_PATHS=()
+CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS=()
+CASK_POSTCHECK_CLEARED_ITEMS=()
+CASK_POSTCHECK_DELEGATED_ITEMS=()
+CASK_UNINSTALL_LAST_CLEARED_ARTIFACTS=()
+CASK_UNINSTALL_LAST_DELETED_PATHS=()
+CASK_UNINSTALL_LAST_ELEVATED_DELETED_PATHS=()
+CASK_UNINSTALL_LAST_PERMISSION_SKIPPED_PATHS=()
+CASK_UNINSTALL_LAST_FAILED_PATHS=()
+CASK_UNINSTALL_LAST_MANUAL_ATTENTION_ITEMS=()
+CASK_UNINSTALL_LAST_DELEGATED_ITEMS=()
 INSTALLABLE_CASKS=(
     "1password"
     "airbuddy"
@@ -383,10 +400,12 @@ initialize_homebrew_shellenv() {
         return 1
     fi
 
-    shellenv_output="$("$brew_bin" shellenv 2>/dev/null)" || return 1
-    [ -n "$shellenv_output" ] || return 1
+    shellenv_output="$(env SHELL=/bin/bash "$brew_bin" shellenv 2>/dev/null)" || return 1
 
-    eval "$shellenv_output" || return 1
+    if [ -n "$shellenv_output" ]; then
+        eval "$shellenv_output" || return 1
+    fi
+
     command_exists brew || return 1
     return 0
 }
@@ -706,6 +725,23 @@ array_contains_exact() {
     done
 
     return 1
+}
+
+append_unique_to_array() {
+    local array_name="$1"
+    local value="$2"
+    local existing=()
+
+    if ! is_valid_shell_identifier "$array_name"; then
+        return 1
+    fi
+
+    eval "existing=(\"\${${array_name}[@]+\"\${${array_name}[@]}\"}\")"
+    if array_contains_exact "$value" "${existing[@]+"${existing[@]}"}"; then
+        return 0
+    fi
+
+    append_to_array "$array_name" "$value"
 }
 
 read_command_output_into_array() {
@@ -1183,9 +1219,37 @@ build_typed_display_items() {
 
 load_cask_app_name_from_receipt() {
     local receipt_path="$1"
+
+    if ! load_cask_receipt_artifacts "$receipt_path"; then
+        return 1
+    fi
+
+    if [ "${#CASK_RECEIPT_APP_ARTIFACTS[@]}" -eq 0 ]; then
+        return 1
+    fi
+
+    strip_app_bundle_suffix "${CASK_RECEIPT_APP_ARTIFACTS[0]}"
+    return 0
+}
+
+reset_cask_receipt_artifact_state() {
+    CASK_RECEIPT_APP_ARTIFACTS=()
+    CASK_RECEIPT_BINARY_ARTIFACTS=()
+    CASK_RECEIPT_MANPAGE_ARTIFACTS=()
+    CASK_RECEIPT_PKGUTIL_ARTIFACTS=()
+    CASK_RECEIPT_LAUNCHCTL_ARTIFACTS=()
+    CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS=()
+}
+
+load_cask_receipt_artifacts() {
+    local receipt_path="$1"
     local artifact_count="0"
     local artifact_index=0
-    local raw_app_name=""
+    local uninstall_count="0"
+    local uninstall_index=0
+    local value=""
+
+    reset_cask_receipt_artifact_state
 
     if [ ! -f "$receipt_path" ]; then
         return 1
@@ -1197,15 +1261,350 @@ load_cask_app_name_from_receipt() {
     fi
 
     while [ "$artifact_index" -lt "$artifact_count" ]; do
-        raw_app_name="$(plutil_extract_raw_value "$receipt_path" "uninstall_artifacts.$artifact_index.app.0" 2>/dev/null || true)"
-        if [ -n "$raw_app_name" ]; then
-            strip_app_bundle_suffix "$raw_app_name"
-            return 0
+        while IFS= read -r value; do
+            [ -n "$value" ] || continue
+            append_unique_to_array CASK_RECEIPT_APP_ARTIFACTS "$value"
+        done < <(plutil_extract_string_array_values "$receipt_path" "uninstall_artifacts.$artifact_index.app")
+
+        while IFS= read -r value; do
+            [ -n "$value" ] || continue
+            append_unique_to_array CASK_RECEIPT_BINARY_ARTIFACTS "$value"
+        done < <(plutil_extract_string_array_values "$receipt_path" "uninstall_artifacts.$artifact_index.binary")
+
+        while IFS= read -r value; do
+            [ -n "$value" ] || continue
+            append_unique_to_array CASK_RECEIPT_MANPAGE_ARTIFACTS "$value"
+        done < <(plutil_extract_string_array_values "$receipt_path" "uninstall_artifacts.$artifact_index.manpage")
+
+        uninstall_count="$(plutil_extract_array_count "$receipt_path" "uninstall_artifacts.$artifact_index.uninstall" 2>/dev/null || true)"
+        if is_nonnegative_integer "$uninstall_count"; then
+            uninstall_index=0
+            while [ "$uninstall_index" -lt "$uninstall_count" ]; do
+                value="$(plutil_extract_raw_value "$receipt_path" "uninstall_artifacts.$artifact_index.uninstall.$uninstall_index.pkgutil" 2>/dev/null || true)"
+                if [ -n "$value" ]; then
+                    append_unique_to_array CASK_RECEIPT_PKGUTIL_ARTIFACTS "$value"
+                fi
+
+                value="$(plutil_extract_raw_value "$receipt_path" "uninstall_artifacts.$artifact_index.uninstall.$uninstall_index.launchctl" 2>/dev/null || true)"
+                if [ -n "$value" ]; then
+                    append_unique_to_array CASK_RECEIPT_LAUNCHCTL_ARTIFACTS "$value"
+                fi
+
+                value="$(plutil_extract_raw_value "$receipt_path" "uninstall_artifacts.$artifact_index.uninstall.$uninstall_index.early_script.executable" 2>/dev/null || true)"
+                if [ -n "$value" ]; then
+                    append_unique_to_array CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS "$value"
+                fi
+
+                uninstall_index=$((uninstall_index + 1))
+            done
         fi
+
         artifact_index=$((artifact_index + 1))
     done
 
+    return 0
+}
+
+serialize_cask_receipt_artifact_state() {
+    printf "apps=%s\n" "$(printf "%s\n" "${CASK_RECEIPT_APP_ARTIFACTS[@]+"${CASK_RECEIPT_APP_ARTIFACTS[@]}"}" | join_lines)"
+    printf "binaries=%s\n" "$(printf "%s\n" "${CASK_RECEIPT_BINARY_ARTIFACTS[@]+"${CASK_RECEIPT_BINARY_ARTIFACTS[@]}"}" | join_lines)"
+    printf "manpages=%s\n" "$(printf "%s\n" "${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]+"${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]}"}" | join_lines)"
+    printf "pkgutil=%s\n" "$(printf "%s\n" "${CASK_RECEIPT_PKGUTIL_ARTIFACTS[@]+"${CASK_RECEIPT_PKGUTIL_ARTIFACTS[@]}"}" | join_lines)"
+    printf "launchctl=%s\n" "$(printf "%s\n" "${CASK_RECEIPT_LAUNCHCTL_ARTIFACTS[@]+"${CASK_RECEIPT_LAUNCHCTL_ARTIFACTS[@]}"}" | join_lines)"
+    printf "early_scripts=%s" "$(printf "%s\n" "${CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS[@]+"${CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS[@]}"}" | join_lines)"
+}
+
+reset_cask_postcheck_state() {
+    CASK_POSTCHECK_RESIDUAL_DELETE_PATHS=()
+    CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS=()
+    CASK_POSTCHECK_CLEARED_ITEMS=()
+    CASK_POSTCHECK_DELEGATED_ITEMS=()
+}
+
+reset_cask_uninstall_last_report_state() {
+    CASK_UNINSTALL_LAST_CLEARED_ARTIFACTS=()
+    CASK_UNINSTALL_LAST_DELETED_PATHS=()
+    CASK_UNINSTALL_LAST_ELEVATED_DELETED_PATHS=()
+    CASK_UNINSTALL_LAST_PERMISSION_SKIPPED_PATHS=()
+    CASK_UNINSTALL_LAST_FAILED_PATHS=()
+    CASK_UNINSTALL_LAST_MANUAL_ATTENTION_ITEMS=()
+    CASK_UNINSTALL_LAST_DELEGATED_ITEMS=()
+}
+
+append_prefixed_items_to_array() {
+    local array_name="$1"
+    local prefix="$2"
+    shift 2
+    local item=""
+
+    for item in "$@"; do
+        [ -n "$item" ] || continue
+        append_to_array "$array_name" "[$prefix] $item"
+    done
+}
+
+derive_cask_binary_link_path() {
+    local homebrew_prefix="$1"
+    local source_path="$2"
+    local binary_name=""
+
+    [ -n "$homebrew_prefix" ] || return 1
+    binary_name="$(basename "$source_path")"
+    [ -n "$binary_name" ] || return 1
+    printf "%s/bin/%s" "$homebrew_prefix" "$binary_name"
+}
+
+derive_cask_manpage_link_path() {
+    local homebrew_prefix="$1"
+    local source_path="$2"
+    local section_dir=""
+    local manpage_name=""
+
+    [ -n "$homebrew_prefix" ] || return 1
+    section_dir="$(basename "$(dirname "$source_path")")"
+    manpage_name="$(basename "$source_path")"
+    [ -n "$section_dir" ] || return 1
+    [ -n "$manpage_name" ] || return 1
+    printf "%s/share/man/%s/%s" "$homebrew_prefix" "$section_dir" "$manpage_name"
+}
+
+symlink_points_to_exact_path() {
+    local link_path="$1"
+    local expected_target="$2"
+    local actual_target=""
+
+    [ -L "$link_path" ] || return 1
+    actual_target="$(readlink "$link_path" 2>/dev/null || true)"
+    [ "$actual_target" = "$expected_target" ]
+}
+
+find_launchctl_plist_paths_for_label() {
+    local label="$1"
+    local candidate=""
+
+    for candidate in \
+        "/Library/LaunchDaemons/$label.plist" \
+        "/Library/LaunchAgents/$label.plist" \
+        "$HOME/Library/LaunchAgents/$label.plist"
+    do
+        if [ -e "$candidate" ] || [ -L "$candidate" ]; then
+            printf "%s\n" "$candidate"
+        fi
+    done
+}
+
+launchctl_label_exists() {
+    local label="$1"
+    local current_uid=""
+
+    if ! command_exists launchctl; then
+        return 1
+    fi
+
+    if launchctl print "system/$label" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    current_uid="$(id -u 2>/dev/null || true)"
+    if is_nonnegative_integer "$current_uid" && launchctl print "gui/$current_uid/$label" >/dev/null 2>&1; then
+        return 0
+    fi
+
     return 1
+}
+
+pkgutil_receipts_matching_pattern() {
+    local pattern="$1"
+    local receipt=""
+
+    if ! command_exists pkgutil; then
+        return 0
+    fi
+
+    while IFS= read -r receipt; do
+        [ -n "$receipt" ] || continue
+        case "$receipt" in
+            $pattern)
+                printf "%s\n" "$receipt"
+                ;;
+        esac
+    done < <(pkgutil --pkgs 2>/dev/null || true)
+}
+
+build_cask_managed_path_candidates() {
+    local homebrew_prefix="$1"
+    local app_path="$2"
+    local source_path=""
+    local derived_path=""
+
+    [ -n "$app_path" ] && printf "%s\n" "$app_path"
+
+    for source_path in "${CASK_RECEIPT_BINARY_ARTIFACTS[@]+"${CASK_RECEIPT_BINARY_ARTIFACTS[@]}"}"; do
+        derived_path="$(derive_cask_binary_link_path "$homebrew_prefix" "$source_path" 2>/dev/null || true)"
+        [ -n "$derived_path" ] && printf "%s\n" "$derived_path"
+    done
+
+    for source_path in "${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]+"${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]}"}"; do
+        derived_path="$(derive_cask_manpage_link_path "$homebrew_prefix" "$source_path" 2>/dev/null || true)"
+        [ -n "$derived_path" ] && printf "%s\n" "$derived_path"
+    done
+}
+
+build_cask_release_size_preview_paths() {
+    local homebrew_prefix="$1"
+    local cask="$2"
+    local app_path="$3"
+    shift 3
+    local local_cleanup_candidates=("$@")
+    local candidate=""
+    local caskroom_entry=""
+
+    {
+        if [ -n "$app_path" ] && { [ -e "$app_path" ] || [ -L "$app_path" ]; }; then
+            printf "%s\n" "$app_path"
+        fi
+
+        if [ -n "$homebrew_prefix" ]; then
+            caskroom_entry="$homebrew_prefix/Caskroom/$cask"
+            if [ -e "$caskroom_entry" ] || [ -L "$caskroom_entry" ]; then
+                printf "%s\n" "$caskroom_entry"
+            fi
+        fi
+
+        for candidate in "${local_cleanup_candidates[@]+"${local_cleanup_candidates[@]}"}"; do
+            [ -n "$candidate" ] || continue
+            printf "%s\n" "$candidate"
+        done
+    } | unique_lines | prune_nested_cask_candidates
+}
+
+exclude_exact_lines() {
+    local excludes=("$@")
+    local line=""
+
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        if array_contains_exact "$line" "${excludes[@]+"${excludes[@]}"}"; then
+            continue
+        fi
+        printf "%s\n" "$line"
+    done
+}
+
+build_cask_homebrew_managed_artifact_labels() {
+    local homebrew_prefix="$1"
+    local app_path="$2"
+    local app_name="$3"
+    local source_path=""
+    local derived_path=""
+    local label=""
+
+    if [ -n "$app_path" ]; then
+        printf "app: %s\n" "$app_path"
+    elif [ -n "$app_name" ]; then
+        printf "app: %s.app\n" "$app_name"
+    fi
+
+    for source_path in "${CASK_RECEIPT_BINARY_ARTIFACTS[@]+"${CASK_RECEIPT_BINARY_ARTIFACTS[@]}"}"; do
+        derived_path="$(derive_cask_binary_link_path "$homebrew_prefix" "$source_path" 2>/dev/null || true)"
+        if [ -n "$derived_path" ]; then
+            printf "binary: %s\n" "$derived_path"
+        fi
+    done
+
+    for source_path in "${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]+"${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]}"}"; do
+        derived_path="$(derive_cask_manpage_link_path "$homebrew_prefix" "$source_path" 2>/dev/null || true)"
+        if [ -n "$derived_path" ]; then
+            printf "manpage: %s\n" "$derived_path"
+        fi
+    done
+
+    for label in "${CASK_RECEIPT_LAUNCHCTL_ARTIFACTS[@]+"${CASK_RECEIPT_LAUNCHCTL_ARTIFACTS[@]}"}"; do
+        printf "launchctl: %s\n" "$label"
+    done
+
+    for label in "${CASK_RECEIPT_PKGUTIL_ARTIFACTS[@]+"${CASK_RECEIPT_PKGUTIL_ARTIFACTS[@]}"}"; do
+        printf "pkgutil: %s\n" "$label"
+    done
+
+    for label in "${CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS[@]+"${CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS[@]}"}"; do
+        printf "uninstall-script: %s\n" "$label"
+    done
+}
+
+collect_cask_post_uninstall_artifact_state() {
+    local homebrew_prefix="$1"
+    local app_path="$2"
+    local source_path=""
+    local derived_path=""
+    local label=""
+    local pkg_receipts=""
+    local plist_paths=""
+
+    reset_cask_postcheck_state
+
+    if [ -n "$app_path" ]; then
+        if [ -e "$app_path" ] || [ -L "$app_path" ]; then
+            append_unique_to_array CASK_POSTCHECK_RESIDUAL_DELETE_PATHS "$app_path"
+        else
+            append_unique_to_array CASK_POSTCHECK_CLEARED_ITEMS "app: $app_path"
+        fi
+    fi
+
+    for source_path in "${CASK_RECEIPT_BINARY_ARTIFACTS[@]+"${CASK_RECEIPT_BINARY_ARTIFACTS[@]}"}"; do
+        derived_path="$(derive_cask_binary_link_path "$homebrew_prefix" "$source_path" 2>/dev/null || true)"
+        [ -n "$derived_path" ] || continue
+        if symlink_points_to_exact_path "$derived_path" "$source_path"; then
+            append_unique_to_array CASK_POSTCHECK_RESIDUAL_DELETE_PATHS "$derived_path"
+        elif [ -e "$derived_path" ] || [ -L "$derived_path" ]; then
+            append_unique_to_array CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS "binary: $derived_path"
+        else
+            append_unique_to_array CASK_POSTCHECK_CLEARED_ITEMS "binary: $derived_path"
+        fi
+    done
+
+    for source_path in "${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]+"${CASK_RECEIPT_MANPAGE_ARTIFACTS[@]}"}"; do
+        derived_path="$(derive_cask_manpage_link_path "$homebrew_prefix" "$source_path" 2>/dev/null || true)"
+        [ -n "$derived_path" ] || continue
+        if symlink_points_to_exact_path "$derived_path" "$source_path"; then
+            append_unique_to_array CASK_POSTCHECK_RESIDUAL_DELETE_PATHS "$derived_path"
+        elif [ -e "$derived_path" ] || [ -L "$derived_path" ]; then
+            append_unique_to_array CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS "manpage: $derived_path"
+        else
+            append_unique_to_array CASK_POSTCHECK_CLEARED_ITEMS "manpage: $derived_path"
+        fi
+    done
+
+    for label in "${CASK_RECEIPT_LAUNCHCTL_ARTIFACTS[@]+"${CASK_RECEIPT_LAUNCHCTL_ARTIFACTS[@]}"}"; do
+        plist_paths="$(find_launchctl_plist_paths_for_label "$label" 2>/dev/null || true)"
+        if [ -n "$plist_paths" ]; then
+            append_unique_to_array CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS "launchctl: $label"
+            while IFS= read -r derived_path; do
+                [ -n "$derived_path" ] || continue
+                append_unique_to_array CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS "launchctl-plist: $derived_path"
+            done <<< "$plist_paths"
+        elif launchctl_label_exists "$label"; then
+            append_unique_to_array CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS "launchctl: $label"
+        else
+            append_unique_to_array CASK_POSTCHECK_CLEARED_ITEMS "launchctl: $label"
+        fi
+    done
+
+    for label in "${CASK_RECEIPT_PKGUTIL_ARTIFACTS[@]+"${CASK_RECEIPT_PKGUTIL_ARTIFACTS[@]}"}"; do
+        pkg_receipts="$(pkgutil_receipts_matching_pattern "$label" 2>/dev/null || true)"
+        if [ -n "$pkg_receipts" ]; then
+            while IFS= read -r derived_path; do
+                [ -n "$derived_path" ] || continue
+                append_unique_to_array CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS "pkgutil: $derived_path"
+            done <<< "$pkg_receipts"
+        else
+            append_unique_to_array CASK_POSTCHECK_CLEARED_ITEMS "pkgutil: $label"
+        fi
+    done
+
+    for label in "${CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS[@]+"${CASK_RECEIPT_EARLY_SCRIPT_ARTIFACTS[@]}"}"; do
+        append_unique_to_array CASK_POSTCHECK_DELEGATED_ITEMS "uninstall-script: $label"
+    done
 }
 
 caskroom_entry_exists() {
@@ -2394,6 +2793,19 @@ print_path_report_if_any() {
     printf "%s\n" "${items[@]+"${items[@]}"}"
 }
 
+print_item_report_if_any() {
+    local title="$1"
+    shift
+    local items=("$@")
+
+    if [ "${#items[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    print_message "$title"
+    printf "%s\n" "${items[@]+"${items[@]}"}"
+}
+
 delete_paths_with_optional_elevation() {
     local prompt_label="$1"
     shift
@@ -2449,9 +2861,10 @@ delete_paths_with_optional_elevation() {
 run_cask_uninstall_flow() {
     local cask="$1"
     local app_name="$2"
-    local scanned_total_kib="${3:-0}"
-    local scanned_count="${4:-0}"
-    local candidates=("${@:5}")
+    local app_path="$3"
+    local scanned_total_kib="${4:-0}"
+    local scanned_count="${5:-0}"
+    local candidates=("${@:6}")
     local candidate=""
     local removed=()
     local elevated_removed=()
@@ -2461,7 +2874,12 @@ run_cask_uninstall_flow() {
     local homebrew_prefix=""
     local caskroom_entry=""
     local deletion_targets=()
+    local postcheck_residual_paths=()
+    local postcheck_manual_items=()
+    local postcheck_cleared_items=()
+    local postcheck_delegated_items=()
 
+    reset_cask_uninstall_last_report_state
     brew services stop "$cask" >/dev/null 2>&1 || true
 
     if brew uninstall --zap "$cask"; then
@@ -2477,22 +2895,33 @@ run_cask_uninstall_flow() {
         print_message "目标：$cask"
         print_message "应用名：${app_name:-<unknown>}"
         print_message "Homebrew 卸载状态：$uninstall_status"
-        print_message "扫描候选项数量：$scanned_count"
-        print_message "本次扫描预计释放空间：$(format_kib_human_readable "$scanned_total_kib")"
+        print_message "脚本补充清理候选项数量：$scanned_count"
+        print_message "本次卸载预计释放空间：$(format_kib_human_readable "$scanned_total_kib")"
         print_message "Homebrew 卸载失败，未继续删除扫描到的残留路径。"
         return 1
     fi
 
+    homebrew_prefix="$(brew --prefix 2>/dev/null || true)"
+    collect_cask_post_uninstall_artifact_state "$homebrew_prefix" "$app_path"
+    postcheck_residual_paths=("${CASK_POSTCHECK_RESIDUAL_DELETE_PATHS[@]+"${CASK_POSTCHECK_RESIDUAL_DELETE_PATHS[@]}"}")
+    postcheck_manual_items=("${CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS[@]+"${CASK_POSTCHECK_MANUAL_ATTENTION_ITEMS[@]}"}")
+    postcheck_cleared_items=("${CASK_POSTCHECK_CLEARED_ITEMS[@]+"${CASK_POSTCHECK_CLEARED_ITEMS[@]}"}")
+    postcheck_delegated_items=("${CASK_POSTCHECK_DELEGATED_ITEMS[@]+"${CASK_POSTCHECK_DELEGATED_ITEMS[@]}"}")
+
     for candidate in "${candidates[@]+"${candidates[@]}"}"; do
         [ -n "$candidate" ] || continue
-        append_to_array deletion_targets "$candidate"
+        append_unique_to_array deletion_targets "$candidate"
     done
 
-    homebrew_prefix="$(brew --prefix 2>/dev/null || true)"
+    for candidate in "${postcheck_residual_paths[@]+"${postcheck_residual_paths[@]}"}"; do
+        [ -n "$candidate" ] || continue
+        append_unique_to_array deletion_targets "$candidate"
+    done
+
     if [ -n "$homebrew_prefix" ]; then
         caskroom_entry="$homebrew_prefix/Caskroom/$cask"
         if [ -e "$caskroom_entry" ]; then
-            append_to_array deletion_targets "$caskroom_entry"
+            append_unique_to_array deletion_targets "$caskroom_entry"
         fi
     fi
 
@@ -2506,15 +2935,30 @@ run_cask_uninstall_flow() {
     print_message "目标：$cask"
     print_message "应用名：${app_name:-<unknown>}"
     print_message "Homebrew 卸载状态：$uninstall_status"
-    print_message "扫描候选项数量：$scanned_count"
-    print_message "本次扫描预计释放空间：$(format_kib_human_readable "$scanned_total_kib")"
+    print_message "脚本补充清理候选项数量：$scanned_count"
+    print_message "本次卸载预计释放空间：$(format_kib_human_readable "$scanned_total_kib")"
+    print_message "Homebrew 管理 artifact 已验证清除数量：${#postcheck_cleared_items[@]}"
+    print_message "Homebrew 管理 artifact 仍需人工处理数量：${#postcheck_manual_items[@]}"
+    print_message "Homebrew 委托执行卸载脚本数量：${#postcheck_delegated_items[@]}"
     print_message "普通删除成功路径数：${#removed[@]}"
     print_message "提权删除成功路径数：${#elevated_removed[@]}"
     print_message "因权限跳过路径数：${#permission_skipped[@]}"
     print_message "其他失败路径数：${#skipped[@]}"
+    print_item_report_if_any "已由 Homebrew 清除的 managed artifact：" "${postcheck_cleared_items[@]+"${postcheck_cleared_items[@]}"}"
+    print_item_report_if_any "仍需人工处理的 Homebrew 管理 artifact：" "${postcheck_manual_items[@]+"${postcheck_manual_items[@]}"}"
+    print_item_report_if_any "已委托 Homebrew 执行的卸载脚本：" "${postcheck_delegated_items[@]+"${postcheck_delegated_items[@]}"}"
+    print_path_report_if_any "普通删除路径：" "${removed[@]+"${removed[@]}"}"
     print_path_report_if_any "提权删除路径：" "${elevated_removed[@]+"${elevated_removed[@]}"}"
     print_path_report_if_any "因权限跳过的路径：" "${permission_skipped[@]+"${permission_skipped[@]}"}"
     print_path_report_if_any "删除失败的路径：" "${skipped[@]+"${skipped[@]}"}"
+
+    CASK_UNINSTALL_LAST_CLEARED_ARTIFACTS=("${postcheck_cleared_items[@]+"${postcheck_cleared_items[@]}"}")
+    CASK_UNINSTALL_LAST_DELETED_PATHS=("${removed[@]+"${removed[@]}"}")
+    CASK_UNINSTALL_LAST_ELEVATED_DELETED_PATHS=("${elevated_removed[@]+"${elevated_removed[@]}"}")
+    CASK_UNINSTALL_LAST_PERMISSION_SKIPPED_PATHS=("${permission_skipped[@]+"${permission_skipped[@]}"}")
+    CASK_UNINSTALL_LAST_FAILED_PATHS=("${skipped[@]+"${skipped[@]}"}")
+    CASK_UNINSTALL_LAST_MANUAL_ATTENTION_ITEMS=("${postcheck_manual_items[@]+"${postcheck_manual_items[@]}"}")
+    CASK_UNINSTALL_LAST_DELEGATED_ITEMS=("${postcheck_delegated_items[@]+"${postcheck_delegated_items[@]}"}")
 
     if brew list --cask "$cask" >/dev/null 2>&1; then
         return 1
@@ -2525,7 +2969,12 @@ run_cask_uninstall_flow() {
 
 print_candidate_list() {
     local title="$1"
+    local size_label="预计释放空间"
     shift
+    if [ "$#" -gt 0 ]; then
+        size_label="$1"
+        shift
+    fi
     local items=("$@")
     local summary=""
     local count="0"
@@ -2544,11 +2993,27 @@ print_candidate_list() {
     total_kib="$(extract_key_value "$summary" "total_kib")"
     unreadable="$(extract_key_value "$summary" "unreadable")"
     print_message "候选项数量：$count"
-    print_message "预计释放空间：$(format_kib_human_readable "$total_kib")"
+    print_message "${size_label}：$(format_kib_human_readable "$total_kib")"
     if [ "${unreadable:-0}" -gt 0 ]; then
         print_message "有 $unreadable 个路径无法统计大小，未计入总空间。"
     fi
 
+    printf "%s\n" "${items[@]+"${items[@]}"}"
+}
+
+print_cask_managed_artifact_list() {
+    local title="$1"
+    shift
+    local items=("$@")
+
+    print_blank_line
+    print_message "$title"
+    if [ "${#items[@]}" -eq 0 ]; then
+        print_message "<none>"
+        return 0
+    fi
+
+    print_message "artifact 数量：${#items[@]}"
     printf "%s\n" "${items[@]+"${items[@]}"}"
 }
 
@@ -2601,7 +3066,9 @@ run_cask_uninstall_batch() {
     local candidates=()
     local candidate_summary=""
     local candidate_count="0"
-    local candidate_total_kib="0"
+    local total_preview_paths=()
+    local total_preview_summary=""
+    local total_preview_kib="0"
     local removed_targets=()
     local skipped_targets=()
     local metadata_mode="full"
@@ -2609,28 +3076,53 @@ run_cask_uninstall_batch() {
     local receipt_path=""
     local metadata_status=0
     local scan_title=""
+    local homebrew_prefix=""
+    local managed_artifact_labels=()
+    local managed_paths=()
+    local local_cleanup_candidates=()
+    local receipt_status=0
+    local structured_mode="full"
+    local candidate=""
+    local aggregated_cleared_artifacts=()
+    local aggregated_deleted_paths=()
+    local aggregated_elevated_deleted_paths=()
+    local aggregated_permission_skipped_paths=()
+    local aggregated_failed_paths=()
+    local aggregated_manual_attention_items=()
+    local aggregated_delegated_items=()
 
     removed_targets=()
     skipped_targets=()
     index=0
+    homebrew_prefix="$(brew --prefix 2>/dev/null || true)"
 
     for cask in "${casks[@]+"${casks[@]}"}"; do
         [ -n "$cask" ] || continue
         index=$((index + 1))
 
+        reset_cask_receipt_artifact_state
+        reset_cask_postcheck_state
+        reset_cask_uninstall_last_report_state
         metadata_json=""
         metadata_status=0
         app_name=""
         app_path=""
         bundle_id=""
         candidates=()
+        local_cleanup_candidates=()
         candidate_summary=""
         candidate_count="0"
-        candidate_total_kib="0"
+        total_preview_paths=()
+        total_preview_summary=""
+        total_preview_kib="0"
         metadata_mode="full"
         receipt_paths=()
         receipt_path=""
         scan_title="Cask 卸载扫描结果 $index/$total"
+        managed_artifact_labels=()
+        managed_paths=()
+        receipt_status=0
+        structured_mode="full"
 
         print_page_title "$scan_title"
 
@@ -2647,20 +3139,30 @@ run_cask_uninstall_batch() {
             metadata_mode="fallback"
         fi
 
+        if ! read_command_output_into_array receipt_paths find_cask_install_receipts "$cask"; then
+            receipt_status=1
+        fi
+        receipt_path="${receipt_paths[0]:-}"
+
+        if [ -n "$receipt_path" ] && ! load_cask_receipt_artifacts "$receipt_path"; then
+            receipt_status=2
+        elif [ -z "$receipt_path" ]; then
+            receipt_status=3
+        fi
+
         if [ "$metadata_mode" = "fallback" ]; then
             if [ "$metadata_status" -eq 2 ]; then
                 print_status_message "warn" "未能创建 cask 元数据临时文件，将降级为 Homebrew 卸载 + 本地残留探测。"
             else
                 print_status_message "warn" "未能加载完整 cask 元数据，将降级为 Homebrew 卸载 + 本地残留探测。"
             fi
-            if ! read_command_output_into_array receipt_paths find_cask_install_receipts "$cask"; then
+            if [ "$receipt_status" -eq 1 ]; then
                 print_status_message "err" "未能读取这个 cask 的安装记录，已跳过：$cask"
                 print_message "当前已进入降级模式，且 receipt 发现失败，无法可靠生成本地残留清理候选项。"
                 skipped_targets+=("$cask")
                 [ -n "$metadata_json" ] && rm -f "$metadata_json"
                 continue
             fi
-            receipt_path="${receipt_paths[0]:-}"
             if [ -n "$receipt_path" ]; then
                 app_name="$(load_cask_app_name_from_receipt "$receipt_path" 2>/dev/null || true)"
             else
@@ -2668,26 +3170,70 @@ run_cask_uninstall_batch() {
             fi
         fi
 
+        if [ -z "$app_name" ] && [ -n "$receipt_path" ] && [ "$receipt_status" -eq 0 ]; then
+            app_name="$(load_cask_app_name_from_receipt "$receipt_path" 2>/dev/null || true)"
+        fi
+
+        if [ "$receipt_status" -eq 1 ]; then
+            structured_mode="degraded"
+            print_status_message "warn" "未能读取这个 cask 的安装记录，Homebrew 管理 artifact 将无法完整校验。"
+        elif [ "$receipt_status" -eq 2 ]; then
+            structured_mode="degraded"
+            print_status_message "warn" "已找到这个 cask 的安装记录，但未能完整解析其中的 uninstall artifact。"
+        elif [ "$receipt_status" -eq 3 ]; then
+            structured_mode="degraded"
+            print_status_message "warn" "未找到这个 cask 的安装记录，Homebrew 管理 artifact 将无法完整校验。"
+        fi
+
         app_path="$(find_app_bundle_path "$app_name" 2>/dev/null || true)"
         bundle_id="$(get_bundle_identifier_for_app_path "$app_path" 2>/dev/null || true)"
-        if ! read_command_output_into_array candidates collect_cask_cleanup_candidates "$app_name" "$bundle_id" "$metadata_json"; then
+        if ! read_command_output_into_array local_cleanup_candidates collect_cask_cleanup_candidates "$app_name" "$bundle_id" "$metadata_json"; then
             print_status_message "err" "未能扫描这个 cask 的清理候选项，已跳过：$cask"
             print_message "请检查本地路径探测与 cask 元数据读取是否正常。"
             skipped_targets+=("$cask")
             [ -n "$metadata_json" ] && rm -f "$metadata_json"
             continue
         fi
+
+        if [ "$receipt_status" -eq 0 ]; then
+            read_command_output_into_array managed_paths build_cask_managed_path_candidates "$homebrew_prefix" "$app_path"
+            read_command_output_into_array managed_artifact_labels build_cask_homebrew_managed_artifact_labels "$homebrew_prefix" "$app_path" "$app_name"
+        else
+            reset_named_array managed_paths
+            reset_named_array managed_artifact_labels
+        fi
+
+        candidates=()
+        for candidate in "${local_cleanup_candidates[@]+"${local_cleanup_candidates[@]}"}"; do
+            [ -n "$candidate" ] || continue
+            if [ "${#managed_paths[@]}" -gt 0 ] && array_contains_exact "$candidate" "${managed_paths[@]+"${managed_paths[@]}"}"; then
+                continue
+            fi
+            append_unique_to_array candidates "$candidate"
+        done
+
+        if read_command_output_into_array total_preview_paths build_cask_release_size_preview_paths "$homebrew_prefix" "$cask" "$app_path" "${local_cleanup_candidates[@]+"${local_cleanup_candidates[@]}"}"; then
+            total_preview_summary="$(collect_disk_usage_summary "${total_preview_paths[@]+"${total_preview_paths[@]}"}")"
+            total_preview_kib="$(extract_key_value "$total_preview_summary" "total_kib")"
+        else
+            total_preview_kib="0"
+        fi
+
         candidate_summary="$(collect_disk_usage_summary "${candidates[@]+"${candidates[@]}"}")"
         candidate_count="$(extract_key_value "$candidate_summary" "count")"
-        candidate_total_kib="$(extract_key_value "$candidate_summary" "total_kib")"
 
         print_message "目标：$cask"
         print_message "应用名：${app_name:-<unknown>}"
         print_message "Bundle Identifier：${bundle_id:-<unknown>}"
+        print_message "本次卸载预计释放空间：$(format_kib_human_readable "$total_preview_kib")"
         if [ "$metadata_mode" = "fallback" ]; then
             print_message "元数据模式：降级模式（未使用 brew info 的完整 cask 元数据）"
         fi
-        print_candidate_list "待清理候选项" "${candidates[@]+"${candidates[@]}"}"
+        if [ "$structured_mode" = "degraded" ]; then
+            print_message "artifact 校验模式：降级模式（无法完整依赖 INSTALL_RECEIPT.json 校验 Homebrew 管理 artifact）"
+        fi
+        print_cask_managed_artifact_list "Homebrew 管理 artifact" "${managed_artifact_labels[@]+"${managed_artifact_labels[@]}"}"
+        print_candidate_list "脚本补充清理候选项" "脚本补充清理预计释放空间" "${candidates[@]+"${candidates[@]}"}"
 
         if ! prompt_yes_no "是否继续卸载这个 cask，并删除上面列出的候选项？" "n"; then
             print_status_message "skip" "已跳过当前 cask：$cask"
@@ -2696,11 +3242,18 @@ run_cask_uninstall_batch() {
             continue
         fi
 
-        if run_cask_uninstall_flow "$cask" "$app_name" "$candidate_total_kib" "$candidate_count" "${candidates[@]+"${candidates[@]}"}"; then
+        if run_cask_uninstall_flow "$cask" "$app_name" "$app_path" "$total_preview_kib" "$candidate_count" "${candidates[@]+"${candidates[@]}"}"; then
             removed_targets+=("$cask")
         else
             skipped_targets+=("$cask")
         fi
+        append_prefixed_items_to_array aggregated_cleared_artifacts "$cask" "${CASK_UNINSTALL_LAST_CLEARED_ARTIFACTS[@]+"${CASK_UNINSTALL_LAST_CLEARED_ARTIFACTS[@]}"}"
+        append_prefixed_items_to_array aggregated_deleted_paths "$cask" "${CASK_UNINSTALL_LAST_DELETED_PATHS[@]+"${CASK_UNINSTALL_LAST_DELETED_PATHS[@]}"}"
+        append_prefixed_items_to_array aggregated_elevated_deleted_paths "$cask" "${CASK_UNINSTALL_LAST_ELEVATED_DELETED_PATHS[@]+"${CASK_UNINSTALL_LAST_ELEVATED_DELETED_PATHS[@]}"}"
+        append_prefixed_items_to_array aggregated_permission_skipped_paths "$cask" "${CASK_UNINSTALL_LAST_PERMISSION_SKIPPED_PATHS[@]+"${CASK_UNINSTALL_LAST_PERMISSION_SKIPPED_PATHS[@]}"}"
+        append_prefixed_items_to_array aggregated_failed_paths "$cask" "${CASK_UNINSTALL_LAST_FAILED_PATHS[@]+"${CASK_UNINSTALL_LAST_FAILED_PATHS[@]}"}"
+        append_prefixed_items_to_array aggregated_manual_attention_items "$cask" "${CASK_UNINSTALL_LAST_MANUAL_ATTENTION_ITEMS[@]+"${CASK_UNINSTALL_LAST_MANUAL_ATTENTION_ITEMS[@]}"}"
+        append_prefixed_items_to_array aggregated_delegated_items "$cask" "${CASK_UNINSTALL_LAST_DELEGATED_ITEMS[@]+"${CASK_UNINSTALL_LAST_DELEGATED_ITEMS[@]}"}"
 
         [ -n "$metadata_json" ] && rm -f "$metadata_json"
     done
@@ -2711,6 +3264,13 @@ run_cask_uninstall_batch() {
     print_message "跳过或失败目标数量：${#skipped_targets[@]}"
     print_compact_value_list "已卸载目标：" "${removed_targets[@]+"${removed_targets[@]}"}"
     print_compact_value_list "未完成目标：" "${skipped_targets[@]+"${skipped_targets[@]}"}"
+    print_item_report_if_any "已由 Homebrew 清除的 managed artifact：" "${aggregated_cleared_artifacts[@]+"${aggregated_cleared_artifacts[@]}"}"
+    print_item_report_if_any "仍需人工处理的 Homebrew 管理 artifact：" "${aggregated_manual_attention_items[@]+"${aggregated_manual_attention_items[@]}"}"
+    print_item_report_if_any "已委托 Homebrew 执行的卸载脚本：" "${aggregated_delegated_items[@]+"${aggregated_delegated_items[@]}"}"
+    print_path_report_if_any "普通删除路径：" "${aggregated_deleted_paths[@]+"${aggregated_deleted_paths[@]}"}"
+    print_path_report_if_any "提权删除路径：" "${aggregated_elevated_deleted_paths[@]+"${aggregated_elevated_deleted_paths[@]}"}"
+    print_path_report_if_any "因权限跳过的路径：" "${aggregated_permission_skipped_paths[@]+"${aggregated_permission_skipped_paths[@]}"}"
+    print_path_report_if_any "删除失败的路径：" "${aggregated_failed_paths[@]+"${aggregated_failed_paths[@]}"}"
 }
 
 run_cask_selection_menu() {

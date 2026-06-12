@@ -5,15 +5,19 @@
 set -u
 set -o pipefail
 
-SCRIPT_NAME="$(basename "$0")"
-OMZ_INSTALL_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh"
+OMZ_INSTALL_URL="https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/70ad5e3df8f7bed68aa6672029496926e632aedd/tools/install.sh"
 OMZ_DIR="$HOME/.oh-my-zsh"
 ZSHRC_PATH="$HOME/.zshrc"
+ZSH_TIDY_DIR="$HOME/.zsh"
+ZSH_TIDY_BACKUP_DIR="$ZSH_TIDY_DIR/backups"
+ZSH_COMPDUMP_EXPORT_LINE='export ZSH_COMPDUMP="$HOME/.zsh/zcompdump"'
 CUSTOM_PLUGINS_DIR="${ZSH_CUSTOM:-$OMZ_DIR/custom}/plugins"
 MANAGED_PLUGINS_START="# >>> omz-manager plugins >>>"
 MANAGED_PLUGINS_END="# <<< omz-manager plugins <<<"
 MANAGED_THEME_START="# >>> omz-manager theme >>>"
 MANAGED_THEME_END="# <<< omz-manager theme <<<"
+MANAGED_COMPDUMP_START="# >>> omz-manager compdump >>>"
+MANAGED_COMPDUMP_END="# <<< omz-manager compdump <<<"
 
 DEFAULT_PLUGIN_SPECS=(
     "zsh-autosuggestions|https://github.com/zsh-users/zsh-autosuggestions"
@@ -26,6 +30,8 @@ THEME_OPTIONS=()
 INSTALLED_CUSTOM_PLUGINS=()
 PLUGIN_DISPLAY_LABELS=()
 ZSHRC_BACKED_UP=0
+LAST_ZSHRC_BACKUP_PATH=""
+PAUSE_NAVIGATION_STATE="continue"
 
 supports_color_output() {
     [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != "dumb" ]
@@ -108,6 +114,7 @@ append_to_array() {
     local value="$2"
     local escaped_value=""
 
+    # macOS ships Bash 3.2, so nameref (`local -n`) is unavailable here.
     if ! is_valid_shell_identifier "$array_name"; then
         return 1
     fi
@@ -145,10 +152,6 @@ command_exists() {
 get_terminal_width_from_stty() {
     local tty_size=""
     local tty_width=""
-
-    if ! tty -s; then
-        return 1
-    fi
 
     tty_size="$(stty size </dev/tty 2>/dev/null || true)"
     tty_width="$(printf "%s\n" "$tty_size" | awk 'NF >= 2 { print $2; exit }')"
@@ -438,19 +441,12 @@ repeat_char() {
 
 render_separator() {
     local terminal_width="${1:-0}"
-    local separator_width=0
 
     if ! is_positive_integer "$terminal_width"; then
         terminal_width="$(get_terminal_width)"
     fi
 
-    if is_positive_integer "$terminal_width"; then
-        separator_width="$terminal_width"
-    else
-        separator_width=80
-    fi
-
-    printf "%s" "$(repeat_char "-" "$separator_width")"
+    printf "%s" "$(repeat_char "-" "$terminal_width")"
 }
 
 print_line() {
@@ -469,15 +465,20 @@ print_header() {
 pause_with_back_option() {
     local answer=""
 
+    PAUSE_NAVIGATION_STATE="continue"
     print_blank_line
     printf "按 Enter 继续，或输入 b 返回上一级: "
     read -r answer || true
 
     if [ "$answer" = "b" ] || [ "$answer" = "B" ]; then
-        return 1
+        PAUSE_NAVIGATION_STATE="back"
     fi
 
     return 0
+}
+
+pause_requested_back() {
+    [ "${PAUSE_NAVIGATION_STATE:-continue}" = "back" ]
 }
 
 prompt_yes_no() {
@@ -529,6 +530,7 @@ backup_zshrc() {
     backup_path="$HOME/.zshrc.bak.$(date '+%Y%m%d%H%M%S').$$"
     cp "$ZSHRC_PATH" "$backup_path" || return 1
     ZSHRC_BACKED_UP=1
+    LAST_ZSHRC_BACKUP_PATH="$backup_path"
     print_status_message info "已备份 ~/.zshrc -> $backup_path"
 }
 
@@ -537,43 +539,55 @@ remove_managed_block() {
     local start_marker="$2"
     local end_marker="$3"
     local temp_file=""
+    local remove_status=0
 
     temp_file="$(mktemp "${TMPDIR:-/tmp}/omz-manager.zshrc.XXXXXX")" || return 1
     awk -v start="$start_marker" -v end="$end_marker" '
-        $0 == start { skip = 1; next }
-        $0 == end { skip = 0; next }
+        $0 == start {
+            if (skip == 1) {
+                error_code = 2
+                exit 2
+            }
+            skip = 1
+            next
+        }
+        $0 == end {
+            if (skip != 1) {
+                error_code = 3
+                exit 3
+            }
+            skip = 0
+            next
+        }
         skip != 1 { print }
-    ' "$file_path" >"$temp_file" || {
+        END {
+            if (error_code != 0) {
+                exit error_code
+            }
+            if (skip == 1) {
+                exit 4
+            }
+        }
+    ' "$file_path" >"$temp_file" || remove_status="$?"
+
+    if [ "$remove_status" -ne 0 ]; then
         rm -f "$temp_file"
+        case "$remove_status" in
+            2)
+                print_status_message err "检测到重复的 managed block 开始标记: $start_marker"
+                ;;
+            3)
+                print_status_message err "检测到孤立的 managed block 结束标记: $end_marker"
+                ;;
+            4)
+                print_status_message err "检测到损坏的 managed block，缺少结束标记: $end_marker"
+                ;;
+            *)
+                print_status_message err "移除 managed block 失败: $start_marker"
+                ;;
+        esac
         return 1
-    }
-
-    mv "$temp_file" "$file_path"
-}
-
-comment_active_config_lines() {
-    local file_path="$1"
-    local config_type="$2"
-    local temp_file=""
-    local pattern=""
-
-    case "$config_type" in
-        plugins) pattern='^[[:space:]]*plugins=\(' ;;
-        theme) pattern='^[[:space:]]*ZSH_THEME=' ;;
-        *)
-            return 1
-            ;;
-    esac
-
-    temp_file="$(mktemp "${TMPDIR:-/tmp}/omz-manager.zshrc.XXXXXX")" || return 1
-    awk -v pattern="$pattern" '
-        $0 ~ /^[[:space:]]*#/ { print; next }
-        $0 ~ pattern { print "# " $0; next }
-        { print }
-    ' "$file_path" >"$temp_file" || {
-        rm -f "$temp_file"
-        return 1
-    }
+    fi
 
     mv "$temp_file" "$file_path"
 }
@@ -593,7 +607,18 @@ write_managed_block() {
             start_marker="$MANAGED_THEME_START"
             end_marker="$MANAGED_THEME_END"
             ;;
+        compdump)
+            start_marker="$MANAGED_COMPDUMP_START"
+            end_marker="$MANAGED_COMPDUMP_END"
+            ;;
         *)
+            return 1
+            ;;
+    esac
+
+    case "$content_line" in
+        *$'\n'*)
+            print_status_message err "managed block 内容必须保持单行: $block_type"
             return 1
             ;;
     esac
@@ -601,25 +626,141 @@ write_managed_block() {
     ensure_zshrc_exists || return 1
     backup_zshrc || return 1
     remove_managed_block "$ZSHRC_PATH" "$start_marker" "$end_marker" || return 1
-    comment_active_config_lines "$ZSHRC_PATH" "$block_type" || return 1
-    printf "\n%s\n%s\n%s\n" "$start_marker" "$content_line" "$end_marker" >>"$ZSHRC_PATH" || return 1
+    trim_trailing_blank_lines "$ZSHRC_PATH" || return 1
+    if [ -s "$ZSHRC_PATH" ]; then
+        printf "\n" >>"$ZSHRC_PATH" || return 1
+    fi
+    printf "%s\n%s\n%s\n" "$start_marker" "$content_line" "$end_marker" >>"$ZSHRC_PATH" || return 1
 }
 
 reload_zshrc() {
-    print_status_message info "正在校验并加载 ~/.zshrc"
+    print_status_message info "正在校验 ~/.zshrc"
 
     if ! command_exists zsh; then
-        print_status_message warn "未检测到 zsh，无法自动校验 ~/.zshrc。请手动执行 source ~/.zshrc。"
+        print_status_message warn "未检测到 zsh，无法自动校验 ~/.zshrc。请手动执行 zsh -n ~/.zshrc。"
         return 1
     fi
 
-    if zsh -fc "source \"$ZSHRC_PATH\"" >/dev/null 2>&1; then
-        print_status_message ok "配置校验通过。当前终端如需立即生效，请手动执行: source ~/.zshrc"
+    if zsh -n "$ZSHRC_PATH" >/dev/null 2>&1; then
+        print_status_message ok "语法校验通过。当前终端如需立即生效，请手动执行: source ~/.zshrc"
         return 0
     fi
 
-    print_status_message warn "zsh 已尝试加载 ~/.zshrc，但出现告警。请手动执行 source ~/.zshrc 检查。"
+    print_status_message warn "zsh 语法校验未通过。请手动执行 zsh -n ~/.zshrc 检查。"
     return 1
+}
+
+trim_trailing_blank_lines() {
+    local file_path="$1"
+    local temp_file=""
+
+    temp_file="$(mktemp "${TMPDIR:-/tmp}/omz-manager.zshrc.XXXXXX")" || return 1
+    # This helper only targets small config files such as ~/.zshrc.
+    awk '
+        { lines[NR] = $0 }
+        END {
+            last = NR
+            while (last > 0 && lines[last] == "") {
+                last--
+            }
+            for (i = 1; i <= last; i++) {
+                print lines[i]
+            }
+        }
+    ' "$file_path" >"$temp_file" || {
+        rm -f "$temp_file"
+        return 1
+    }
+
+    mv "$temp_file" "$file_path"
+}
+
+ensure_zsh_tidy_directories() {
+    mkdir -p "$ZSH_TIDY_DIR" "$ZSH_TIDY_BACKUP_DIR" || {
+        print_status_message err "无法创建整理目录: $ZSH_TIDY_DIR"
+        return 1
+    }
+}
+
+move_files_into_directory() {
+    local destination_dir="$1"
+    shift
+    local moved_count=0
+    local source_path=""
+
+    for source_path in "$@"; do
+        [ -f "$source_path" ] || continue
+        if [ -n "${LAST_ZSHRC_BACKUP_PATH:-}" ] && [ "$source_path" = "$LAST_ZSHRC_BACKUP_PATH" ]; then
+            continue
+        fi
+        mv "$source_path" "$destination_dir/" || return 1
+        moved_count=$((moved_count + 1))
+    done
+
+    printf "%s" "$moved_count"
+}
+
+move_zsh_compdump_files() {
+    move_files_into_directory "$ZSH_TIDY_DIR" "$HOME"/.zcompdump*
+}
+
+move_zsh_backup_files() {
+    move_files_into_directory \
+        "$ZSH_TIDY_BACKUP_DIR" \
+        "$HOME"/.zshrc.backup-* \
+        "$HOME"/.zshrc.backup.* \
+        "$HOME"/.zshrc.bak.*
+}
+
+move_zprofile_backup_file() {
+    if [ ! -f "$HOME/.zprofile.bak" ]; then
+        printf "0"
+        return 0
+    fi
+
+    mv "$HOME/.zprofile.bak" "$ZSH_TIDY_BACKUP_DIR/" || return 1
+    printf "1"
+}
+
+ensure_zsh_compdump_export() {
+    write_managed_block "compdump" "$ZSH_COMPDUMP_EXPORT_LINE" || return 1
+    print_status_message ok "已整理 ZSH_COMPDUMP 到 $HOME/.zsh/zcompdump"
+}
+
+run_zsh_tidy_flow() {
+    local moved_compdump=0
+    local moved_backups=0
+    local moved_zprofile_backup=0
+
+    print_status_message info "开始整理 Zsh 文件"
+
+    ensure_zsh_tidy_directories || return 1
+
+    moved_compdump="$(move_zsh_compdump_files)" || return 1
+    moved_backups="$(move_zsh_backup_files)" || return 1
+    moved_zprofile_backup="$(move_zprofile_backup_file)" || return 1
+    ensure_zsh_compdump_export || return 1
+    # A zshrc mutation can surface additional historical backups after the first pass.
+    # The current operation's fresh backup is skipped via LAST_ZSHRC_BACKUP_PATH.
+    moved_backups=$((moved_backups + $(move_zsh_backup_files))) || return 1
+
+    if [ "$moved_compdump" -gt 0 ]; then
+        print_status_message ok "已移动 $moved_compdump 个 zcompdump 文件"
+    fi
+
+    if [ "$moved_backups" -gt 0 ]; then
+        print_status_message ok "已移动 $moved_backups 个 Zsh 备份文件"
+    fi
+
+    if [ "$moved_zprofile_backup" -gt 0 ]; then
+        print_status_message ok "已移动 .zprofile.bak"
+    fi
+
+    print_status_message ok "Zsh 文件已整理到 $ZSH_TIDY_DIR"
+    print_status_message info "备份目录: $ZSH_TIDY_BACKUP_DIR"
+    if ! reload_zshrc; then
+        print_status_message warn "整理完成，但 ~/.zshrc 校验未通过。"
+    fi
 }
 
 get_active_plugins_string() {
@@ -628,14 +769,51 @@ get_active_plugins_string() {
     fi
 
     awk '
-        /^[[:space:]]*#/ { next }
-        /^[[:space:]]*plugins=\(/ {
-            line = $0
-            sub(/^[[:space:]]*plugins=\(/, "", line)
-            sub(/\)[[:space:]]*$/, "", line)
-            value = line
+        function trim_value(value) {
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            return value
         }
-        END { print value }
+        function append_fragment(fragment) {
+            sub(/[[:space:]]+#.*/, "", fragment)
+            fragment = trim_value(fragment)
+            if (fragment == "") {
+                return
+            }
+            if (buffer == "") {
+                buffer = fragment
+            } else {
+                buffer = buffer " " fragment
+            }
+        }
+        /^[[:space:]]*#/ { next }
+        in_plugins == 1 {
+            line = $0
+            if (line ~ /\)/) {
+                sub(/\).*/, "", line)
+                append_fragment(line)
+                value = buffer
+                buffer = ""
+                in_plugins = 0
+                next
+            }
+            append_fragment(line)
+            next
+        }
+        /^[[:space:]]*plugins=[[:space:]]*\(/ {
+            line = $0
+            sub(/^[[:space:]]*plugins=[[:space:]]*\(/, "", line)
+            buffer = ""
+            if (line ~ /\)/) {
+                sub(/\).*/, "", line)
+                append_fragment(line)
+                value = buffer
+                buffer = ""
+                next
+            }
+            append_fragment(line)
+            in_plugins = 1
+        }
+        END { print trim_value(value) }
     ' "$ZSHRC_PATH"
 }
 
@@ -651,6 +829,8 @@ get_current_theme() {
             sub(/^[[:space:]]*ZSH_THEME=/, "", line)
             gsub(/^"/, "", line)
             gsub(/"$/, "", line)
+            gsub(/^'\''/, "", line)
+            gsub(/'\''$/, "", line)
             gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
             value = line
         }
@@ -733,12 +913,43 @@ session_contains_plugin_name() {
 }
 
 derive_plugin_name_from_url() {
-    local plugin_url="$1"
+    local plugin_url="${1%/}"
     local plugin_name=""
 
     plugin_name="${plugin_url##*/}"
     plugin_name="${plugin_name%.git}"
+
+    if ! is_safe_plugin_name "$plugin_name"; then
+        return 1
+    fi
+
     printf "%s" "$plugin_name"
+}
+
+is_safe_plugin_name() {
+    local plugin_name="$1"
+
+    case "$plugin_name" in
+        ''|.|..|*/*|*' '*|*$'\t'*|*[!A-Za-z0-9._-]*)
+            return 1
+            ;;
+    esac
+
+    return 0
+}
+
+safe_remove_plugin_destination() {
+    local destination="$1"
+
+    case "$destination" in
+        "$CUSTOM_PLUGINS_DIR"/*)
+            rm -rf "$destination" 2>/dev/null || return 1
+            ;;
+        *)
+            print_status_message err "目标路径异常，拒绝清理: $destination"
+            return 1
+            ;;
+    esac
 }
 
 collect_installed_custom_plugins() {
@@ -754,6 +965,10 @@ collect_installed_custom_plugins() {
     for plugin_dir in "$CUSTOM_PLUGINS_DIR"/*; do
         [ -d "$plugin_dir" ] || continue
         plugin_name="$(basename "$plugin_dir")"
+        if ! is_safe_plugin_name "$plugin_name"; then
+            print_status_message warn "忽略不合法插件目录名: $plugin_name"
+            continue
+        fi
         append_to_array INSTALLED_CUSTOM_PLUGINS "$plugin_name"
     done
 }
@@ -790,15 +1005,20 @@ build_plugin_display_labels() {
     local plugin_name=""
     local plugin_url=""
     local status_label=""
+    local active_plugins_string=""
 
     reset_named_array PLUGIN_DISPLAY_LABELS || return 1
+    active_plugins_string="$(get_active_plugins_string)"
 
     for spec in "${PLUGIN_CATALOG[@]+"${PLUGIN_CATALOG[@]}"}"; do
         plugin_name="$(plugin_spec_name "$spec")"
         plugin_url="$(plugin_spec_url "$spec")"
 
-        if is_plugin_installed "$plugin_name"; then
-            status_label="[已安装]"
+        # Intentional word splitting: active_plugins_string is a space-separated plugin list.
+        if array_contains_exact "$plugin_name" $active_plugins_string; then
+            status_label="[已启用]"
+        elif is_plugin_installed "$plugin_name"; then
+            status_label="[已安装未启用]"
         elif [ -n "$plugin_url" ]; then
             status_label="[未安装]"
         else
@@ -828,13 +1048,14 @@ join_array_with_separator() {
 }
 
 sync_plugins_config() {
+    local requested_enable_plugins=("$@")
     local active_plugins_string=""
     local normalized_plugins=()
     local plugin_name=""
-    local spec=""
     local plugin_line=""
 
     active_plugins_string="$(get_active_plugins_string)"
+    # Intentional word splitting: active_plugins_string is a space-separated plugin list.
     for plugin_name in $active_plugins_string; do
         if should_keep_plugin_enabled "$plugin_name" \
             && ! array_contains_exact "$plugin_name" "${normalized_plugins[@]+"${normalized_plugins[@]}"}"; then
@@ -846,9 +1067,9 @@ sync_plugins_config() {
         append_to_array normalized_plugins "git"
     fi
 
-    for spec in "${PLUGIN_CATALOG[@]+"${PLUGIN_CATALOG[@]}"}"; do
-        plugin_name="$(plugin_spec_name "$spec")"
-        if is_plugin_installed "$plugin_name" && ! array_contains_exact "$plugin_name" "${normalized_plugins[@]+"${normalized_plugins[@]}"}"; then
+    for plugin_name in "${requested_enable_plugins[@]+"${requested_enable_plugins[@]}"}"; do
+        if should_keep_plugin_enabled "$plugin_name" \
+            && ! array_contains_exact "$plugin_name" "${normalized_plugins[@]+"${normalized_plugins[@]}"}"; then
             append_to_array normalized_plugins "$plugin_name"
         fi
     done
@@ -892,16 +1113,38 @@ show_status() {
 
     active_plugins="$(get_active_plugins_string)"
     current_theme="$(get_current_theme)"
-    collect_installed_custom_plugins >/dev/null 2>&1 || true
-
-    installed_plugins_summary="$(join_array_with_separator ", " "${INSTALLED_CUSTOM_PLUGINS[@]+"${INSTALLED_CUSTOM_PLUGINS[@]}"}")"
-    [ -n "$installed_plugins_summary" ] || installed_plugins_summary="无"
+    if collect_installed_custom_plugins >/dev/null 2>&1; then
+        installed_plugins_summary="$(join_array_with_separator ", " "${INSTALLED_CUSTOM_PLUGINS[@]+"${INSTALLED_CUSTOM_PLUGINS[@]}"}")"
+        [ -n "$installed_plugins_summary" ] || installed_plugins_summary="无"
+    else
+        installed_plugins_summary="扫描失败"
+    fi
     [ -n "$active_plugins" ] || active_plugins="无"
     [ -n "$current_theme" ] || current_theme="未设置"
 
     print_message "已激活插件 : $active_plugins"
     print_message "已装自定义插件 : $installed_plugins_summary"
     print_message "当前主题 : $current_theme"
+}
+
+main_menu_text() {
+    printf "%s\n" \
+        "1) 安装 Oh My Zsh" \
+        "2) 管理插件" \
+        "3) 切换主题" \
+        "4) 整理 Zsh 文件" \
+        "q) 退出"
+}
+
+dispatch_main_choice() {
+    case "$1" in
+        1) printf "install-omz" ;;
+        2) printf "manage-plugins" ;;
+        3) printf "switch-theme" ;;
+        4) printf "tidy-zsh-files" ;;
+        q|Q) printf "quit" ;;
+        *) printf "invalid" ;;
+    esac
 }
 
 clone_plugin_with_retry() {
@@ -922,7 +1165,9 @@ clone_plugin_with_retry() {
         fi
 
         print_status_message err "插件安装失败: $plugin_name"
-        rm -rf "$destination" 2>/dev/null || true
+        if ! safe_remove_plugin_destination "$destination"; then
+            print_status_message warn "插件目录清理未完成: $destination"
+        fi
         if ! prompt_yes_no "是否重试安装 $plugin_name？" "y"; then
             return 1
         fi
@@ -975,7 +1220,8 @@ menu_install_omz() {
 
         if is_omz_installed; then
             print_status_message ok "已检测到 Oh My Zsh: $OMZ_DIR"
-            pause_with_back_option || return 0
+            pause_with_back_option
+            pause_requested_back && return 0
             continue
         fi
 
@@ -987,12 +1233,16 @@ menu_install_omz() {
 
         case "$answer" in
             y|Y)
-                install_omz_with_retry || true
-                pause_with_back_option || return 0
+                if ! install_omz_with_retry; then
+                    print_status_message warn "安装流程未完成，请先处理上面的错误。"
+                fi
+                pause_with_back_option
+                pause_requested_back && return 0
                 ;;
             n|N)
                 print_status_message skip "本次跳过安装。"
-                pause_with_back_option || return 0
+                pause_with_back_option
+                pause_requested_back && return 0
                 ;;
             b|B)
                 return 0
@@ -1021,6 +1271,7 @@ install_plugin_specs() {
     local spec=""
     local plugin_name=""
     local plugin_url=""
+    local had_failure=0
 
     for spec in "${specs[@]+"${specs[@]}"}"; do
         plugin_name="$(plugin_spec_name "$spec")"
@@ -1033,11 +1284,21 @@ install_plugin_specs() {
 
         if [ -z "$plugin_url" ]; then
             print_status_message warn "$plugin_name 没有可用仓库地址，无法安装。"
+            had_failure=1
             continue
         fi
 
-        clone_plugin_with_retry "$plugin_name" "$plugin_url" || true
+        if ! clone_plugin_with_retry "$plugin_name" "$plugin_url"; then
+            print_status_message warn "跳过 $plugin_name，继续处理其余插件。"
+            had_failure=1
+        fi
     done
+
+    if [ "$had_failure" -ne 0 ]; then
+        return 1
+    fi
+
+    return 0
 }
 
 handle_add_plugin() {
@@ -1051,22 +1312,29 @@ handle_add_plugin() {
 
     if [ -z "$plugin_url" ]; then
         print_status_message warn "地址为空，已取消。"
-        pause_with_back_option || return 0
+        pause_with_back_option
+        pause_requested_back && return 0
         return 0
     fi
 
     plugin_name="$(derive_plugin_name_from_url "$plugin_url")"
     if [ -z "$plugin_name" ]; then
         print_status_message err "无法从地址推断插件名称。"
-        pause_with_back_option || return 0
+        pause_with_back_option
+        pause_requested_back && return 0
         return 0
     fi
 
     maybe_register_session_plugin "$plugin_name" "$plugin_url"
     build_plugin_catalog || return 1
-    install_plugin_specs "$plugin_name|$plugin_url"
-    sync_plugins_config || true
-    pause_with_back_option || return 0
+    if ! install_plugin_specs "$plugin_name|$plugin_url"; then
+        print_status_message warn "插件安装未全部成功，仅同步当前可用插件。"
+    fi
+    if ! sync_plugins_config "$plugin_name"; then
+        print_status_message warn "插件启用配置写入失败，请检查 ~/.zshrc。"
+    fi
+    pause_with_back_option
+    pause_requested_back && return 0
 }
 
 menu_plugins() {
@@ -1074,7 +1342,9 @@ menu_plugins() {
     local parsed=""
     local token=""
     local selected_specs=()
+    local selected_plugin_names=()
     local selected_index=0
+    local selected_plugin_name=""
 
     if ! is_omz_installed; then
         print_header
@@ -1082,6 +1352,7 @@ menu_plugins() {
         print_line
         print_status_message warn "请先安装 Oh My Zsh。"
         pause_with_back_option
+        pause_requested_back && return 0
         return 0
     fi
 
@@ -1106,7 +1377,9 @@ menu_plugins() {
                 return 0
                 ;;
             n|N)
-                handle_add_plugin || true
+                if ! handle_add_plugin; then
+                    print_status_message warn "新增插件流程未完成，请先处理上面的错误。"
+                fi
                 continue
                 ;;
         esac
@@ -1121,26 +1394,44 @@ menu_plugins() {
                 ;;
             invalid)
                 print_status_message warn "输入无效，请重新选择。"
-                pause_with_back_option || return 0
+                pause_with_back_option
+                pause_requested_back && return 0
                 continue
                 ;;
             all)
-                install_plugin_specs "${PLUGIN_CATALOG[@]+"${PLUGIN_CATALOG[@]}"}"
-                sync_plugins_config || true
-                pause_with_back_option || return 0
+                if ! install_plugin_specs "${PLUGIN_CATALOG[@]+"${PLUGIN_CATALOG[@]}"}"; then
+                    print_status_message warn "部分插件安装失败，仅同步当前可用插件。"
+                fi
+                selected_plugin_names=()
+                for selected_plugin_name in "${PLUGIN_CATALOG[@]+"${PLUGIN_CATALOG[@]}"}"; do
+                    append_to_array selected_plugin_names "$(plugin_spec_name "$selected_plugin_name")"
+                done
+                if ! sync_plugins_config "${selected_plugin_names[@]+"${selected_plugin_names[@]}"}"; then
+                    print_status_message warn "插件启用配置写入失败，请检查 ~/.zshrc。"
+                fi
+                pause_with_back_option
+                pause_requested_back && return 0
                 continue
                 ;;
         esac
 
         selected_specs=()
+        selected_plugin_names=()
+        # Intentional word splitting: parsed is a space-separated selection list.
         for token in $parsed; do
             selected_index=$((token - 1))
             append_to_array selected_specs "${PLUGIN_CATALOG[$selected_index]}"
+            append_to_array selected_plugin_names "$(plugin_spec_name "${PLUGIN_CATALOG[$selected_index]}")"
         done
 
-        install_plugin_specs "${selected_specs[@]+"${selected_specs[@]}"}"
-        sync_plugins_config || true
-        pause_with_back_option || return 0
+        if ! install_plugin_specs "${selected_specs[@]+"${selected_specs[@]}"}"; then
+            print_status_message warn "部分插件安装失败，仅同步当前可用插件。"
+        fi
+        if ! sync_plugins_config "${selected_plugin_names[@]+"${selected_plugin_names[@]}"}"; then
+            print_status_message warn "插件启用配置写入失败，请检查 ~/.zshrc。"
+        fi
+        pause_with_back_option
+        pause_requested_back && return 0
     done
 }
 
@@ -1168,6 +1459,7 @@ menu_themes() {
         print_line
         print_status_message warn "请先安装 Oh My Zsh。"
         pause_with_back_option
+        pause_requested_back && return 0
         return 0
     fi
 
@@ -1203,14 +1495,18 @@ menu_themes() {
                 ;;
             invalid)
                 print_status_message warn "输入无效，请重新选择。"
-                pause_with_back_option || return 0
+                pause_with_back_option
+                pause_requested_back && return 0
                 continue
                 ;;
             *)
                 index=$((parsed - 1))
                 theme_name="${THEME_OPTIONS[$index]}"
-                switch_theme "$theme_name" || true
-                pause_with_back_option || return 0
+                if ! switch_theme "$theme_name"; then
+                    print_status_message warn "主题配置写入失败，请检查 ~/.zshrc。"
+                fi
+                pause_with_back_option
+                pause_requested_back && return 0
                 ;;
         esac
     done
@@ -1218,28 +1514,35 @@ menu_themes() {
 
 main_menu() {
     local choice=""
+    local action=""
 
     while true; do
         print_header
         show_status
         print_line
-        print_message "1) 安装 Oh My Zsh"
-        print_message "2) 管理插件"
-        print_message "3) 切换主题"
-        print_message "q) 退出"
+        main_menu_text
         print_blank_line
         printf "请选择 > "
         read -r choice || return 0
         choice="$(trim_whitespace "$choice")"
 
-        case "$choice" in
-            1) menu_install_omz ;;
-            2) menu_plugins ;;
-            3) menu_themes ;;
-            q|Q) return 0 ;;
+        action="$(dispatch_main_choice "$choice")"
+        case "$action" in
+            install-omz) menu_install_omz ;;
+            manage-plugins) menu_plugins ;;
+            switch-theme) menu_themes ;;
+            tidy-zsh-files)
+                if ! run_zsh_tidy_flow; then
+                    print_status_message warn "整理流程未完成，请先处理上面的错误。"
+                fi
+                pause_with_back_option
+                pause_requested_back && return 0
+                ;;
+            quit) return 0 ;;
             *)
-                print_status_message warn "请输入 1、2、3 或 q。"
-                pause_with_back_option || return 0
+                print_status_message warn "请输入 1、2、3、4 或 q。"
+                pause_with_back_option
+                pause_requested_back && return 0
                 ;;
         esac
     done

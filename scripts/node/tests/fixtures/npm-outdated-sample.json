@@ -1,0 +1,16 @@
+{
+  "npm-check-updates": {
+    "current": "16.14.0",
+    "wanted": "16.14.2",
+    "latest": "17.1.0",
+    "dependent": "global",
+    "location": "/Users/example/.nvm/versions/node/v22.0.0/lib/node_modules/npm-check-updates"
+  },
+  "typescript": {
+    "current": "5.8.0",
+    "wanted": "5.8.3",
+    "latest": "5.8.3",
+    "dependent": "global",
+    "location": "/Users/example/.nvm/versions/node/v22.0.0/lib/node_modules/typescript"
+  }
+}

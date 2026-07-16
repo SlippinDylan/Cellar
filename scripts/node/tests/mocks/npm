@@ -1,0 +1,64 @@
+#!/bin/bash
+set -u
+
+case "${1:-}" in
+    prefix)
+        if [ "${2:-}" = "-g" ]; then
+            printf '%s\n' "${MOCK_NPM_PREFIX:-/mock/npm-prefix}"
+            exit 0
+        fi
+        ;;
+    root)
+        if [ "${2:-}" = "-g" ]; then
+            printf '%s\n' "${MOCK_NPM_ROOT:-/mock/npm-prefix/lib/node_modules}"
+            exit 0
+        fi
+        ;;
+    config)
+        case "${2:-}" in
+            get)
+                case "${3:-}" in
+                    registry) printf '%s\n' "${MOCK_NPM_REGISTRY:-https://registry.npmjs.org/}" ;;
+                    cache) printf '%s\n' "${MOCK_NPM_CACHE:-$HOME/.npm}" ;;
+                    devdir) printf '%s\n' "${MOCK_NPM_DEVDIR:-undefined}" ;;
+                    userconfig) printf '%s\n' "${MOCK_NPM_USERCONFIG:-$HOME/.npmrc}" ;;
+                    globalconfig) printf '%s\n' "${MOCK_NPM_GLOBALCONFIG:-/mock/npmrc}" ;;
+                    *) printf 'undefined\n' ;;
+                esac
+                exit 0
+                ;;
+            set|delete)
+                exit "${MOCK_NPM_CONFIG_EXIT:-0}"
+                ;;
+            list)
+                printf '%s\n' "${MOCK_NPM_CONFIG_LIST:-registry = \"https://registry.npmjs.org/\"}"
+                exit 0
+                ;;
+        esac
+        ;;
+    ls)
+        printf '%s\n' "${MOCK_NPM_LS_JSON:-{\"dependencies\":{}}}"
+        exit "${MOCK_NPM_LS_EXIT:-0}"
+        ;;
+    outdated)
+        if [ -n "${MOCK_NPM_OUTDATED_STDERR:-}" ]; then
+            printf '%s\n' "$MOCK_NPM_OUTDATED_STDERR" >&2
+        fi
+        if [ -n "${MOCK_NPM_OUTDATED_JSON:-}" ]; then
+            printf '%s\n' "$MOCK_NPM_OUTDATED_JSON"
+        fi
+        exit "${MOCK_NPM_OUTDATED_EXIT:-0}"
+        ;;
+    install|update|uninstall|cache)
+        exit "${MOCK_NPM_MUTATION_EXIT:-0}"
+        ;;
+    -v|--version)
+        printf '%s\n' "${MOCK_NPM_VERSION:-10.0.0}"
+        exit 0
+        ;;
+esac
+
+printf 'mock npm: unsupported args:' >&2
+printf ' %s' "$@" >&2
+printf '\n' >&2
+exit 64

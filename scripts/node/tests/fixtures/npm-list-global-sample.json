@@ -1,0 +1,20 @@
+{
+  "name": "lib",
+  "dependencies": {
+    "eslint": {
+      "version": "9.0.0",
+      "overridden": false,
+      "dependencies": {}
+    },
+    "npm-check-updates": {
+      "version": "16.14.0",
+      "overridden": false,
+      "dependencies": {}
+    },
+    "typescript": {
+      "version": "5.8.0",
+      "overridden": false,
+      "dependencies": {}
+    }
+  }
+}

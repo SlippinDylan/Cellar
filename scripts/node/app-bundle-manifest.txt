@@ -1,0 +1,18 @@
+# Whitelist for future macOS app bundling.
+# Paths are relative to scripts/node.
+
+npm-global-manager.sh
+run-quality-checks.sh
+config/global-packages.txt
+tools/install-shellcheck.sh
+tests/npm-global-manager-test.sh
+tests/fixtures/npm-config-list-sample.txt
+tests/fixtures/npm-list-global-sample.json
+tests/fixtures/npm-outdated-sample.json
+tests/fixtures/nvm-ls-sample.txt
+tests/mocks/npm
+tests/mocks/nvm
+tests/mocks/curl
+docs/specs/2026-06-11-node-npm-global-manager-spec.md
+docs/specs/2026-06-11-node-npm-global-manager-open-questions.md
+docs/specs/2026-06-24-app-boundary-and-packaging-contract.md

@@ -1,0 +1,34 @@
+#!/bin/bash
+set -u
+
+case "${1:-}" in
+    current)
+        printf '%s\n' "${MOCK_NVM_CURRENT:-v20.11.1}"
+        ;;
+    ls)
+        cat <<EOF
+       v18.20.8
+->     v20.11.1
+       v22.3.0
+default -> v20.11.1
+EOF
+        ;;
+    ls-remote)
+        cat <<EOF
+       v20.11.1   (Latest LTS: Iron)
+       v22.3.0    (Latest LTS: Jod)
+EOF
+        ;;
+    install|use|alias|uninstall)
+        exit "${MOCK_NVM_MUTATION_EXIT:-0}"
+        ;;
+    --version)
+        printf '%s\n' "${MOCK_NVM_VERSION:-0.40.5}"
+        ;;
+    *)
+        printf 'mock nvm: unsupported args:' >&2
+        printf ' %s' "$@" >&2
+        printf '\n' >&2
+        exit 64
+        ;;
+esac

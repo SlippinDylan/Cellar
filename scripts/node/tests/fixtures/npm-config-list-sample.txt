@@ -1,0 +1,4 @@
+; "user" config from /Users/example/.npmrc
+
+registry = "https://registry.npmjs.org/"
+@demo:registry = "https://registry.example.com/"

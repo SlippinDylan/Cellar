@@ -237,6 +237,17 @@ test_extract_tap_from_install_receipt_uses_structured_parser() {
     rm -f "$receipt_path"
 }
 
+test_extract_tap_from_install_receipt_reads_current_source_tap_field() {
+    local receipt_path=""
+
+    receipt_path="$(mktemp "/tmp/brew-app-manager-receipt.XXXXXX")"
+    printf '{"installed_on_request":true,"source":{"tap":"manaflow-ai/cmux"},"version":"1.0"}\n' >"$receipt_path"
+
+    assert_equal "manaflow-ai/cmux" "$(extract_tap_from_install_receipt "$receipt_path")" "tap extraction should read Homebrew receipts that store ownership at source.tap"
+
+    rm -f "$receipt_path"
+}
+
 test_build_cask_homebrew_managed_artifact_labels_includes_structured_artifacts() {
     CASK_RECEIPT_APP_ARTIFACTS=("Wireshark.app")
     CASK_RECEIPT_BINARY_ARTIFACTS=("/Applications/Wireshark.app/Contents/MacOS/tshark")
@@ -517,6 +528,32 @@ test_collect_installed_items_for_tap_fails_closed_when_cask_receipt_discovery_fa
     }
 
     assert_equal "1" "$(collect_installed_items_for_tap "alexsjones/llmfit" >/dev/null; printf "%s" "$?")" "tap scan should fail closed when cask receipt discovery cannot query Homebrew"
+
+    source "$script_dir/brew-app-manager.sh"
+}
+
+test_run_tap_remove_flow_keeps_user_at_tap_choice_after_scan_failure() {
+    local output=""
+    local selection_page_count=""
+
+    load_tap_inventory() {
+        printf "manaflow-ai/cmux\nsitoi/tap\n"
+    }
+
+    collect_installed_items_for_tap() {
+        return 1
+    }
+
+    output="$(run_tap_remove_flow <<'EOF'
+1
+
+b
+EOF
+)"
+    selection_page_count="$(printf "%s\n" "$output" | grep -F "选择要删除的 Tap" | wc -l | tr -d ' ')"
+
+    assert_equal "2" "$selection_page_count" "tap removal should ask for another tap choice after an initial association scan failure"
+    printf "%s\n" "$output" | grep -Fq "未能扫描这个 tap 关联的已安装项目"
 
     source "$script_dir/brew-app-manager.sh"
 }
@@ -3042,6 +3079,7 @@ run_test_case test_describe_tap_associated_cask_state_reports_scan_failure_when_
 run_test_case test_load_cask_app_name_from_receipt_uses_structured_parser
 run_test_case test_load_cask_receipt_artifacts_parses_structured_artifact_types
 run_test_case test_extract_tap_from_install_receipt_uses_structured_parser
+run_test_case test_extract_tap_from_install_receipt_reads_current_source_tap_field
 run_test_case test_build_cask_homebrew_managed_artifact_labels_includes_structured_artifacts
 run_test_case test_collect_cask_post_uninstall_artifact_state_reports_residual_and_manual_artifacts
 run_test_case test_build_tap_association_display_items
@@ -3053,6 +3091,7 @@ run_test_case test_collect_installed_items_for_tap
 run_test_case test_collect_installed_items_for_tap_fails_closed_when_receipt_parse_fails
 run_test_case test_collect_installed_items_for_tap_fails_closed_when_formula_receipt_discovery_fails
 run_test_case test_collect_installed_items_for_tap_fails_closed_when_cask_receipt_discovery_fails
+run_test_case test_run_tap_remove_flow_keeps_user_at_tap_choice_after_scan_failure
 run_test_case test_read_command_output_into_array
 run_test_case test_read_command_output_into_array_propagates_command_failure
 run_test_case test_render_entries_in_columns_column_major

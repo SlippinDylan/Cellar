@@ -295,9 +295,6 @@ test_parse_package_spec_contract() {
 
     output="$(run_in_subshell "parse_package_spec 'eslint@9.0.0'" || true)"
     assert_equals "parse package spec version" "eslint|9.0.0|eslint@9.0.0" "$output"
-
-    output="$(run_in_subshell "extract_package_requested_version_or_tag 'eslint@next'" || true)"
-    assert_equals "extract requested dist-tag" "next" "$output"
 }
 
 test_validate_package_name_only_rejects_version_specs() {
@@ -338,6 +335,33 @@ test_reject_complex_package_specs() {
     else
         assert_pass "file spec rejected"
     fi
+}
+
+test_normalize_registry_url_trailing_slash_adds_missing_slash() {
+    local output=""
+    output="$(run_in_subshell "normalize_registry_url_trailing_slash 'https://registry.npmjs.org'")"
+    assert_equals "missing trailing slash is appended for https URL" "https://registry.npmjs.org/" "$output"
+
+    output="$(run_in_subshell "normalize_registry_url_trailing_slash 'https://example.com/npm'")"
+    assert_equals "missing trailing slash is appended preserving path" "https://example.com/npm/" "$output"
+
+    output="$(run_in_subshell "normalize_registry_url_trailing_slash 'https://registry.npmjs.org/'")"
+    assert_equals "existing trailing slash is left unchanged" "https://registry.npmjs.org/" "$output"
+
+    output="$(run_in_subshell "normalize_registry_url_trailing_slash 'not-a-url'")"
+    assert_equals "non-URL input is left unchanged for validation to reject" "not-a-url" "$output"
+}
+
+test_switch_registry_flow_accepts_url_without_trailing_slash() {
+    local output=""
+    output="$(run_in_subshell "type run_switch_registry_flow")"
+    assert_contains "custom registry input is normalized before validation" "normalize_registry_url_trailing_slash" "$output"
+}
+
+test_scope_registry_add_flow_accepts_url_without_trailing_slash() {
+    local output=""
+    output="$(run_in_subshell "type run_scope_registry_flow")"
+    assert_contains "scope registry input is normalized before validation" "normalize_registry_url_trailing_slash" "$output"
 }
 
 test_validate_scope_and_registry_url() {
@@ -602,6 +626,39 @@ test_parse_multi_numeric_choice_commas_and_ranges() {
 
     output="$(run_in_subshell "parse_multi_numeric_choice '4-2' 6")"
     assert_equals "parse_multi_numeric_choice rejects descending range" "invalid" "$output"
+}
+
+test_parse_multi_numeric_choice_zero_padded_token_does_not_crash() {
+    local output=""
+    output="$(run_in_subshell "parse_multi_numeric_choice '08' 10")"
+    assert_equals "zero-padded single token normalized and does not crash" "8" "$output"
+
+    output="$(run_in_subshell "parse_multi_numeric_choice '09' 10")"
+    assert_equals "09 normalized and does not crash" "9" "$output"
+}
+
+test_parse_multi_numeric_choice_zero_padded_range_does_not_crash() {
+    local output=""
+    output="$(run_in_subshell "parse_multi_numeric_choice '08-10' 12")"
+    assert_equals "zero-padded range expands without octal crash" "8 9 10" "$output"
+}
+
+test_parse_multi_numeric_choice_result_safe_for_array_arithmetic() {
+    local output=""
+    output="$(run_in_subshell "
+        parsed=\"\$(parse_multi_numeric_choice '08,09' 10)\"
+        for idx in \$parsed; do
+            i=\$((idx - 1))
+            printf '%s ' \"\$i\"
+        done
+    ")"
+    assert_equals "downstream array-index arithmetic on parsed tokens does not crash" "7 8 " "$output"
+}
+
+test_parse_numeric_choice_zero_padded_token_does_not_crash() {
+    local output=""
+    output="$(run_in_subshell "parse_numeric_choice '08' 10")"
+    assert_equals "single-select zero-padded token normalized" "8" "$output"
 }
 
 test_prompt_yes_no_reprompts_invalid_input() {
@@ -1065,6 +1122,17 @@ test_bin_string_uses_package_name() {
     assert_equals "bin string command is package name" "my-cli" "$output"
 }
 
+test_bin_string_uses_unscoped_short_name_for_scoped_package() {
+    local tmp="$NODE_DIR/.runtime/tmp/pkg-bin-string-scoped.json"
+    local output=""
+
+    mkdir -p "$NODE_DIR/.runtime/tmp"
+    printf '{"name":"@scope/my-cli","bin":"dist/index.js"}\n' > "$tmp"
+
+    output="$(run_in_subshell "parse_package_bin_names '$tmp'" || true)"
+    assert_equals "scoped string bin uses unscoped short name, not the full spec" "my-cli" "$output"
+}
+
 test_residue_symlink_requires_target_under_package_dir() {
     local tmp=""
 
@@ -1285,10 +1353,45 @@ test_project_nvmrc_literal_resolves_to_unique_concrete_installed_version() {
     assert_equals "project nvmrc concrete literal is normalized" "v20.11.1" "$output"
 }
 
-test_project_node_flow_has_nvmrc_rollback() {
+test_project_node_flow_switch_failure_does_not_roll_back_saved_nvmrc() {
+    local test_dir=""
     local output=""
-    output="$(run_in_subshell "type run_project_node_flow")"
-    assert_contains "project node flow can rollback nvmrc" "rollback_nvmrc_file" "$output"
+
+    test_dir="$(mktemp -d "$NODE_DIR/.runtime/tmp/project-node-switchfail.XXXXXX")"
+    mkdir -p "$test_dir/project"
+    output="$(printf '%s\n1\n%s\ny\n' "$test_dir/project" "$test_dir/project" | NODE_MANAGER_ALLOW_PROJECT_WRITE=1 bash -lc "
+        source '$SCRIPT_PATH'
+        get_installed_node_versions() { printf 'v20.11.1\n'; }
+        installed_node_versions_satisfy_request() { return 0; }
+        switch_node_version() { return 1; }
+        run_project_node_flow
+    " 2>&1)" || true
+    assert_contains "switch failure is reported" "当前 shell 切换失败" "$output"
+    if [ -f "$test_dir/project/.nvmrc" ]; then
+        assert_pass "a failed optional shell-switch does not delete the already-saved .nvmrc"
+        assert_contains "the saved .nvmrc keeps the confirmed version" "v20.11.1" "$(cat "$test_dir/project/.nvmrc")"
+    else
+        assert_fail "a failed optional shell-switch does not delete the already-saved .nvmrc"
+    fi
+}
+
+test_project_node_flow_does_not_crash_with_zero_installed_versions() {
+    local test_dir=""
+    local output=""
+
+    test_dir="$(mktemp -d "$NODE_DIR/.runtime/tmp/project-node-zero.XXXXXX")"
+    mkdir -p "$test_dir/project"
+    output="$(printf '%s\n20.11.1\n%s\nn\n' "$test_dir/project" "$test_dir/project" | NODE_MANAGER_ALLOW_PROJECT_WRITE=1 bash -lc "
+        source '$SCRIPT_PATH'
+        get_installed_node_versions() { printf ''; }
+        run_project_node_flow
+    " 2>&1)" || true
+    if printf '%s' "$output" | grep -qi "unbound variable"; then
+        assert_fail "project node flow with zero installed versions must not crash"
+    else
+        assert_pass "project node flow with zero installed versions must not crash"
+    fi
+    assert_contains "project node flow still proposes the typed concrete version" "v20.11.1" "$output"
 }
 
 test_uninstall_plan_shows_package_metadata() {
@@ -1354,7 +1457,6 @@ test_batch_install_supports_subset_selection() {
     local output=""
     output="$(run_in_subshell "type run_batch_install_flow")"
     assert_contains "batch install prompts for subset selection" "选择要安装的包" "$output"
-    assert_contains "batch install tracks warned count" "警告" "$output"
     assert_contains "batch install tracks unknown count" "未知" "$output"
 }
 
@@ -1365,8 +1467,19 @@ test_batch_install_summary_counts_final_package_state_once() {
     config_file="$(mktemp "$NODE_DIR/.runtime/tmp/batch-summary.XXXXXX")"
     printf 'eslint@9.0.0\n' > "$config_file"
     output="$(printf 'all\ny\n\n' | run_in_subshell "GLOBAL_PACKAGES_FILE='$config_file'; INSTALL_MAX_RETRIES=2; node() { printf 'v20.11.1\n'; }; npm() { if [ \"\$1\" = view ]; then printf '9.0.0\n'; return 0; fi; if [ \"\$1\" = install ]; then return 0; fi; if [ \"\$1\" = ls ]; then printf '{\"dependencies\":{\"eslint\":{\"version\":\"8.0.0\"}}}\n'; return 0; fi; if [ \"\$1\" = prefix ]; then printf '/tmp/prefix\n'; return 0; fi; if [ \"\$1\" = -v ]; then printf '10.0.0\n'; return 0; fi; return 0; }; run_batch_install_flow" || true)"
-    assert_contains "batch summary counts one failed package" "失败: 1" "$output"
-    assert_contains "batch summary does not count every failed attempt as warning" "警告: 0" "$output"
+    assert_contains "batch summary counts one failed package (readable but wrong version)" "失败: 1" "$output"
+    assert_contains "batch summary does not misclassify a readable wrong version as unknown" "未知版本: 0" "$output"
+}
+
+test_batch_install_summary_counts_unreadable_version_as_unknown_not_failed() {
+    local config_file=""
+    local output=""
+
+    config_file="$(mktemp "$NODE_DIR/.runtime/tmp/batch-summary-unknown.XXXXXX")"
+    printf 'eslint@9.0.0\n' > "$config_file"
+    output="$(printf 'all\ny\n\n' | run_in_subshell "GLOBAL_PACKAGES_FILE='$config_file'; INSTALL_MAX_RETRIES=1; node() { printf 'v20.11.1\n'; }; npm() { if [ \"\$1\" = view ]; then printf '9.0.0\n'; return 0; fi; if [ \"\$1\" = install ]; then return 0; fi; if [ \"\$1\" = ls ]; then return 1; fi; if [ \"\$1\" = prefix ]; then printf '/tmp/prefix\n'; return 0; fi; if [ \"\$1\" = -v ]; then printf '10.0.0\n'; return 0; fi; return 0; }; run_batch_install_flow" || true)"
+    assert_contains "batch summary counts unreadable post-install version as unknown" "未知版本: 1" "$output"
+    assert_contains "batch summary does not double count unknown as failed" "失败: 0" "$output"
 }
 
 test_batch_all_selects_only_pending_indices() {
@@ -1379,6 +1492,13 @@ test_uninstall_flow_rescans_remaining_packages() {
     local output=""
     output="$(run_in_subshell "type run_uninstall_flow")"
     assert_contains "uninstall flow rescans remaining package state" "卸载后剩余全局包" "$output"
+}
+
+test_upgrade_scan_remaining_recap_distinguishes_failure_from_zero() {
+    local output=""
+    output="$(run_in_subshell "type run_upgrade_scan_flow")"
+    assert_contains "remaining-outdated recap reuses the careful outdated scan contract" "render_outdated_json" "$output"
+    assert_contains "remaining-outdated recap reports scan failure honestly, not as 0" "扫描失败，无法确认" "$output"
 }
 
 test_nvm_managed_detection_resolves_custom_dir() {
@@ -1699,6 +1819,18 @@ test_runtime_lock_recovers_stale_lock() {
     rm -rf "$lock_dir" 2>/dev/null || true
 }
 
+test_runtime_lock_owner_pid_falls_back_to_metadata_when_pid_file_empty() {
+    local lock_dir="$NODE_DIR/.runtime/tmp/test-empty-pid.lock"
+    rm -rf "$lock_dir"
+    mkdir -p "$lock_dir"
+    : > "$lock_dir/pid"
+    printf 'pid=4242\ncreated=1\naction=test\n' > "$lock_dir/metadata"
+    local output=""
+    output="$(run_in_subshell "runtime_lock_owner_pid '$lock_dir'")"
+    assert_equals "empty pid file falls back to metadata" "4242" "$output"
+    rm -rf "$lock_dir" 2>/dev/null || true
+}
+
 test_runtime_lock_release_respects_owner() {
     local lock_dir="$NODE_DIR/.runtime/tmp/test-owner.lock"
     rm -rf "$lock_dir"
@@ -1796,6 +1928,88 @@ test_node_gyp_cleanup_all_selects_all_existing_dirs() {
     else
         assert_pass "node-gyp cleanup prompt does not advertise unsupported a"
     fi
+}
+
+test_verify_global_package_update_result_degrades_on_scan_failure() {
+    local output=""
+    output="$(run_in_subshell "
+        get_installed_global_package_version() { printf '2.0.0\n'; }
+        scan_outdated_package_row() { return 2; }
+        verify_global_package_update_result eslint 1.0.0 2.0.0
+    " || true)"
+    assert_contains "rescan failure degrades to warn instead of silently claiming ok" "warn|" "$output"
+}
+
+test_verify_global_package_update_result_reports_failed_when_still_outdated() {
+    local output=""
+    output="$(run_in_subshell "
+        get_installed_global_package_version() { printf '1.5.0\n'; }
+        scan_outdated_package_row() { printf 'eslint|1.5.0|2.0.0|2.0.0\n'; return 0; }
+        verify_global_package_update_result eslint 1.0.0 2.0.0
+    " || true)"
+    assert_contains "still-outdated rescan reports failed, not ok" "failed|" "$output"
+}
+
+test_node_gyp_cleanup_invalid_choice_does_not_crash() {
+    local test_dir=""
+    local output=""
+    local exit_code=0
+
+    test_dir="$(mktemp -d "$NODE_DIR/.runtime/tmp/node-gyp-invalid.XXXXXX")"
+    mkdir -p "$test_dir/existing"
+    output="$(printf '99\n' | bash -lc "source '$SCRIPT_PATH'; detect_node_gyp_cache_dirs() { printf '%s|config\n' '$test_dir/existing'; }; run_node_gyp_cache_cleanup" 2>&1)" || exit_code=$?
+    assert_contains "node-gyp cleanup reports invalid out-of-range choice" "输入无效" "$output"
+    if printf '%s' "$output" | grep -qi "unbound variable"; then
+        assert_fail "node-gyp cleanup invalid choice must not crash the shell"
+    else
+        assert_pass "node-gyp cleanup invalid choice must not crash the shell"
+    fi
+}
+
+test_remove_confirmed_cache_directory_mismatch_returns_cancelled_not_success() {
+    local test_dir=""
+    local cache_dir=""
+    local exit_code=0
+
+    test_dir="$(mktemp -d "$NODE_DIR/.runtime/tmp/rmconfirm-mismatch.XXXXXX")"
+    mkdir -p "$test_dir/home/cache"
+    cache_dir="$test_dir/home/cache"
+    printf 'wrong-path\n' | bash -lc "set -euo pipefail; source '$SCRIPT_PATH'; HOME='$test_dir/home'; remove_confirmed_cache_directory 'test cache' '$cache_dir' >/dev/null 2>&1" || exit_code=$?
+    assert_equals "mismatched confirmation path returns cancelled (2), not success" "2" "$exit_code"
+    if [ -d "$cache_dir" ]; then
+        assert_pass "mismatched confirmation path does not delete directory"
+    else
+        assert_fail "mismatched confirmation path does not delete directory"
+    fi
+}
+
+test_remove_confirmed_cache_directory_success_returns_zero() {
+    local test_dir=""
+    local cache_dir=""
+    local exit_code=0
+
+    test_dir="$(mktemp -d "$NODE_DIR/.runtime/tmp/rmconfirm-success.XXXXXX")"
+    mkdir -p "$test_dir/home/cache"
+    cache_dir="$test_dir/home/cache"
+    printf '%s\n' "$cache_dir" | bash -lc "set -euo pipefail; source '$SCRIPT_PATH'; HOME='$test_dir/home'; remove_confirmed_cache_directory 'test cache' '$cache_dir' >/dev/null 2>&1" || exit_code=$?
+    assert_equals "confirmed deletion returns success (0)" "0" "$exit_code"
+    if [ -d "$cache_dir" ]; then
+        assert_fail "confirmed deletion actually removes directory"
+    else
+        assert_pass "confirmed deletion actually removes directory"
+    fi
+}
+
+test_remove_confirmed_cache_directory_survives_rm_reports_failure_not_success() {
+    local test_dir=""
+    local cache_dir=""
+    local exit_code=0
+
+    test_dir="$(mktemp -d "$NODE_DIR/.runtime/tmp/rmconfirm-survive.XXXXXX")"
+    mkdir -p "$test_dir/home/cache"
+    cache_dir="$test_dir/home/cache"
+    printf '%s\n' "$cache_dir" | bash -lc "set -euo pipefail; source '$SCRIPT_PATH'; HOME='$test_dir/home'; rm() { return 0; }; remove_confirmed_cache_directory 'test cache' '$cache_dir' >/dev/null 2>&1" || exit_code=$?
+    assert_equals "directory surviving rm -rf is reported as failure (1), not success" "1" "$exit_code"
 }
 
 test_package_spec_rejects_dangling_at() {
@@ -2088,6 +2302,28 @@ test_require_capabilities_reports_missing_ruby() {
     assert_contains "require capabilities reports missing ruby" "Ruby" "$output"
 }
 
+test_json_cleanup_plan_node_gyp_cache_handles_zero_candidates() {
+    local output=""
+    output="$(MANAGER_TEST_UNAME=Darwin run_in_subshell "detect_node_gyp_cache_dirs() { printf ''; }; render_non_package_action_plan_json cleanup node-gyp-cache" || true)"
+    if printf '%s' "$output" | grep -qi "unbound variable"; then
+        assert_fail "node-gyp-cache plan with zero candidates must not crash"
+    else
+        assert_pass "node-gyp-cache plan with zero candidates must not crash"
+    fi
+    assert_contains "node-gyp-cache plan with zero candidates reports empty paths" '"paths":[]' "$output"
+}
+
+test_json_cleanup_plan_nvm_old_versions_handles_zero_candidates() {
+    local output=""
+    output="$(MANAGER_TEST_UNAME=Darwin run_in_subshell "get_installed_node_versions() { printf ''; }; render_non_package_action_plan_json cleanup nvm-old-versions" || true)"
+    if printf '%s' "$output" | grep -qi "unbound variable"; then
+        assert_fail "nvm-old-versions plan with zero candidates must not crash"
+    else
+        assert_pass "nvm-old-versions plan with zero candidates must not crash"
+    fi
+    assert_contains "nvm-old-versions plan with zero candidates reports empty paths" '"paths":[]' "$output"
+}
+
 test_logs_cleanup_json_command_is_available() {
     local output=""
 
@@ -2185,6 +2421,27 @@ test_install_nvm_blocks_unverified_default_path() {
     else
         assert_pass "nvm unverified install is blocked by default"
     fi
+}
+
+test_json_nvm_install_unverified_blocked_matches_sibling_error_envelope() {
+    local output=""
+    output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=1 MANAGER_TEST_UNAME=Darwin run_in_subshell "
+        NVM_INSTALL_SHA256=''
+        NVM_ALLOW_UNVERIFIED_INSTALL=0
+        render_execute_json nvm-install
+    " || true)"
+    assert_contains "nvm-install blocked error carries operationId like siblings" '"operationId":' "$output"
+    assert_contains "nvm-install blocked error carries status like siblings" '"status":"failed"' "$output"
+    assert_contains "nvm-install blocked error carries causeCode like siblings" '"causeCode":"nvm-install-unverified-blocked"' "$output"
+    assert_contains "nvm-install blocked error keeps its own business fields" '"installUrl":' "$output"
+}
+
+test_json_cleanup_invalid_target_matches_sibling_error_envelope() {
+    local output=""
+    output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=1 MANAGER_TEST_UNAME=Darwin run_in_subshell "render_execute_json cleanup bogus-target" || true)"
+    assert_contains "cleanup invalid-target error carries operationId like siblings" '"operationId":' "$output"
+    assert_contains "cleanup invalid-target error carries status like siblings" '"status":"failed"' "$output"
+    assert_contains "cleanup invalid-target error carries causeCode like siblings" '"causeCode":"invalid-cleanup-target"' "$output"
 }
 
 test_registry_latest_version_trims_npm_output() {
@@ -2475,6 +2732,54 @@ test_hermetic_mocks_are_available() {
     assert_contains "mock npm drives outdated error path" "npm-outdated-failed" "$output"
 }
 
+test_nvm_mutation_functions_persist_a_log_file() {
+    local mock_dir="$TEST_DIR/mocks"
+    local log_output=""
+
+    log_output="$(PATH="$mock_dir:$PATH" run_in_subshell "
+        load_nvm_into_current_shell() { return 0; }
+        log_file=\$(create_log_file node-install 20.11.1)
+        install_node_version 20.11.1 \"\$log_file\" >/dev/null 2>&1 || true
+        cat \"\$log_file\"
+    ")"
+    assert_contains "install_node_version logs the nvm install command" "COMMAND: nvm install 20.11.1" "$log_output"
+    assert_contains "install_node_version logs the nvm use command" "COMMAND: nvm use 20.11.1" "$log_output"
+
+    log_output="$(PATH="$mock_dir:$PATH" run_in_subshell "
+        load_nvm_into_current_shell() { return 0; }
+        log_file=\$(create_log_file node-use 20.11.1)
+        switch_node_version 20.11.1 \"\$log_file\" >/dev/null 2>&1 || true
+        cat \"\$log_file\"
+    ")"
+    assert_contains "switch_node_version logs the nvm use command" "COMMAND: nvm use 20.11.1" "$log_output"
+}
+
+test_json_node_use_execute_reuses_dispatcher_log_file_not_a_second_one() {
+    local mock_dir="$TEST_DIR/mocks"
+    local before_count=0
+    local after_count=0
+    local result=""
+    local reported_log=""
+
+    mkdir -p "$NODE_DIR/.runtime/logs"
+    before_count="$(find "$NODE_DIR/.runtime/logs" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+    result="$(PATH="$mock_dir:$PATH" MANAGER_TEST_UNAME=Darwin NODE_MANAGER_ALLOW_JSON_EXECUTE=1 run_in_subshell "
+        load_nvm_into_current_shell() { return 0; }
+        get_installed_node_versions() { printf 'v20.11.1\n'; }
+        installed_node_versions_satisfy_request() { return 0; }
+        render_execute_json node-use 20.11.1
+    " || true)"
+    after_count="$(find "$NODE_DIR/.runtime/logs" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')"
+
+    assert_equals "json node-use execute creates exactly one log file, not two" "1" "$((after_count - before_count))"
+    reported_log="$(printf '%s' "$result" | sed -n 's/.*"logFile":"\([^"]*\)".*/\1/p')"
+    if [ -n "$reported_log" ] && [ -f "$reported_log" ] && grep -qF "COMMAND: nvm use" "$reported_log"; then
+        assert_pass "the logFile reported to the json caller contains the actual nvm use command trail"
+    else
+        assert_fail "the logFile reported to the json caller contains the actual nvm use command trail"
+    fi
+}
+
 test_shellcheck_quality_runner_exists() {
     if [ -x "$NODE_DIR/run-quality-checks.sh" ]; then
         assert_pass "shellcheck quality runner exists"
@@ -2492,6 +2797,47 @@ test_quality_runner_does_not_silently_skip_shellcheck() {
         assert_fail "quality runner must not silently skip shellcheck"
     else
         assert_pass "quality runner must not silently skip shellcheck"
+    fi
+}
+
+test_no_unbraced_variable_immediately_before_multibyte_char() {
+    # Under macOS's default en_US.UTF-8 locale, bash 3.2.57's parser mis-scans
+    # an unbraced "$var" that is immediately followed (no space, no closing
+    # quote) by a multibyte UTF-8 character (e.g. Chinese punctuation) as part
+    # of the variable name itself, producing a bogus "unbound variable" crash
+    # under `set -u` even though the variable is set. `${var}` is unaffected.
+    # This guards the whole script against reintroducing that landmine.
+    local hits=""
+    hits="$(grep -nP '\$[A-Za-z_][A-Za-z0-9_]*[\x80-\xff]' "$SCRIPT_PATH" | grep -v "\${" || true)"
+    if [ -n "$hits" ]; then
+        assert_fail "no unbraced \$var immediately followed by a multibyte char" "$hits"
+    else
+        assert_pass "no unbraced \$var immediately followed by a multibyte char"
+    fi
+}
+
+test_main_rejects_unknown_cli_flag() {
+    local output=""
+    local exit_code=0
+    output="$(run_in_subshell "main --bogus-flag" 2>&1)" || exit_code=$?
+    assert_contains "unknown flag reports a clear error" "未知参数" "$output"
+    assert_equals "unknown flag exits with usage error code" "2" "$exit_code"
+    if printf '%s' "$output" | grep -qi "unbound variable"; then
+        assert_fail "unknown flag handling does not crash with unbound variable"
+    else
+        assert_pass "unknown flag handling does not crash with unbound variable"
+    fi
+}
+
+test_main_json_mode_reports_platform_error_as_json() {
+    local output=""
+    output="$(run_in_subshell "MANAGER_TEST_UNAME=Linux main --json summary" || true)"
+    assert_contains "json mode platform failure stays JSON-shaped" '"ok":false' "$output"
+    assert_contains "json mode platform failure carries a business code" "unsupported-platform" "$output"
+    if printf '%s' "$output" | grep -qF "仅支持 macOS"; then
+        assert_fail "json mode platform failure must not leak plain-text status line"
+    else
+        assert_pass "json mode platform failure must not leak plain-text status line"
     fi
 }
 
@@ -2693,6 +3039,9 @@ main() {
     test_parse_package_spec_contract
     test_validate_package_name_only_rejects_version_specs
     test_reject_complex_package_specs
+    test_normalize_registry_url_trailing_slash_adds_missing_slash
+    test_switch_registry_flow_accepts_url_without_trailing_slash
+    test_scope_registry_add_flow_accepts_url_without_trailing_slash
     test_validate_scope_and_registry_url
     test_registry_helpers_use_user_location
     test_outdated_stderr_uses_mktemp_under_runtime
@@ -2743,6 +3092,10 @@ main() {
     test_parse_multi_numeric_choice_invalid
     test_parse_multi_numeric_choice_dedup
     test_parse_multi_numeric_choice_commas_and_ranges
+    test_parse_multi_numeric_choice_zero_padded_token_does_not_crash
+    test_parse_multi_numeric_choice_zero_padded_range_does_not_crash
+    test_parse_multi_numeric_choice_result_safe_for_array_arithmetic
+    test_parse_numeric_choice_zero_padded_token_does_not_crash
     test_prompt_yes_no_reprompts_invalid_input
     printf "\n"
 
@@ -2831,6 +3184,7 @@ main() {
     test_check_bin_entries_with_real_bin
     test_extract_package_name_edge_cases
     test_bin_string_uses_package_name
+    test_bin_string_uses_unscoped_short_name_for_scoped_package
     test_residue_symlink_requires_target_under_package_dir
     test_atomic_write_file_replaces_content
     test_nvm_ls_parsing_installed_only
@@ -2851,7 +3205,8 @@ main() {
     test_dragged_path_normalizer_handles_quotes
     test_node_version_choice_accepts_list_index
     test_project_nvmrc_literal_resolves_to_unique_concrete_installed_version
-    test_project_node_flow_has_nvmrc_rollback
+    test_project_node_flow_switch_failure_does_not_roll_back_saved_nvmrc
+    test_project_node_flow_does_not_crash_with_zero_installed_versions
     test_uninstall_plan_shows_package_metadata
     test_scope_registry_flow_is_looping_menu
     test_profile_nvm_init_requires_nvm_sh
@@ -2859,8 +3214,10 @@ main() {
     test_install_nvm_official_blocks_unverified_direct_call
     test_batch_install_supports_subset_selection
     test_batch_install_summary_counts_final_package_state_once
+    test_batch_install_summary_counts_unreadable_version_as_unknown_not_failed
     test_batch_all_selects_only_pending_indices
     test_uninstall_flow_rescans_remaining_packages
+    test_upgrade_scan_remaining_recap_distinguishes_failure_from_zero
     test_nvm_managed_detection_resolves_custom_dir
     test_environment_overview_has_nvm_diagnostics
     test_environment_overview_shows_dir_scanned_versions_when_nvm_unloaded
@@ -2888,6 +3245,7 @@ main() {
     test_operation_result_json_contract
     test_runtime_lock_rejects_existing_lock
     test_runtime_lock_recovers_stale_lock
+    test_runtime_lock_owner_pid_falls_back_to_metadata_when_pid_file_empty
     test_runtime_lock_release_respects_owner
     test_runtime_lock_explicit_release_removes_held_entry
     test_npm_mutations_share_single_lock
@@ -2895,6 +3253,12 @@ main() {
     test_node_gyp_cleanup_lists_existing_dirs_before_delete
     test_node_gyp_cleanup_back_exits_successfully
     test_node_gyp_cleanup_all_selects_all_existing_dirs
+    test_verify_global_package_update_result_degrades_on_scan_failure
+    test_verify_global_package_update_result_reports_failed_when_still_outdated
+    test_node_gyp_cleanup_invalid_choice_does_not_crash
+    test_remove_confirmed_cache_directory_mismatch_returns_cancelled_not_success
+    test_remove_confirmed_cache_directory_success_returns_zero
+    test_remove_confirmed_cache_directory_survives_rm_reports_failure_not_success
     test_package_spec_rejects_dangling_at
     test_json_install_verifies_requested_version
     test_single_install_verifies_requested_version
@@ -2919,6 +3283,8 @@ main() {
     test_json_non_package_action_contracts_are_documented
     test_app_packaging_boundary_is_documented
     test_require_capabilities_reports_missing_ruby
+    test_json_cleanup_plan_node_gyp_cache_handles_zero_candidates
+    test_json_cleanup_plan_nvm_old_versions_handles_zero_candidates
     test_logs_cleanup_json_command_is_available
     test_runtime_log_cleanup_keeps_recent_files
     test_legacy_package_helpers_use_logged_commands
@@ -2945,9 +3311,16 @@ main() {
     test_json_execute_uninstall_rejects_protected_package
     test_shellcheck_installer_verifies_archive_checksum
     test_install_nvm_blocks_unverified_default_path
+    test_json_nvm_install_unverified_blocked_matches_sibling_error_envelope
+    test_json_cleanup_invalid_target_matches_sibling_error_envelope
     test_hermetic_mocks_are_available
+    test_nvm_mutation_functions_persist_a_log_file
+    test_json_node_use_execute_reuses_dispatcher_log_file_not_a_second_one
     test_shellcheck_quality_runner_exists
     test_quality_runner_does_not_silently_skip_shellcheck
+    test_no_unbraced_variable_immediately_before_multibyte_char
+    test_main_rejects_unknown_cli_flag
+    test_main_json_mode_reports_platform_error_as_json
     printf "\n"
 
     printf "%s\n" "--- Menu rendering (smoke) ---"

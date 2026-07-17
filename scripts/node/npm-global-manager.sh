@@ -89,7 +89,16 @@ remove_held_runtime_lock() {
 
 runtime_lock_owner_pid() {
     local lock_dir="$1"
-    sed -n '1p' "$lock_dir/pid" 2>/dev/null || sed -n 's/^pid=//p' "$lock_dir/metadata" 2>/dev/null | head -1 || true
+    local pid=""
+    # `sed ... || sed ...` only falls back on a hard failure of the first
+    # command; an existing-but-empty pid file exits 0 with no output, which
+    # would short-circuit past the metadata fallback. Check the output
+    # itself, not just the exit code.
+    pid="$(sed -n '1p' "$lock_dir/pid" 2>/dev/null)"
+    if [ -z "$pid" ]; then
+        pid="$(sed -n 's/^pid=//p' "$lock_dir/metadata" 2>/dev/null | head -1)"
+    fi
+    printf '%s\n' "$pid"
 }
 
 runtime_lock_owned_by_current_process() {
@@ -402,6 +411,16 @@ is_nonnegative_integer() {
     return 0
 }
 
+# Strips leading zeros from a validated digit string before it is ever used
+# in bash arithmetic context: "08"/"09" are invalid octal literals in $((..))
+# and crash the script under `set -u`, even though [ ] comparisons accept them.
+strip_leading_zeros() {
+    local value="${1:-0}"
+    value="${value#"${value%%[!0]*}"}"
+    [ -n "$value" ] || value=0
+    printf '%s' "$value"
+}
+
 # ──────────────────────────────────────────────
 # Input parsing helpers
 # ──────────────────────────────────────────────
@@ -423,7 +442,8 @@ parse_numeric_choice() {
     esac
 
     if [ "$choice" -ge 1 ] && [ "$choice" -le "$max_index" ]; then
-        echo "$choice"
+        strip_leading_zeros "$choice"
+        printf '\n'
         return 0
     fi
 
@@ -459,6 +479,8 @@ parse_multi_numeric_choice() {
         if printf '%s' "$token" | grep -Eq '^[0-9]+-[0-9]+$'; then
             local range_start="${token%-*}"
             local range_end="${token#*-}"
+            range_start="$(strip_leading_zeros "$range_start")"
+            range_end="$(strip_leading_zeros "$range_end")"
             if [ "$range_start" -gt "$range_end" ] || [ "$range_start" -lt 1 ] || [ "$range_end" -gt "$max_index" ]; then
                 if [ "$noglob_was_set" != "1" ]; then
                     set +f
@@ -496,6 +518,7 @@ parse_multi_numeric_choice() {
             return 0
         fi
 
+        token="$(strip_leading_zeros "$token")"
         case " $normalized " in
             *" $token "*) ;;
             *)
@@ -1130,7 +1153,11 @@ parse_package_bin_names() {
         when Hash
           puts bin.keys.sort
         when String
-          puts name unless name.empty?
+          # A global bin symlink cannot contain "/", so npm links a
+          # string-form bin under the unscoped short name for scoped
+          # packages (e.g. "@scope/pkg" -> "pkg"), not the full spec.
+          short_name = name.include?("/") ? name.split("/").last.to_s : name
+          puts short_name unless short_name.empty?
         end
     ' "$pkg_json" 2>/dev/null
 }
@@ -1698,12 +1725,6 @@ is_install_spec_satisfied() {
     [ "$installed_version" = "$target_version" ]
 }
 
-extract_package_requested_version_or_tag() {
-    local parsed=""
-    parsed="$(parse_package_spec "${1:-}")" || return 1
-    printf '%s' "$parsed" | awk -F'|' '{print $2}'
-}
-
 validate_scope_name() {
     local scope="${1:-}"
     case "$scope" in
@@ -1719,8 +1740,18 @@ validate_registry_url() {
     return 1
 }
 
-normalize_package_name_from_spec() {
-    extract_package_name "$1"
+# npm resolves package URLs by joining the registry base against the
+# trailing slash, so a missing slash is a real correctness footgun, not
+# just a style nit -- but rejecting the extremely common "no trailing
+# slash" typed form outright is bad UX. Add it back for otherwise
+# http(s)-shaped input before validation, at interactive entry points only.
+normalize_registry_url_trailing_slash() {
+    local url="${1:-}"
+    case "$url" in
+        */) printf '%s\n' "$url" ;;
+        http://*|https://*) printf '%s/\n' "$url" ;;
+        *) printf '%s\n' "$url" ;;
+    esac
 }
 
 sanitize_filename_component() {
@@ -1820,18 +1851,6 @@ atomic_write_file() {
     fi
 
     mv "$tmp" "$target"
-}
-
-rollback_nvmrc_file() {
-    local nvmrc="$1"
-    local had_previous="$2"
-    local previous_content="${3:-}"
-
-    if [ "$had_previous" = "yes" ]; then
-        atomic_write_file "$nvmrc" "$previous_content"
-    else
-        rm -f "$nvmrc" 2>/dev/null
-    fi
 }
 
 # ──────────────────────────────────────────────
@@ -2040,12 +2059,13 @@ verify_global_package_update_result() {
         return 1
     fi
 
-    if row="$(scan_outdated_package_row "$package_name" 2>/dev/null)"; then
+    local scan_exit=0
+    row="$(scan_outdated_package_row "$package_name" 2>/dev/null)" || scan_exit=$?
+    if [ "$scan_exit" -eq 0 ]; then
         printf 'failed|升级后仍出现在 outdated 列表: %s|%s\n' "$row" "$new_version"
         return 1
     fi
 
-    local scan_exit=$?
     if [ "$scan_exit" -eq 2 ]; then
         if [ "$new_version" = "$wanted_version" ] || [ "$new_version" != "$old_version" ]; then
             printf 'warn|复扫失败，已用版本变化降级验证|%s\n' "$new_version"
@@ -2088,7 +2108,6 @@ nvm_install_unverified_blocked() {
 
 render_nvm_install_unverified_blocked_json() {
     local subject="${1:-$NVM_INSTALL_VERSION}"
-    local log_file="${2:-}"
 
     printf '{'
     printf '"code":"nvm-install-unverified-blocked",'
@@ -2098,9 +2117,6 @@ render_nvm_install_unverified_blocked_json() {
     printf '"installUrl":"%s",' "$(json_escape "$NVM_INSTALL_URL")"
     printf '"sha256Configured":false,'
     printf '"allowUnverified":%s' "$([ "$NVM_ALLOW_UNVERIFIED_INSTALL" = "1" ] && printf true || printf false)"
-    if [ -n "$log_file" ]; then
-        printf ',"logFile":"%s"' "$(json_escape "$log_file")"
-    fi
     printf '}\n'
 }
 
@@ -2194,18 +2210,11 @@ get_nvm_default_version() {
 
 install_node_lts() {
     local lts_target="${1:---lts}"
+    local log_file="${2:-}"
     load_nvm_into_current_shell || return 1
-    acquire_runtime_lock "nvm-mutation" || return 1
-    nvm install "$lts_target"
-    local install_exit=$?
-    if [ "$install_exit" -ne 0 ]; then
-        release_runtime_lock "nvm-mutation"
-        return 1
-    fi
-    nvm use "$lts_target"
-    local use_exit=$?
-    release_runtime_lock "nvm-mutation"
-    [ "$use_exit" -eq 0 ] || return 1
+    [ -n "$log_file" ] || log_file="$(create_log_file node-install "$lts_target")" || return 1
+    run_logged_command "$log_file" nvm install "$lts_target" || return 1
+    run_logged_command "$log_file" nvm use "$lts_target" || return 1
     local resolved=""
     resolved="$(nvm current 2>/dev/null || true)"
     [ -n "$resolved" ] && [[ "$resolved" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -2213,18 +2222,11 @@ install_node_lts() {
 
 install_node_version() {
     local version="$1"
+    local log_file="${2:-}"
     load_nvm_into_current_shell || return 1
-    acquire_runtime_lock "nvm-mutation" || return 1
-    nvm install "$version"
-    local install_exit=$?
-    if [ "$install_exit" -ne 0 ]; then
-        release_runtime_lock "nvm-mutation"
-        return 1
-    fi
-    nvm use "$version"
-    local use_exit=$?
-    release_runtime_lock "nvm-mutation"
-    [ "$use_exit" -eq 0 ] || return 1
+    [ -n "$log_file" ] || log_file="$(create_log_file node-install "$version")" || return 1
+    run_logged_command "$log_file" nvm install "$version" || return 1
+    run_logged_command "$log_file" nvm use "$version" || return 1
     local actual=""
     actual="$(node -v 2>/dev/null || true)"
     node_version_satisfies_request "$actual" "$version"
@@ -2232,22 +2234,18 @@ install_node_version() {
 
 switch_node_version() {
     local version="$1"
+    local log_file="${2:-}"
     load_nvm_into_current_shell || return 1
-    acquire_runtime_lock "nvm-mutation" || return 1
-    nvm use "$version"
-    local use_exit=$?
-    release_runtime_lock "nvm-mutation"
-    return "$use_exit"
+    [ -n "$log_file" ] || log_file="$(create_log_file node-use "$version")" || return 1
+    run_logged_command "$log_file" nvm use "$version"
 }
 
 set_node_default_alias() {
     local version="$1"
+    local log_file="${2:-}"
     load_nvm_into_current_shell || return 1
-    acquire_runtime_lock "nvm-mutation" || return 1
-    nvm alias default "$version"
-    local alias_exit=$?
-    release_runtime_lock "nvm-mutation"
-    return "$alias_exit"
+    [ -n "$log_file" ] || log_file="$(create_log_file node-alias-default "$version")" || return 1
+    run_logged_command "$log_file" nvm alias default "$version"
 }
 
 set_node_default_alias_verified() {
@@ -2483,7 +2481,6 @@ run_batch_install_flow() {
     local skipped=0
     local succeeded=0
     local failed=0
-    local warned=0
     local unknown=0
     local already_installed=""
     local -a batch_packages=()
@@ -2661,11 +2658,7 @@ run_batch_install_flow() {
                     verify_message="$(printf '%s' "$verify_result" | awk -F'|' '{print $2}')"
                     verify_target="$(printf '%s' "$verify_result" | awk -F'|' '{print $3}')"
                     if [ "$verify_status" = "ok" ]; then
-                        local display_new_ver="${new_ver:-unknown}"
-                        if [ -z "$new_ver" ]; then
-                            unknown=$((unknown + 1))
-                        fi
-                        print_status_message "ok" "$package_name $display_new_ver"
+                        print_status_message "ok" "$package_name $new_ver"
                         succeeded=$((succeeded + 1))
                         installed_ok="yes"
                         printf "[%s] OK version: %s\n" "$package_name" "${new_ver:-?}" >> "$log_file" 2>/dev/null || true
@@ -2687,9 +2680,17 @@ run_batch_install_flow() {
             done
 
             if [ "$installed_ok" = "no" ]; then
-                print_status_message "fail" "$package_name 已重试 $INSTALL_MAX_RETRIES 次"
-                failed=$((failed + 1))
-                printf "[%s] FAILED after %d retries\n" "$package_name" "$INSTALL_MAX_RETRIES" >> "$log_file" 2>/dev/null || true
+                local final_installed_version=""
+                final_installed_version="$(get_installed_global_package_version "$bare_package_name")"
+                if [ -z "$final_installed_version" ]; then
+                    print_status_message "warn" "$package_name 已重试 $INSTALL_MAX_RETRIES 次，无法确认安装结果"
+                    unknown=$((unknown + 1))
+                    printf "[%s] UNKNOWN after %d retries (no installed version detected)\n" "$package_name" "$INSTALL_MAX_RETRIES" >> "$log_file" 2>/dev/null || true
+                else
+                    print_status_message "fail" "$package_name 已重试 $INSTALL_MAX_RETRIES 次"
+                    failed=$((failed + 1))
+                    printf "[%s] FAILED after %d retries (installed=%s, target=%s)\n" "$package_name" "$INSTALL_MAX_RETRIES" "$final_installed_version" "$target_version" >> "$log_file" 2>/dev/null || true
+                fi
             fi
     done
 
@@ -2705,7 +2706,6 @@ run_batch_install_flow() {
     printf "  清单总计: %d\n" "$total"
     printf "  选中: %d\n" "${#selected_indices[@]}"
     printf "  成功: %d\n" "$succeeded"
-    printf "  警告: %d\n" "$warned"
     printf "  未知版本: %d\n" "$unknown"
     printf "  跳过已安装: %d\n" "$skipped"
     printf "  失败: %d\n" "$failed"
@@ -3020,21 +3020,29 @@ run_uninstall_flow() {
             if [ "$still_installed" = "yes" ]; then
                 status="warn"
                 detail="npm 报告成功但仍出现在列表中"
-            elif [ "$dir_still_exists" = "yes" ]; then
-                status="warn"
-                detail="包目录仍存在"
-                local ds_i=0
-                while [ "$ds_i" -lt "${#cap_dir_indices[@]}" ]; do
-                    if [ "${cap_dir_indices[$ds_i]}" = "$idx" ] && verify_directory_snapshot_current "${cap_dir_snapshots[$ds_i]}"; then
-                        residue_dirs+=("$pkg_dir")
-                        residue_dir_snapshots+=("${cap_dir_snapshots[$ds_i]}")
-                        break
-                    fi
-                    ds_i=$((ds_i + 1))
-                done
-            elif [ -n "$bin_residue" ]; then
-                status="warn"
-                detail="bin 残留: $(printf '%s' "$bin_residue" | sed 's/ $//')"
+            else
+                # Dir residue and bin residue are independent conditions;
+                # report both when both are present instead of only the
+                # first one detected, so the confirmation-time summary
+                # reflects the full impact (residue collection above
+                # already tracks both regardless of this display).
+                if [ "$dir_still_exists" = "yes" ]; then
+                    status="warn"
+                    detail="包目录仍存在"
+                    local ds_i=0
+                    while [ "$ds_i" -lt "${#cap_dir_indices[@]}" ]; do
+                        if [ "${cap_dir_indices[$ds_i]}" = "$idx" ] && verify_directory_snapshot_current "${cap_dir_snapshots[$ds_i]}"; then
+                            residue_dirs+=("$pkg_dir")
+                            residue_dir_snapshots+=("${cap_dir_snapshots[$ds_i]}")
+                            break
+                        fi
+                        ds_i=$((ds_i + 1))
+                    done
+                fi
+                if [ -n "$bin_residue" ]; then
+                    status="warn"
+                    detail="${detail:+$detail; }bin 残留: $(printf '%s' "$bin_residue" | sed 's/ $//')"
+                fi
             fi
 
             print_status_message "$status" "$package_name${detail:+ $detail}"
@@ -3083,49 +3091,53 @@ run_uninstall_flow() {
             local clean_failed=0
 
             local rd_index=0
-            for rd in "${residue_dirs[@]}"; do
-                local rd_snapshot="${residue_dir_snapshots[$rd_index]:-}"
-                rd_index=$((rd_index + 1))
-                if ! is_safe_removable_child_dir "$rd" "$global_root"; then
-                    print_status_message "fail" "拒绝删除非 global root 子目录: $rd"
-                    clean_failed=$((clean_failed + 1))
-                    continue
-                fi
-                if ! verify_directory_snapshot_current "$rd_snapshot"; then
-                    print_status_message "fail" "删除前目录快照复验失败，已跳过: $rd"
-                    clean_failed=$((clean_failed + 1))
-                    continue
-                fi
-
-                if rm -rf "$rd" 2>/dev/null; then
-                    if [ ! -d "$rd" ]; then
-                        print_status_message "ok" "已删除: $rd"
-                        cleaned=$((cleaned + 1))
-                    else
-                        print_status_message "warn" "删除后仍存在: $rd"
+            if [ "${#residue_dirs[@]}" -gt 0 ]; then
+                for rd in "${residue_dirs[@]}"; do
+                    local rd_snapshot="${residue_dir_snapshots[$rd_index]:-}"
+                    rd_index=$((rd_index + 1))
+                    if ! is_safe_removable_child_dir "$rd" "$global_root"; then
+                        print_status_message "fail" "拒绝删除非 global root 子目录: $rd"
+                        clean_failed=$((clean_failed + 1))
+                        continue
                     fi
-                else
-                    print_status_message "fail" "删除失败: $rd"
-                    clean_failed=$((clean_failed + 1))
-                fi
-            done
+                    if ! verify_directory_snapshot_current "$rd_snapshot"; then
+                        print_status_message "fail" "删除前目录快照复验失败，已跳过: $rd"
+                        clean_failed=$((clean_failed + 1))
+                        continue
+                    fi
+
+                    if rm -rf "$rd" 2>/dev/null; then
+                        if [ ! -d "$rd" ]; then
+                            print_status_message "ok" "已删除: $rd"
+                            cleaned=$((cleaned + 1))
+                        else
+                            print_status_message "warn" "删除后仍存在: $rd"
+                        fi
+                    else
+                        print_status_message "fail" "删除失败: $rd"
+                        clean_failed=$((clean_failed + 1))
+                    fi
+                done
+            fi
 
             local rb_index=0
-            for rb in "${residue_bins[@]}"; do
-                local rb_snapshot="${residue_bin_snapshots[$rb_index]:-}"
-                rb_index=$((rb_index + 1))
-                if remove_snapshot_symlink_residue "$rb_snapshot"; then
-                    if [ ! -e "$rb" ] && [ ! -L "$rb" ]; then
-                        print_status_message "ok" "已删除: $rb"
-                        cleaned=$((cleaned + 1))
+            if [ "${#residue_bins[@]}" -gt 0 ]; then
+                for rb in "${residue_bins[@]}"; do
+                    local rb_snapshot="${residue_bin_snapshots[$rb_index]:-}"
+                    rb_index=$((rb_index + 1))
+                    if remove_snapshot_symlink_residue "$rb_snapshot"; then
+                        if [ ! -e "$rb" ] && [ ! -L "$rb" ]; then
+                            print_status_message "ok" "已删除: $rb"
+                            cleaned=$((cleaned + 1))
+                        else
+                            print_status_message "warn" "删除后仍存在: $rb"
+                        fi
                     else
-                        print_status_message "warn" "删除后仍存在: $rb"
+                        print_status_message "fail" "删除前归属复验失败，已跳过: $rb"
+                        clean_failed=$((clean_failed + 1))
                     fi
-                else
-                    print_status_message "fail" "删除前归属复验失败，已跳过: $rb"
-                    clean_failed=$((clean_failed + 1))
-                fi
-            done
+                done
+            fi
 
             printf "\n残留清理: 成功 %d, 失败 %d\n" "$cleaned" "$clean_failed"
         else
@@ -3390,14 +3402,20 @@ run_upgrade_scan_flow() {
 
     local remaining_json=""
     local remaining_rows=""
-    remaining_json="$(npm outdated -g --depth=0 --json 2>/dev/null || true)"
-    if [ -n "$remaining_json" ] && [ "$remaining_json" != "{}" ]; then
-        remaining_rows="$(printf '%s' "$remaining_json" | parse_outdated_package_rows_stdin 2>/dev/null || true)"
-    fi
-    if [ -n "$remaining_rows" ]; then
-        printf "  剩余可升级: %s\n" "$(printf '%s\n' "$remaining_rows" | sed '/^$/d' | wc -l | tr -d ' ')"
+    # Reuse the same careful exit-code handling as the initial scan (real
+    # failure vs "nothing outdated") instead of treating a failed rescan as
+    # a silent "0 remaining".
+    if remaining_json="$(render_outdated_json 2>/dev/null)"; then
+        if [ -n "$remaining_json" ] && [ "$remaining_json" != "{}" ]; then
+            remaining_rows="$(printf '%s' "$remaining_json" | parse_outdated_package_rows_stdin 2>/dev/null || true)"
+        fi
+        if [ -n "$remaining_rows" ]; then
+            printf "  剩余可升级: %s\n" "$(printf '%s\n' "$remaining_rows" | sed '/^$/d' | wc -l | tr -d ' ')"
+        else
+            printf "  剩余可升级: 0\n"
+        fi
     else
-        printf "  剩余可升级: 0\n"
+        printf "  剩余可升级: <扫描失败，无法确认>\n"
     fi
 
     pause_before_return
@@ -3631,6 +3649,7 @@ run_switch_registry_flow() {
             read -r registry_url || return 0
             registry_url="$(trim_whitespace "$registry_url")"
             [ -n "$registry_url" ] || return 0
+            registry_url="$(normalize_registry_url_trailing_slash "$registry_url")"
             ;;
         b|B) return 0 ;;
         *)
@@ -3753,6 +3772,7 @@ run_scope_registry_flow() {
             read -r registry_url || return 0
             registry_url="$(trim_whitespace "$registry_url")"
             [ -n "$registry_url" ] || return 0
+            registry_url="$(normalize_registry_url_trailing_slash "$registry_url")"
             if ! validate_registry_url "$registry_url"; then
                 print_status_message "fail" "registry URL 格式不支持: $registry_url"
                 printf "registry URL 必须使用 https:// 并以 / 结尾；本机调试仅允许 http://localhost:<port>/ 或 http://127.0.0.1:<port>/。\n"
@@ -4072,7 +4092,10 @@ run_install_node_flow() {
         1)
             print_blank_line
             printf "正在安装最新 LTS 版本...\n"
-            if install_node_lts; then
+            local lts_log_file=""
+            lts_log_file="$(create_log_file node-install lts)" || return 1
+            printf "日志文件: %s\n" "$lts_log_file"
+            if install_node_lts "--lts" "$lts_log_file"; then
                 local lts_actual=""
                 lts_actual="$(node -v 2>/dev/null || true)"
                 local lts_verified="no"
@@ -4142,7 +4165,10 @@ run_install_node_flow() {
 
             print_blank_line
             printf "正在安装 Node.js %s ...\n" "$version"
-            if install_node_version "$version"; then
+            local node_install_log_file=""
+            node_install_log_file="$(create_log_file node-install "$version")" || return 1
+            printf "日志文件: %s\n" "$node_install_log_file"
+            if install_node_version "$version" "$node_install_log_file"; then
                 local actual_ver=""
                 actual_ver="$(node -v 2>/dev/null || true)"
                 local install_verified="no"
@@ -4268,7 +4294,10 @@ run_switch_node_flow() {
     print_blank_line
     printf "执行切换...\n"
     print_separator
-    if switch_node_version "$version"; then
+    local switch_log_file=""
+    switch_log_file="$(create_log_file node-use "$version")" || return 1
+    printf "日志文件: %s\n" "$switch_log_file"
+    if switch_node_version "$version" "$switch_log_file"; then
         local actual_version=""
         actual_version="$(node -v 2>/dev/null || true)"
         local switch_verified="no"
@@ -4370,6 +4399,10 @@ run_npm_cache_clean_cleanup() {
     pause_before_return
 }
 
+# Return codes: 0 = deleted (or nothing to delete), 1 = real failure
+# (unsafe path, lock contention, rm failure, directory survived rm),
+# 2 = user cancelled (EOF or confirmation path mismatch). Callers that
+# tally success/failure counts must treat 2 as neither.
 remove_confirmed_cache_directory() {
     local label="$1"
     local original_path="$2"
@@ -4396,11 +4429,14 @@ remove_confirmed_cache_directory() {
     print_blank_line
     printf "请输入完整路径确认删除: %s\n" "$resolved_path"
     printf "确认路径: "
-    read -r confirm_path || return 0
+    if ! read -r confirm_path; then
+        printf "未读取到确认输入，取消删除。\n"
+        return 2
+    fi
     confirm_path="$(trim_whitespace "$confirm_path")"
     if [ "$confirm_path" != "$resolved_path" ]; then
         printf "确认路径不匹配，取消删除。\n"
-        return 0
+        return 2
     fi
 
     print_blank_line
@@ -4415,17 +4451,20 @@ remove_confirmed_cache_directory() {
         release_runtime_lock "npm-mutation"
         if [ -d "$resolved_path" ]; then
             print_status_message "warn" "删除命令执行成功但目录仍存在"
-        else
-            print_status_message "ok" "$label已删除"
-            printf "  路径: %s\n" "$resolved_path"
-            printf "  释放空间: %s\n" "${dir_size:-<unknown>}"
+            pause_before_return
+            return 1
         fi
-    else
-        release_runtime_lock "npm-mutation"
-        print_status_message "fail" "$label删除失败"
+        print_status_message "ok" "$label已删除"
         printf "  路径: %s\n" "$resolved_path"
+        printf "  释放空间: %s\n" "${dir_size:-<unknown>}"
+        pause_before_return
+        return 0
     fi
+    release_runtime_lock "npm-mutation"
+    print_status_message "fail" "$label删除失败"
+    printf "  路径: %s\n" "$resolved_path"
     pause_before_return
+    return 1
 }
 
 run_npm_cache_dir_cleanup() {
@@ -4459,6 +4498,7 @@ run_node_gyp_cache_cleanup() {
     local selected_index=""
     local cleaned=0
     local clean_failed=0
+    local clean_skipped=0
     local -a existing_paths=()
     local -a existing_sources=()
 
@@ -4503,32 +4543,36 @@ run_node_gyp_cache_cleanup() {
     printf "输入序号、范围或 all 全选；输入 b 返回。\n"
     printf "请选择要清理的目录: "
     read -r choice || return 0
-    if ! parsed_choice="$(parse_multi_numeric_choice "$choice" "${#existing_paths[@]}")"; then
-        printf "输入无效，已取消。\n"
-        pause_before_return
-        return 1
-    fi
-    [ "$parsed_choice" != "back" ] || return 0
-    if [ "$parsed_choice" = "all" ]; then
-        parsed_choice=""
-        local all_index=1
-        while [ "$all_index" -le "${#existing_paths[@]}" ]; do
-            parsed_choice="${parsed_choice:+$parsed_choice }$all_index"
-            all_index=$((all_index + 1))
-        done
-    fi
+    parsed_choice="$(parse_multi_numeric_choice "$choice" "${#existing_paths[@]}")"
+    case "$parsed_choice" in
+        back) return 0 ;;
+        invalid)
+            print_status_message "warn" "输入无效。"
+            pause_before_return
+            return 0
+            ;;
+        all)
+            parsed_choice=""
+            local all_index=1
+            while [ "$all_index" -le "${#existing_paths[@]}" ]; do
+                parsed_choice="${parsed_choice:+$parsed_choice }$all_index"
+                all_index=$((all_index + 1))
+            done
+            ;;
+    esac
 
     for selected_index in $parsed_choice; do
         i=$((selected_index - 1))
-        if remove_confirmed_cache_directory "node-gyp 缓存(${existing_sources[$i]})" "${existing_paths[$i]}"; then
-            cleaned=$((cleaned + 1))
-        else
-            clean_failed=$((clean_failed + 1))
-        fi
+        remove_confirmed_cache_directory "node-gyp 缓存(${existing_sources[$i]})" "${existing_paths[$i]}"
+        case "$?" in
+            0) cleaned=$((cleaned + 1)) ;;
+            2) clean_skipped=$((clean_skipped + 1)) ;;
+            *) clean_failed=$((clean_failed + 1)) ;;
+        esac
     done
 
     print_blank_line
-    printf "清理完成: 成功 %d，失败 %d\n" "$cleaned" "$clean_failed"
+    printf "清理完成: 成功 %d，取消 %d，失败 %d\n" "$cleaned" "$clean_skipped" "$clean_failed"
     pause_before_return
 }
 
@@ -4539,6 +4583,7 @@ run_orphan_bin_cleanup() {
     local orphan_parsed=""
     local cleaned=0
     local clean_failed=0
+    local clean_skipped=0
     local -a orphans=()
     local -a selected_orphans=()
 
@@ -4611,6 +4656,7 @@ run_orphan_bin_cleanup() {
         orphan="${orphans[$((selected_idx - 1))]}"
         if [ ! -L "$orphan" ] || [ -e "$orphan" ]; then
             print_status_message "warn" "跳过非孤儿软链接: $orphan"
+            clean_skipped=$((clean_skipped + 1))
             continue
         fi
         if rm -f "$orphan" 2>/dev/null && [ ! -L "$orphan" ] && [ ! -e "$orphan" ]; then
@@ -4621,7 +4667,7 @@ run_orphan_bin_cleanup() {
             clean_failed=$((clean_failed + 1))
         fi
     done
-    printf "\n清理结果: 成功 %d, 失败 %d\n" "$cleaned" "$clean_failed"
+    printf "\n清理结果: 成功 %d, 跳过 %d, 失败 %d\n" "$cleaned" "$clean_skipped" "$clean_failed"
     pause_before_return
 }
 
@@ -5121,19 +5167,27 @@ run_project_node_flow() {
         return 0
     fi
 
-    version="$(select_version_from_number_or_literal "$choice" "${versions[@]}")"
+    if [ "$v_index" -gt 0 ]; then
+        version="$(select_version_from_number_or_literal "$choice" "${versions[@]}")"
+    else
+        version="$(select_version_from_number_or_literal "$choice")"
+    fi
     local requested_version="$version"
 
     [ -n "$version" ] || return 0
-    if ! version="$(resolve_project_nvmrc_concrete_version "$version" "${versions[@]}" 2>/dev/null)"; then
+    local resolve_ok="no"
+    if [ "$v_index" -gt 0 ]; then
+        version="$(resolve_project_nvmrc_concrete_version "$version" "${versions[@]}" 2>/dev/null)" && resolve_ok="yes"
+    else
+        version="$(resolve_project_nvmrc_concrete_version "$version" 2>/dev/null)" && resolve_ok="yes"
+    fi
+    if [ "$resolve_ok" != "yes" ]; then
         print_status_message "fail" "版本号格式不支持或无法唯一解析: $requested_version"
         printf "请使用具体版本号 X.Y.Z；major/minor 简写必须唯一匹配已安装版本。\n"
         pause_before_return
         return 1
     fi
 
-    local had_nvmrc="no"
-    local previous_nvmrc=""
     print_blank_line
     printf "准备写入 .nvmrc: %s\n" "$version"
     printf "注意: 该功能会写入所选项目目录，不属于 scripts/node 运行产物边界。\n"
@@ -5148,10 +5202,8 @@ run_project_node_flow() {
     fi
 
     if [ -f "$nvmrc" ]; then
-        had_nvmrc="yes"
         local existing=""
         existing="$(cat "$nvmrc" 2>/dev/null)"
-        previous_nvmrc="$existing"
         printf "  现有内容: %s\n" "$existing"
         if ! prompt_yes_no "是否覆盖？" "y"; then
             return 0
@@ -5163,7 +5215,10 @@ run_project_node_flow() {
     if ! installed_node_versions_satisfy_request "$version" "$installed_versions"; then
         print_blank_line
         if prompt_yes_no "版本 $version 未安装，是否现在安装？" "y"; then
-            if install_node_version "$version"; then
+            local project_node_install_log_file=""
+            project_node_install_log_file="$(create_log_file node-install "$version")" || return 1
+            printf "日志文件: %s\n" "$project_node_install_log_file"
+            if install_node_version "$version" "$project_node_install_log_file"; then
                 local installed_actual=""
                 installed_actual="$(node -v 2>/dev/null || true)"
                 if [ -n "$installed_actual" ] && node_version_satisfies_request "$installed_actual" "$version"; then
@@ -5200,7 +5255,10 @@ run_project_node_flow() {
     # Optional: use now
     print_blank_line
     if prompt_yes_no "是否在当前 shell 切换到 ${version}？" "y"; then
-        if switch_node_version "$version"; then
+        local project_node_switch_log_file=""
+        project_node_switch_log_file="$(create_log_file node-use "$version")" || return 1
+        printf "日志文件: %s\n" "$project_node_switch_log_file"
+        if switch_node_version "$version" "$project_node_switch_log_file"; then
             local actual_ver=""
             actual_ver="$(node -v 2>/dev/null || true)"
             if [ -n "$actual_ver" ] && node_version_satisfies_request "$actual_ver" "$version"; then
@@ -5213,9 +5271,13 @@ run_project_node_flow() {
                 print_status_message "warn" "nvm use 成功但无法读取 node -v"
             fi
         else
-            print_status_message "fail" "切换失败"
-            rollback_nvmrc_file "$nvmrc" "$had_nvmrc" "$previous_nvmrc" || true
-            print_status_message "warn" ".nvmrc 已回滚"
+            # The .nvmrc write above already succeeded and was already
+            # reported to the user; switching the *current* shell to it now
+            # is a separate, optional convenience the user just opted into.
+            # Its failure must not silently undo the already-confirmed,
+            # already-persisted project pin.
+            print_status_message "fail" "当前 shell 切换失败，.nvmrc 已保存但当前 shell 未切换"
+            printf "  可稍后手动执行: nvm use %s\n" "$version"
             pause_before_return
             return 1
         fi
@@ -5408,6 +5470,24 @@ json_print_business_error_with_operation() {
 
     code="$(printf '%s' "$error_json" | sed -n 's/.*"code":"\([^"]*\)".*/\1/p' | sed -n '1p')"
     [ -n "$code" ] || code="action-failed"
+
+    # error_json here is always one of this script's own flat, single-level
+    # JSON objects -- every caller only reaches this fallback after already
+    # confirming the payload looks like one of our own `{"code":"...",...}`
+    # errors. That guarantee lets the no-ruby path splice the enrichment
+    # fields into the existing object instead of discarding every field but
+    # "code" into an opaque rawError string. Malformed input still falls
+    # through to the safe rawError-wrapping form below.
+    case "$error_json" in
+        '{'*'}')
+            local error_body="${error_json#\{}"
+            error_body="${error_body%\}}"
+            printf '{%s,"operationId":"%s","action":"%s","subject":"%s","exitCode":%s,"status":"failed","logFile":"%s","causeCode":"%s"}\n' \
+                "$error_body" "$(json_escape "$operation_id")" "$(json_escape "$action")" "$(json_escape "$subject")" "$exit_code" "$(json_escape "$log_file")" "$(json_escape "$code")"
+            return 0
+            ;;
+    esac
+
     printf '{'
     printf '"code":"%s",' "$(json_escape "$code")"
     printf '"operationId":"%s",' "$(json_escape "$operation_id")"
@@ -5981,7 +6061,11 @@ render_non_package_action_plan_json() {
                         [ -n "$node_gyp_path" ] || continue
                         node_gyp_paths+=("$node_gyp_path")
                     done <<< "$(detect_node_gyp_cache_dirs)"
-                    json_print_string_array "${node_gyp_paths[@]}"
+                    if [ "${#node_gyp_paths[@]}" -gt 0 ]; then
+                        json_print_string_array "${node_gyp_paths[@]}"
+                    else
+                        json_print_string_array
+                    fi
                     ;;
                 orphan-bins)
                     json_print_string_array "$(get_global_bin_dir 2>/dev/null || true)"
@@ -5993,7 +6077,11 @@ render_non_package_action_plan_json() {
                         [ -n "$old_ver" ] || continue
                         nvm_old_paths+=("$(nvm_version_dir "$old_ver")")
                     done <<< "$(get_installed_node_versions 2>/dev/null || true)"
-                    json_print_string_array "${nvm_old_paths[@]}"
+                    if [ "${#nvm_old_paths[@]}" -gt 0 ]; then
+                        json_print_string_array "${nvm_old_paths[@]}"
+                    else
+                        json_print_string_array
+                    fi
                     ;;
                 logs)
                     json_print_string_array "$(manager_log_dir)"
@@ -6298,6 +6386,7 @@ execute_node_uninstall_json_action() {
 
 execute_node_use_json_action() {
     local version="$1"
+    local log_file="${2:-}"
     local installed_versions=""
 
     version="$(normalize_node_concrete_version "$version")" || {
@@ -6313,7 +6402,7 @@ execute_node_use_json_action() {
         printf '{"code":"node-version-not-installed","action":"node-use","version":"%s"}\n' "$(json_escape "$version")"
         return 1
     fi
-    switch_node_version "$version"
+    switch_node_version "$version" "$log_file"
 }
 
 execute_node_install_json_action() {
@@ -6631,7 +6720,8 @@ render_execute_json() {
             case "$action" in
                 nvm-install)
                     if nvm_install_unverified_blocked; then
-                        render_nvm_install_unverified_blocked_json "$normalized_subject" "$log_file"
+                        action_output="$(render_nvm_install_unverified_blocked_json "$normalized_subject")"
+                        json_print_business_error_with_operation "$action_output" "$action" "$normalized_subject" "$log_file" 1
                         return 1
                     fi
                     install_nvm_official >> "$log_file" 2>&1
@@ -6646,7 +6736,8 @@ render_execute_json() {
                     [ -n "$action_output" ] && printf '%s\n' "$action_output" >> "$log_file" 2>&1
                     ;;
                 node-use)
-                    action_output="$(execute_node_use_json_action "$subject" 2>>"$log_file")" || exit_code=$?
+                    # shellcheck disable=SC2094 # both writers append-only (O_APPEND); no read/write race
+                    action_output="$(execute_node_use_json_action "$subject" "$log_file" 2>>"$log_file")" || exit_code=$?
                     if [ "$exit_code" -ne 0 ] && printf '%s' "$action_output" | grep -F '"code":"' >/dev/null 2>&1; then
                         json_print_business_error_with_operation "$action_output" "$action" "$normalized_subject" "$log_file" "$exit_code"
                         return 1
@@ -6663,7 +6754,8 @@ render_execute_json() {
                     ;;
                 cleanup)
                     validate_cleanup_target "$subject" || {
-                        printf '{"code":"invalid-cleanup-target","action":"cleanup","target":"%s","logFile":"%s"}\n' "$(json_escape "$subject")" "$(json_escape "$log_file")"
+                        action_output="$(printf '{"code":"invalid-cleanup-target","action":"cleanup","target":"%s"}' "$(json_escape "$subject")")"
+                        json_print_business_error_with_operation "$action_output" "$action" "$normalized_subject" "$log_file" 1
                         return 1
                     }
                     execute_cleanup_json_action "$subject" "$log_file"
@@ -6840,7 +6932,29 @@ main() {
             manager_version
             return 0
             ;;
+        ""|--info|--dry-run|--test-mode|--json)
+            ;;
+        *)
+            print_status_message "fail" "未知参数: ${arg}，可用参数请见 --help"
+            return 2
+            ;;
     esac
+
+    # --json is the only mode a future app wrapper parses as a machine
+    # contract: preflight failures here must stay JSON-shaped too, not the
+    # plain-text messages ensure_macos/ensure_runtime_dirs print for humans.
+    if [ "$arg" = "--json" ]; then
+        if ! ensure_macos >/dev/null 2>&1; then
+            printf '{"ok":false,"schemaVersion":1,"command":"preflight","error":{"code":"unsupported-platform","platform":"%s"}}\n' "$(json_escape "$(platform_uname)")"
+            return 1
+        fi
+        if ! ensure_runtime_dirs; then
+            printf '{"ok":false,"schemaVersion":1,"command":"preflight","error":{"code":"runtime-dir-failed","path":"%s"}}\n' "$(json_escape "$(manager_runtime_dir)")"
+            return 1
+        fi
+        run_json_command "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}" "${8:-}"
+        return $?
+    fi
 
     ensure_macos || return 1
     if ! ensure_runtime_dirs; then
@@ -6855,10 +6969,6 @@ main() {
             ;;
         --test-mode)
             TEST_MODE=1 render_test_mode_status
-            return $?
-            ;;
-        --json)
-            run_json_command "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}" "${8:-}"
             return $?
             ;;
     esac

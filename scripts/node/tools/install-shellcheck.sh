@@ -29,7 +29,6 @@ case "$(uname -s):$(uname -m)" in
         ;;
 esac
 
-release_name="${asset%.tar.xz}"
 archive_path="$DOWNLOAD_DIR/$asset"
 download_url="https://github.com/koalaman/shellcheck/releases/download/${VERSION}/${asset}"
 
@@ -79,7 +78,18 @@ mkdir -p "$DOWNLOAD_DIR" "$SHELLCHECK_DIR"
 curl -fL "$download_url" -o "$archive_path"
 verify_shellcheck_archive
 tar -xJf "$archive_path" -C "$DOWNLOAD_DIR"
-cp "$DOWNLOAD_DIR/$release_name/shellcheck" "$SHELLCHECK_DIR/shellcheck"
+
+# The tarball's top-level directory name is whatever upstream packaged it as
+# (historically just "shellcheck-$VERSION", not the per-platform asset
+# filename) -- read it from the archive instead of guessing, so a
+# naming-convention change upstream can't silently break this.
+extracted_dir="$(tar -tJf "$archive_path" | head -1 | cut -d/ -f1)"
+if [ -z "$extracted_dir" ] || [ ! -x "$DOWNLOAD_DIR/$extracted_dir/shellcheck" ]; then
+    printf "could not locate extracted shellcheck binary under %s (expected top-level dir %s)\n" \
+        "$DOWNLOAD_DIR" "${extracted_dir:-<unknown>}" >&2
+    exit 1
+fi
+cp "$DOWNLOAD_DIR/$extracted_dir/shellcheck" "$SHELLCHECK_DIR/shellcheck"
 chmod +x "$SHELLCHECK_DIR/shellcheck"
 
 "$SHELLCHECK_DIR/shellcheck" --version

@@ -3,6 +3,7 @@
 日期：2026-06-11
 状态：Ready for implementation planning
 目标脚本：`scripts/node/npm-global-manager.sh`
+正式实现：`scripts/node-manager/main.sh` 与 `scripts/node-manager/lib/*.sh`；目标脚本作为兼容入口保留
 参考脚本：`scripts/homebrew/brew-app-manager.sh`
 
 ## 目标

@@ -4,7 +4,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NODE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-TOOLS_DIR="$NODE_DIR/.runtime/tools"
+MANAGER_DIR="$(cd "$NODE_DIR/../node-manager" && pwd)"
+TOOLS_DIR="$MANAGER_DIR/.runtime/tools"
 DOWNLOAD_DIR="$TOOLS_DIR/downloads"
 SHELLCHECK_DIR="$TOOLS_DIR/shellcheck"
 VERSION="${SHELLCHECK_VERSION:-v0.11.0}"

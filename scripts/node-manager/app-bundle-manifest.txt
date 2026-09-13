@@ -1,0 +1,28 @@
+# Production whitelist for future macOS app bundling.
+# Paths are relative to scripts/node-manager.
+
+main.sh
+config/global-packages.txt
+lib/cli_info.sh
+lib/cleanup.sh
+lib/environment.sh
+lib/input.sh
+lib/install.sh
+lib/inventory.sh
+lib/json_cli.sh
+lib/json_common.sh
+lib/json_execute.sh
+lib/json_plan.sh
+lib/json_read.sh
+lib/menu.sh
+lib/nvm.sh
+lib/node_actions.sh
+lib/node_install.sh
+lib/node_uninstall.sh
+lib/package.sh
+lib/project.sh
+lib/registry.sh
+lib/runtime.sh
+lib/ui.sh
+lib/uninstall.sh
+lib/update.sh

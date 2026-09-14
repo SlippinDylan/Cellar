@@ -26,6 +26,7 @@ INSTALL_MAX_RETRIES=2
 
 PROTECTED_GLOBAL_PACKAGES=("npm" "corepack")
 HELD_RUNTIME_LOCKS=""
+RUNTIME_LOCK_OWNER_TOKEN="${RUNTIME_LOCK_OWNER_TOKEN:-$$-$RANDOM-$RANDOM}"
 
 # Feature modules are sourced into this process so they share the manager's
 # configuration and runtime state while remaining organized by responsibility.
@@ -89,9 +90,6 @@ if ! load_manager_modules; then
 fi
 unset -f load_manager_modules
 
-trap 'release_all_runtime_locks' EXIT
-trap 'release_all_runtime_locks; exit 130' INT TERM
-
 # ──────────────────────────────────────────────
 # Main entrypoint
 # ──────────────────────────────────────────────
@@ -126,20 +124,15 @@ main() {
             printf '{"ok":false,"schemaVersion":1,"command":"preflight","error":{"code":"unsupported-platform","platform":"%s"}}\n' "$(json_escape "$(platform_uname)")"
             return 1
         fi
-        if ! ensure_runtime_dirs; then
-            printf '{"ok":false,"schemaVersion":1,"command":"preflight","error":{"code":"runtime-dir-failed","path":"%s"}}\n' "$(json_escape "$(manager_runtime_dir)")"
-            return 1
+        if [ "${2:-}" = "execute" ]; then
+            trap 'release_all_runtime_locks' EXIT
+            trap 'release_all_runtime_locks; exit 130' INT TERM
         fi
         run_json_command "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" "${7:-}" "${8:-}"
         return $?
     fi
 
     ensure_macos || return 1
-    if ! ensure_runtime_dirs; then
-        print_status_message "fail" "无法创建运行目录: $(manager_runtime_dir)"
-        return 1
-    fi
-
     case "$arg" in
         --info|--dry-run)
             DRY_RUN=1 render_dry_run_plan
@@ -150,6 +143,14 @@ main() {
             return $?
             ;;
     esac
+
+    trap 'release_all_runtime_locks' EXIT
+    trap 'release_all_runtime_locks; exit 130' INT TERM
+
+    if ! ensure_runtime_dirs; then
+        print_status_message "fail" "无法创建运行目录: $(manager_runtime_dir)"
+        return 1
+    fi
 
     if ! run_dependency_preflight; then
         print_status_message "fail" "依赖预检失败，已停止。"

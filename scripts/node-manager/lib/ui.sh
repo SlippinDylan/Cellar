@@ -90,9 +90,7 @@ prompt_yes_no() {
             printf "%s [y/N]: " "$prompt"
         fi
 
-        if ! read -r answer; then
-            answer="$default_answer"
-        fi
+        read -r answer || return 1
         answer="$(trim_whitespace "$answer")"
         [ -n "$answer" ] || answer="$default_answer"
 

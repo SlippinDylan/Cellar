@@ -1,0 +1,4 @@
+#!/bin/bash
+
+printf 'network access is disabled in the default test sandbox\n' >&2
+exit 97

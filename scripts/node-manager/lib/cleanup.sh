@@ -84,6 +84,7 @@ remove_confirmed_cache_directory() {
     local label="$1"
     local original_path="$2"
     local resolved_path=""
+    local directory_snapshot=""
     local dir_size=""
     local confirm_path=""
 
@@ -99,6 +100,11 @@ remove_confirmed_cache_directory() {
         pause_before_return
         return 1
     fi
+    directory_snapshot="$(capture_directory_snapshot "$resolved_path" "$(dirname "$resolved_path")" 2>/dev/null)" || {
+        print_status_message "fail" "无法建立待删除目录快照，拒绝操作: $resolved_path"
+        pause_before_return
+        return 1
+    }
 
     dir_size="$(du -sh "$resolved_path" 2>/dev/null | awk '{print $1}')"
     printf "%s路径: %s\n" "$label" "$resolved_path"
@@ -121,6 +127,12 @@ remove_confirmed_cache_directory() {
     print_separator
     if ! acquire_runtime_lock "npm-mutation"; then
         print_status_message "fail" "已有 npm 变更操作在运行，已取消目录删除"
+        pause_before_return
+        return 1
+    fi
+    if ! verify_directory_snapshot_current "$directory_snapshot"; then
+        release_runtime_lock "npm-mutation"
+        print_status_message "fail" "确认后目录状态已变化，已取消删除: $resolved_path"
         pause_before_return
         return 1
     fi
@@ -148,8 +160,7 @@ run_npm_cache_dir_cleanup() {
     local cache_path=""
 
     print_page_title "清理 npm 用户缓存目录"
-    cache_path="$(get_npm_cache_path)"
-    if [ -z "$cache_path" ]; then
+    if ! cache_path="$(get_npm_cache_path)"; then
         printf "无法获取 npm cache 路径。\n"
         pause_before_return
         return 0
@@ -262,6 +273,7 @@ run_orphan_bin_cleanup() {
     local clean_failed=0
     local clean_skipped=0
     local -a orphans=()
+    local -a orphan_snapshots=()
     local -a selected_orphans=()
 
     print_page_title "清理全局 bin 孤儿软链接"
@@ -278,7 +290,12 @@ run_orphan_bin_cleanup() {
 
     while IFS= read -r orphan; do
         [ -n "$orphan" ] || continue
-        [ -L "$orphan" ] && [ ! -e "$orphan" ] && orphans+=("$orphan")
+        local orphan_snapshot=""
+        orphan_snapshot="$(capture_orphan_symlink_snapshot "$orphan" 2>/dev/null || true)"
+        if [ -n "$orphan_snapshot" ]; then
+            orphans+=("$orphan")
+            orphan_snapshots+=("$orphan_snapshot")
+        fi
     done < <(find "$global_bin" -maxdepth 1 -type l 2>/dev/null)
 
     if [ ${#orphans[@]} -eq 0 ]; then
@@ -328,15 +345,21 @@ run_orphan_bin_cleanup() {
     print_blank_line
     printf "清理孤儿软链接...\n"
     print_separator
+    if ! acquire_runtime_lock "npm-mutation"; then
+        print_status_message "fail" "另一个 npm 变更操作正在运行，已取消清理"
+        pause_before_return
+        return 1
+    fi
     local selected_idx=""
     for selected_idx in "${selected_orphans[@]}"; do
         orphan="${orphans[$((selected_idx - 1))]}"
-        if [ ! -L "$orphan" ] || [ -e "$orphan" ]; then
+        local orphan_snapshot="${orphan_snapshots[$((selected_idx - 1))]}"
+        if ! verify_orphan_symlink_snapshot_current "$orphan_snapshot"; then
             print_status_message "warn" "跳过非孤儿软链接: $orphan"
             clean_skipped=$((clean_skipped + 1))
             continue
         fi
-        if rm -f "$orphan" 2>/dev/null && [ ! -L "$orphan" ] && [ ! -e "$orphan" ]; then
+        if remove_orphan_symlink_snapshot "$orphan_snapshot"; then
             print_status_message "ok" "已删除: $orphan"
             cleaned=$((cleaned + 1))
         else
@@ -344,6 +367,7 @@ run_orphan_bin_cleanup() {
             clean_failed=$((clean_failed + 1))
         fi
     done
+    release_runtime_lock "npm-mutation"
     printf "\n清理结果: 成功 %d, 跳过 %d, 失败 %d\n" "$cleaned" "$clean_skipped" "$clean_failed"
     pause_before_return
 }
@@ -367,8 +391,13 @@ run_nvm_old_versions_cleanup() {
     local -a cleanup_versions=()
     local -a cleanup_dirs=()
     local -a cleanup_sizes=()
+    local -a cleanup_size_kb=()
 
-    current_ver="$(nvm current 2>/dev/null || true)"
+    if ! current_ver="$(read_nvm_current_state)"; then
+        print_status_message "fail" "无法读取当前 Node 状态，旧版本清理已阻断"
+        pause_before_return
+        return 1
+    fi
     default_info="$(get_nvm_default_info)"
     default_ver="$(printf '%s' "$default_info" | awk -F'|' '{print $2}')"
     default_status="$(printf '%s' "$default_info" | awk -F'|' '{print $3}')"
@@ -385,10 +414,13 @@ run_nvm_old_versions_cleanup() {
         [ -n "$ver" ] || continue
         local vdir=""
         local vsize=""
+        local vsize_kb="0"
         local skip_reason=""
         local pkg_summary=""
         vdir="$(nvm_version_dir "$ver")"
         vsize="$(du -sh "$vdir" 2>/dev/null | awk '{print $1}')"
+        vsize_kb="$(du -sk "$vdir" 2>/dev/null | awk '{print $1}')"
+        is_nonnegative_integer "$vsize_kb" || vsize_kb=0
         pkg_summary="$(nvm_version_package_summary "$vdir" 2>/dev/null || true)"
         if [ "$ver" = "$current_ver" ]; then
             skip_reason=" (当前版本，不可清理)"
@@ -408,6 +440,7 @@ run_nvm_old_versions_cleanup() {
         cleanup_versions+=("$ver")
         cleanup_dirs+=("$vdir")
         cleanup_sizes+=("$vsize")
+        cleanup_size_kb+=("$vsize_kb")
         printf "  %d) %-15s %s%s\n" "$cv_index" "$ver" "${vsize:-<unknown>}" "$skip_reason"
         if [ -n "$pkg_summary" ]; then
             printf "      package summary: %s\n" "$pkg_summary"
@@ -509,18 +542,23 @@ run_nvm_old_versions_cleanup() {
     local cleaned=0
     local clean_warned=0
     local clean_failed=0
+    local freed_kb=0
+    if ! acquire_runtime_lock "nvm-mutation"; then
+        print_status_message "fail" "已有 nvm 变更操作在运行，已取消清理"
+        pause_before_return
+        return 1
+    fi
     for idx in "${valid_indices[@]}"; do
         ver="${cleanup_versions[$((idx - 1))]}"
         local vdir="${cleanup_dirs[$((idx - 1))]}"
         printf "卸载 %s ...\n" "$ver"
-        if ! acquire_runtime_lock "nvm-mutation"; then
-            print_status_message "fail" "$ver 已有 nvm uninstall 操作在运行"
-            clean_failed=$((clean_failed + 1))
+        if ! nvm_version_is_safe_cleanup_candidate "$ver"; then
+            print_status_message "warn" "$ver 确认后状态已变化，跳过卸载"
+            clean_warned=$((clean_warned + 1))
             continue
         fi
         nvm uninstall "$ver"
         local uninstall_exit=$?
-        release_runtime_lock "nvm-mutation"
         if [ "$uninstall_exit" -eq 0 ]; then
             if [ -d "$vdir" ]; then
                 print_status_message "warn" "$ver: nvm uninstall 成功但目录仍存在"
@@ -528,13 +566,32 @@ run_nvm_old_versions_cleanup() {
             else
                 print_status_message "ok" "$ver 已卸载"
                 cleaned=$((cleaned + 1))
+                freed_kb=$((freed_kb + ${cleanup_size_kb[$((idx - 1))]:-0}))
             fi
         else
             print_status_message "fail" "$ver 卸载失败"
             clean_failed=$((clean_failed + 1))
         fi
     done
+    release_runtime_lock "nvm-mutation"
     printf "\n清理结果: 成功 %d, 警告 %d, 失败 %d\n" "$cleaned" "$clean_warned" "$clean_failed"
+    local freed_display=""
+    freed_display="$(awk -v kb="$freed_kb" 'BEGIN {
+      if (kb >= 1048576) printf "%.2f GB", kb / 1048576
+      else if (kb >= 1024) printf "%.2f MB", kb / 1024
+      else printf "%d KB", kb
+    }')"
+    printf "  估算释放空间: %s\n" "$freed_display"
+    printf "  剩余可用 Node 版本:\n"
+    local remaining_versions=""
+    remaining_versions="$(get_installed_node_versions 2>/dev/null || true)"
+    if [ -n "$remaining_versions" ]; then
+        while IFS= read -r ver; do
+            [ -n "$ver" ] && printf "    %s\n" "$ver"
+        done <<< "$remaining_versions"
+    else
+        printf "    <none>\n"
+    fi
     pause_before_return
 }
 

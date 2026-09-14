@@ -28,7 +28,7 @@ case "${1:-}" in
                 exit 0
                 ;;
             set|delete)
-                exit "${MOCK_NPM_CONFIG_EXIT:-0}"
+                exit "${MOCK_NPM_CONFIG_EXIT:-97}"
                 ;;
             list)
                 printf '%s\n' "${MOCK_NPM_CONFIG_LIST:-registry = \"https://registry.npmjs.org/\"}"
@@ -50,7 +50,7 @@ case "${1:-}" in
         exit "${MOCK_NPM_OUTDATED_EXIT:-0}"
         ;;
     install|update|uninstall|cache)
-        exit "${MOCK_NPM_MUTATION_EXIT:-0}"
+        exit "${MOCK_NPM_MUTATION_EXIT:-97}"
         ;;
     -v|--version)
         printf '%s\n' "${MOCK_NPM_VERSION:-10.0.0}"

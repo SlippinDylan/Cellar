@@ -39,7 +39,7 @@ render_packages_json() {
         printf '{"code":"npm-list-failed"}\n'
         return 1
     fi
-    if [ -z "$packages_json" ] || ! printf '%s' "$packages_json" | validate_json_text; then
+    if [ -z "$packages_json" ] || ! printf '%s' "$packages_json" | validate_global_package_inventory_json; then
         printf '{"code":"invalid-package-json"}\n'
         return 1
     fi
@@ -52,12 +52,7 @@ render_outdated_json() {
     local stderr_file=""
     local stderr_text=""
 
-    ensure_runtime_dirs || {
-        printf '{"code":"runtime-dir-failed"}\n'
-        return 1
-    }
-
-    stderr_file="$(mktemp "$(manager_tmp_dir)/npm-outdated-stderr.XXXXXX")" || {
+    stderr_file="$(mktemp "${TMPDIR:-/tmp}/node-manager-outdated-stderr.XXXXXX")" || {
         printf '{"code":"tmp-file-failed"}\n'
         return 1
     }
@@ -84,6 +79,10 @@ render_outdated_json() {
         printf '{"code":"invalid-outdated-json"}\n'
         return 1
     fi
+    if [ "$outdated_json" != "{}" ] && ! printf '%s' "$outdated_json" | parse_outdated_package_rows_stdin >/dev/null 2>&1; then
+        printf '{"code":"invalid-outdated-schema"}\n'
+        return 1
+    fi
     printf '%s\n' "$outdated_json"
 }
 
@@ -103,19 +102,26 @@ run_json_preflight() {
             ;;
         plan)
             case "$action_name" in
-                nvm-install|node-install|node-use|node-uninstall|project-nvmrc)
+                nvm-install|node-install|node-use|node-default)
                     required_commands="sed mktemp"
+                    ;;
+                project-nvmrc)
+                    required_commands="md5 sed mktemp"
+                    ;;
+                node-uninstall)
+                    required_commands="ruby sed mktemp"
                     ;;
                 cleanup)
                     case "${3:-}" in
                         logs) required_commands="sed mktemp" ;;
-                        npm-cache-verify|npm-cache-clean|node-gyp-cache|orphan-bins) required_commands="npm sed mktemp" ;;
-                        nvm-old-versions) required_commands="ruby sed mktemp" ;;
+                        npm-cache-verify) required_commands="npm sed mktemp" ;;
+                        npm-cache-clean|node-gyp-cache|orphan-bins) required_commands="shasum npm sed mktemp" ;;
+                        nvm-old-versions) required_commands="shasum ruby sed mktemp" ;;
                         *) required_commands="sed mktemp" ;;
                     esac
                     ;;
                 registry-set|registry-delete|scope-registry-set|scope-registry-delete)
-                    required_commands="npm sed mktemp"
+                    required_commands="ruby npm sed mktemp"
                     ;;
                 install|uninstall|update-latest|"")
                     required_commands="ruby npm sed mktemp"
@@ -128,11 +134,17 @@ run_json_preflight() {
         execute)
             case "$action_name" in
                 nvm-install)
-                    required_commands="curl bash sed mktemp"
+                    required_commands="curl bash env sed mktemp"
                     [ -n "$NVM_INSTALL_SHA256" ] && required_commands="$required_commands shasum"
                     ;;
-                node-install|node-use|node-uninstall|project-nvmrc)
+                node-install|node-use|node-default)
                     required_commands="sed mktemp"
+                    ;;
+                project-nvmrc)
+                    required_commands="md5 sed mktemp"
+                    ;;
+                node-uninstall)
+                    required_commands="ruby sed mktemp"
                     ;;
                 cleanup)
                     case "${3:-}" in
@@ -141,9 +153,12 @@ run_json_preflight() {
                         nvm-old-versions) required_commands="ruby sed mktemp" ;;
                         *) required_commands="sed mktemp" ;;
                     esac
+                    [ "${3:-}" = "logs" ] || {
+                        [ -n "${4:-}" ] && required_commands="$required_commands shasum"
+                    }
                     ;;
                 registry-set|registry-delete|scope-registry-set|scope-registry-delete)
-                    required_commands="npm sed mktemp"
+                    required_commands="ruby npm sed mktemp"
                     ;;
                 install|uninstall|update-latest|"")
                     required_commands="ruby npm sed mktemp"
@@ -193,7 +208,10 @@ render_logs_json() {
     local limit="${1:-20}"
 
     is_nonnegative_integer "$limit" || limit=20
-    ensure_runtime_dirs || return 1
+    if [ ! -d "$(manager_log_dir)" ]; then
+        printf '[]\n'
+        return 0
+    fi
     printf '['
     find "$(manager_log_dir)" -maxdepth 1 -type f -name '*.log*' 2>/dev/null \
         | sort -r \
@@ -216,7 +234,6 @@ cleanup_runtime_logs_keep_recent() {
     local index=0
 
     is_nonnegative_integer "$keep_count" || keep_count=100
-    ensure_runtime_dirs || return 1
     log_dir="$(manager_log_dir)"
     [ -d "$log_dir" ] || return 0
 
@@ -253,6 +270,8 @@ render_package_plan_json() {
     local installed_version=""
     local target_version=""
     local log_file=""
+    local install_state=""
+    local install_state_exit=0
 
     if ! validate_package_spec "$package_spec"; then
         printf '{"code":"invalid-package-spec","packageSpec":"%s","allowed":"registry package safe subset: package, @scope/package, package@version, @scope/package@tag"}\n' "$(json_escape "$package_spec")"
@@ -264,7 +283,15 @@ render_package_plan_json() {
         printf '{"code":"target-version-unavailable","packageSpec":"%s"}\n' "$(json_escape "$package_spec")"
         return 1
     fi
-    installed_version="$(get_installed_global_package_version "$package_name")"
+    install_state="$(query_global_package_install_state "$package_name")" || install_state_exit=$?
+    case "$install_state_exit" in
+        0) installed_version="${install_state#*|}" ;;
+        1) installed_version="" ;;
+        *)
+            printf '{"code":"package-state-unavailable","action":"install","packageName":"%s"}\n' "$(json_escape "$package_name")"
+            return 1
+            ;;
+    esac
     log_file_hint="$(create_log_file_hint install "$package_name")"
     local already_installed="false"
     if is_install_spec_satisfied "$package_spec" "$installed_version" "$target_version"; then

@@ -24,7 +24,11 @@ run_uninstall_node_flow() {
         fi
     fi
 
-    current_version="$(nvm current 2>/dev/null || true)"
+    if ! current_version="$(read_nvm_current_state)"; then
+        print_status_message "fail" "无法读取当前 Node 状态，卸载操作已阻断"
+        pause_before_return
+        return 1
+    fi
     default_info="$(get_nvm_default_info)"
     default_alias="$(printf '%s' "$default_info" | awk -F'|' '{print $2}')"
     default_status="$(printf '%s' "$default_info" | awk -F'|' '{print $3}')"
@@ -111,36 +115,37 @@ run_uninstall_node_flow() {
         printf "  目录体积: %s\n" "${dir_size:-<unknown>}"
     fi
 
-    # Show global packages under this version
-    local version_npm="$version_dir/bin/npm"
-    if [ -x "$version_npm" ]; then
-        local version_packages=""
-        local version_json=""
-        version_json="$("$version_npm" ls -g --depth=0 --json 2>/dev/null || true)"
-        version_packages="$(printf '%s' "$version_json" \
-            | ruby -rjson -e '
-                d = JSON.parse(STDIN.read)
-                deps = d["dependencies"] || {}
-                deps.keys.sort.each do |n|
-                  v = deps[n]["version"] rescue "?"
-                  puts "#{n} #{v}"
-                end
-            ' 2>/dev/null || true)"
-        if [ -z "$version_packages" ] && ! printf '%s' "$version_json" | validate_json_text; then
-            print_blank_line
-            print_status_message "fail" "无法解析该版本的全局包列表，取消卸载"
-            pause_before_return
-            return 1
-        fi
-        if [ -n "$version_packages" ]; then
-            printf "\n  该版本下的全局包:\n"
-            while IFS= read -r line; do
-                [ -n "$line" ] || continue
-                printf "    %s\n" "$line"
-            done <<< "$version_packages"
-            print_blank_line
-            print_status_message "warn" "卸载此版本将同时删除以上全局包"
-        fi
+    # Package inventory is part of the destructive-operation contract. An
+    # unreadable npm or malformed inventory is unknown, never an empty list.
+    local version_packages=""
+    local version_json=""
+    local version_package_snapshot=""
+    if ! version_json="$(load_nvm_version_package_inventory_json "$version_dir")"; then
+        print_blank_line
+        print_status_message "fail" "无法读取该版本的全局包列表，取消卸载"
+        pause_before_return
+        return 1
+    fi
+    version_packages="$(printf '%s' "$version_json" | parse_global_package_versions_stdin)" || {
+        print_blank_line
+        print_status_message "fail" "无法解析该版本的全局包列表，取消卸载"
+        pause_before_return
+        return 1
+    }
+    version_package_snapshot="$(nvm_version_package_summary "$version_dir")" || {
+        print_blank_line
+        print_status_message "fail" "无法建立该版本的全局包快照，取消卸载"
+        pause_before_return
+        return 1
+    }
+    if [ -n "$version_packages" ]; then
+        printf "\n  该版本下的全局包:\n"
+        while IFS='|' read -r package_name package_version; do
+            [ -n "$package_name" ] || continue
+            printf "    %s %s\n" "$package_name" "$package_version"
+        done <<< "$version_packages"
+        print_blank_line
+        print_status_message "warn" "卸载此版本将同时删除以上全局包"
     fi
 
     print_separator
@@ -160,6 +165,24 @@ run_uninstall_node_flow() {
     print_separator
     if ! acquire_runtime_lock "nvm-mutation"; then
         print_status_message "fail" "已有 nvm uninstall 操作在运行"
+        pause_before_return
+        return 1
+    fi
+    local locked_current_version=""
+    local locked_default_info=""
+    local locked_default_version=""
+    local locked_default_status=""
+    local locked_package_snapshot=""
+    locked_current_version="$(read_nvm_current_state 2>/dev/null || true)"
+    locked_default_info="$(get_nvm_default_info)"
+    locked_default_version="$(printf '%s' "$locked_default_info" | awk -F'|' '{print $2}')"
+    locked_default_status="$(printf '%s' "$locked_default_info" | awk -F'|' '{print $3}')"
+    locked_package_snapshot="$(nvm_version_package_summary "$version_dir" 2>/dev/null || true)"
+    if [ -z "$locked_current_version" ] || [ ! -d "$version_dir" ] || [ "$locked_default_status" != "resolved" ] || \
+        [ "$version" = "$locked_current_version" ] || [ "$version" = "$locked_default_version" ] || \
+        [ -z "$locked_package_snapshot" ] || [ "$locked_package_snapshot" != "$version_package_snapshot" ]; then
+        release_runtime_lock "nvm-mutation"
+        print_status_message "fail" "确认后 Node 版本状态已变化，已取消卸载"
         pause_before_return
         return 1
     fi

@@ -1,8 +1,6 @@
 # shellcheck shell=bash
 
 render_dry_run_plan() {
-    ensure_runtime_dirs || return 1
-
     cat <<EOF
 INFO
 runtimeDir=$(manager_runtime_dir)
@@ -15,8 +13,6 @@ EOF
 }
 
 render_test_mode_status() {
-    ensure_runtime_dirs || return 1
-
     cat <<EOF
 TEST MODE
 runtimeDir=$(manager_runtime_dir)

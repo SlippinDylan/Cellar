@@ -74,7 +74,7 @@ parse_package_spec() {
             name_part="$rest"
         fi
         package_name="$scope/$name_part"
-        validate_package_name_component "${scope#@}" || return 1
+        validate_scope_name_component "${scope#@}" || return 1
         validate_package_name_component "$name_part" || return 1
     else
         if [[ "$spec" == *@* ]]; then
@@ -95,6 +95,18 @@ parse_package_spec() {
 }
 
 validate_package_name_component() {
+    local name="${1:-}"
+
+    case "$name" in
+        ""|.*|_*|node_modules|favicon.ico)
+            return 1
+            ;;
+    esac
+
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+}
+
+validate_scope_name_component() {
     local name="${1:-}"
 
     case "$name" in
@@ -124,8 +136,8 @@ extract_version_from_npm_view_text() {
     target_version="${target_version%\'}"
     target_version="${target_version#\"}"
     target_version="${target_version%\"}"
-    if ! [[ "$target_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9._-]+)?$ ]]; then
-        target_version="$(printf '%s\n' "$target_version" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9._-]+)?' | tail -1 || true)"
+    if ! requested_package_version_is_exact "$target_version"; then
+        target_version="$(printf '%s\n' "$target_version" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9._-]*)?(\+[A-Za-z0-9][A-Za-z0-9._-]*)?' | tail -1 || true)"
     fi
     [ -n "$target_version" ] || return 1
     printf '%s' "$target_version"
@@ -135,6 +147,7 @@ npm_view_resolved_version() {
     local package_spec="$1"
     local view_output=""
     local target_version=""
+    local json_parse_exit=0
 
     if command_exists ruby; then
         view_output="$(npm view "$package_spec" version --json 2>/dev/null)" || view_output=""
@@ -148,13 +161,10 @@ npm_view_resolved_version() {
                 else
                   puts("")
                 end
-            ' 2>/dev/null || true)"
-            target_version="$(trim_whitespace "$target_version")"
-            if [ -n "$target_version" ]; then
-                printf '%s' "$target_version"
-                return 0
-            fi
-            if target_version="$(extract_version_from_npm_view_text "$view_output")"; then
+            ' 2>/dev/null)" || json_parse_exit=$?
+            if [ "$json_parse_exit" -eq 0 ]; then
+                target_version="$(trim_whitespace "$target_version")"
+                requested_package_version_is_exact "$target_version" || return 1
                 printf '%s' "$target_version"
                 return 0
             fi
@@ -231,11 +241,6 @@ verify_install_result_for_spec() {
     return 0
 }
 
-npm_package_is_installed() {
-    local package_name="$1"
-    npm ls -g "$package_name" --depth=0 >/dev/null 2>&1
-}
-
 is_install_spec_satisfied() {
     local package_spec="$1"
     local installed_version="$2"
@@ -252,16 +257,42 @@ is_install_spec_satisfied() {
 validate_scope_name() {
     local scope="${1:-}"
     case "$scope" in
-        @*) validate_package_name_component "${scope#@}" ;;
+        @*) validate_scope_name_component "${scope#@}" ;;
         *) return 1 ;;
     esac
 }
 
 validate_registry_url() {
     local url="${1:-}"
-    [[ "$url" =~ ^https://[^[:space:]]+/$ ]] && return 0
-    [[ "$url" =~ ^http://(localhost|127\.0\.0\.1)(:[0-9]+)?/$ ]] && return 0
-    return 1
+    local remainder=""
+    local authority=""
+    local path=""
+
+    case "$url" in
+        https://*) remainder="${url#https://}" ;;
+        http://localhost/*|http://localhost:[0-9]*/*|http://127.0.0.1/*|http://127.0.0.1:[0-9]*/*)
+            remainder="${url#http://}"
+            ;;
+        *) return 1 ;;
+    esac
+    case "$url" in
+        *[[:space:]]*|*\?*|*\#*) return 1 ;;
+    esac
+    case "$remainder" in
+        */) ;;
+        *) return 1 ;;
+    esac
+    authority="${remainder%%/*}"
+    path="${remainder#*/}"
+    [ -n "$authority" ] || return 1
+    case "$authority" in
+        *"@"*) return 1 ;;
+    esac
+    [[ "$authority" =~ ^[A-Za-z0-9._-]+(:[0-9]+)?$ ]] || return 1
+    case "$path" in
+        *[!A-Za-z0-9._~/%+-]*) return 1 ;;
+    esac
+    return 0
 }
 
 # npm resolves package URLs by joining the registry base against the
@@ -406,6 +437,71 @@ upgrade_global_package_to_latest() {
     run_logged_command "$log_file" npm install -g "${package_name}@latest"
 }
 
+upgrade_global_package_to_latest_verified() {
+    local package_name="$1"
+    local expected_current_version="$2"
+    local log_file="$3"
+    local install_state=""
+    local install_state_exit=0
+    local current_version=""
+    local new_version=""
+    local latest_version=""
+
+    if ! acquire_runtime_lock "npm-mutation"; then
+        printf 'failed|mutation-locked||\n'
+        return 1
+    fi
+
+    install_state="$(query_global_package_install_state "$package_name")" || install_state_exit=$?
+    if [ "$install_state_exit" -ne 0 ]; then
+        release_runtime_lock "npm-mutation"
+        if [ "$install_state_exit" -eq 1 ]; then
+            printf 'failed|package-not-installed||\n'
+        else
+            printf 'failed|package-state-unavailable||\n'
+        fi
+        return 1
+    fi
+    current_version="${install_state#*|}"
+    if [ -n "$expected_current_version" ] && [ "$current_version" != "$expected_current_version" ]; then
+        release_runtime_lock "npm-mutation"
+        printf 'failed|package-state-changed|%s|\n' "$current_version"
+        return 1
+    fi
+
+    if ! upgrade_global_package_to_latest "$package_name" "$log_file"; then
+        release_runtime_lock "npm-mutation"
+        printf 'failed|npm-install-failed|%s|\n' "$current_version"
+        return 1
+    fi
+
+    install_state_exit=0
+    install_state="$(query_global_package_install_state "$package_name")" || install_state_exit=$?
+    if [ "$install_state_exit" -ne 0 ]; then
+        release_runtime_lock "npm-mutation"
+        printf 'failed|post-install-state-unavailable||\n'
+        return 1
+    fi
+    new_version="${install_state#*|}"
+    latest_version="$(get_registry_latest_version "$package_name" || true)"
+    release_runtime_lock "npm-mutation"
+
+    if [ "$new_version" = "$current_version" ]; then
+        printf 'failed|version-unchanged|%s|%s\n' "$new_version" "$latest_version"
+        return 1
+    fi
+    if [ -z "$latest_version" ]; then
+        printf 'warn|latest-verification-unavailable|%s|\n' "$new_version"
+        return 0
+    fi
+    if [ "$new_version" != "$latest_version" ]; then
+        printf 'failed|latest-mismatch|%s|%s\n' "$new_version" "$latest_version"
+        return 1
+    fi
+
+    printf 'ok|verified|%s|%s\n' "$new_version" "$latest_version"
+}
+
 upgrade_global_package() {
     local package_name="$1"
     local log_file="${2:-}"
@@ -439,6 +535,9 @@ verify_global_package_update_result() {
     local wanted_version="$3"
     local new_version=""
     local row=""
+    local row_current=""
+    local row_wanted=""
+    local -a row_parts=()
 
     new_version="$(get_installed_global_package_version "$package_name")"
     if [ -z "$new_version" ]; then
@@ -449,12 +548,19 @@ verify_global_package_update_result() {
     local scan_exit=0
     row="$(scan_outdated_package_row "$package_name" 2>/dev/null)" || scan_exit=$?
     if [ "$scan_exit" -eq 0 ]; then
+        IFS='|' read -r -a row_parts <<< "$row"
+        row_current="${row_parts[1]:-}"
+        row_wanted="${row_parts[2]:-}"
+        if [ "$new_version" = "$wanted_version" ] && [ "$row_current" = "$new_version" ] && [ "$row_wanted" = "$wanted_version" ]; then
+            printf 'ok|已达到 wanted，latest 仍有更新|%s\n' "$new_version"
+            return 0
+        fi
         printf 'failed|升级后仍出现在 outdated 列表: %s|%s\n' "$row" "$new_version"
         return 1
     fi
 
     if [ "$scan_exit" -eq 2 ]; then
-        if [ "$new_version" = "$wanted_version" ] || [ "$new_version" != "$old_version" ]; then
+        if [ "$new_version" = "$wanted_version" ]; then
             printf 'warn|复扫失败，已用版本变化降级验证|%s\n' "$new_version"
             return 0
         fi

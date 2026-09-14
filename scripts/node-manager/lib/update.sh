@@ -69,7 +69,11 @@ run_upgrade_scan_flow() {
         return 1
     fi
 
-    outdated_rows="$(printf '%s' "$outdated_json" | parse_outdated_package_rows_stdin)" || true
+    if ! outdated_rows="$(printf '%s' "$outdated_json" | parse_outdated_package_rows_stdin)"; then
+        print_status_message "fail" "扫描结果 JSON 结构不受支持"
+        pause_before_return
+        return 1
+    fi
 
     if [ -z "$outdated_rows" ]; then
         printf "没有可升级的全局包。\n"
@@ -203,7 +207,11 @@ run_upgrade_scan_flow() {
     # a silent "0 remaining".
     if remaining_json="$(render_outdated_json 2>/dev/null)"; then
         if [ -n "$remaining_json" ] && [ "$remaining_json" != "{}" ]; then
-            remaining_rows="$(printf '%s' "$remaining_json" | parse_outdated_package_rows_stdin 2>/dev/null || true)"
+            if ! remaining_rows="$(printf '%s' "$remaining_json" | parse_outdated_package_rows_stdin 2>/dev/null)"; then
+                printf "  剩余可升级: <扫描结果结构异常，无法确认>\n"
+                pause_before_return
+                return 1
+            fi
         fi
         if [ -n "$remaining_rows" ]; then
             printf "  剩余可升级: %s\n" "$(printf '%s\n' "$remaining_rows" | sed '/^$/d' | wc -l | tr -d ' ')"
@@ -221,6 +229,8 @@ run_upgrade_latest_flow() {
     local package_name=""
     local current_version=""
     local latest_version=""
+    local install_state=""
+    local install_state_exit=0
 
     print_page_title "指定包升级到 latest"
 
@@ -235,14 +245,20 @@ run_upgrade_latest_flow() {
         return 1
     fi
 
-    # Check if installed
-    current_version="$(get_installed_global_package_version "$package_name")"
-
-    if [ -z "$current_version" ]; then
-        printf "包 %s 未安装。\n" "$package_name"
-        pause_before_return
-        return 0
-    fi
+    install_state="$(query_global_package_install_state "$package_name")" || install_state_exit=$?
+    case "$install_state_exit" in
+        0) current_version="${install_state#*|}" ;;
+        1)
+            printf "包 %s 未安装。\n" "$package_name"
+            pause_before_return
+            return 0
+            ;;
+        *)
+            print_status_message "fail" "无法读取 $package_name 的全局安装状态"
+            pause_before_return
+            return 1
+            ;;
+    esac
 
     # Get latest version from registry
     latest_version="$(get_registry_latest_version "$package_name" || true)"
@@ -273,25 +289,38 @@ run_upgrade_latest_flow() {
     local upgrade_log_file=""
     upgrade_log_file="$(create_log_file upgrade-latest "$package_name")"
     printf "日志文件: %s\n" "$upgrade_log_file"
-    if upgrade_global_package_to_latest "$package_name" "$upgrade_log_file"; then
-        local new_version=""
-        new_version="$(get_installed_global_package_version "$package_name")"
-        print_blank_line
-        if [ -z "$new_version" ]; then
-            print_status_message "warn" "升级后无法读取版本"
-        elif [ "$new_version" = "$current_version" ]; then
-            print_status_message "warn" "版本未变化 $current_version"
-        elif [ "$new_version" != "$latest_version" ]; then
-            print_status_message "fail" "升级后版本不是 latest"
-            printf "  期望: %s\n" "$latest_version"
-            printf "  实际: %s\n" "$new_version"
-        else
+    local upgrade_result=""
+    local upgrade_status=""
+    local upgrade_detail=""
+    local new_version=""
+    local verified_latest=""
+    upgrade_result="$(upgrade_global_package_to_latest_verified "$package_name" "$current_version" "$upgrade_log_file" || true)"
+    IFS='|' read -r upgrade_status upgrade_detail new_version verified_latest <<< "$upgrade_result"
+    print_blank_line
+    case "$upgrade_status" in
+        ok)
             print_status_message "ok" "升级成功"
             printf "  %s: %s -> %s\n" "$package_name" "$current_version" "$new_version"
-        fi
-    else
-        print_status_message "fail" "升级失败: $package_name"
-    fi
+            ;;
+        warn)
+            print_status_message "warn" "升级成功，但无法重新读取 latest 进行验证"
+            printf "  %s: %s -> %s\n" "$package_name" "$current_version" "$new_version"
+            ;;
+        *)
+            case "$upgrade_detail" in
+                version-unchanged) print_status_message "warn" "版本未变化 $current_version" ;;
+                package-state-changed) print_status_message "fail" "确认后包版本已变化，已取消升级" ;;
+                package-not-installed) print_status_message "fail" "确认后包已被卸载，已取消升级" ;;
+                mutation-locked) print_status_message "fail" "另一个 npm 变更操作正在运行，已取消升级" ;;
+                latest-mismatch)
+                    print_status_message "fail" "升级后版本不是 latest"
+                    printf "  期望: %s\n" "$verified_latest"
+                    printf "  实际: %s\n" "$new_version"
+                    ;;
+                *) print_status_message "fail" "升级失败: $package_name ($upgrade_detail)" ;;
+            esac
+            ;;
+    esac
 
     pause_before_return
 }

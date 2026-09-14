@@ -38,10 +38,13 @@ Usage:
   npm-global-manager.sh --json execute node-install <version|lts>
   npm-global-manager.sh --json plan node-use <version>
   npm-global-manager.sh --json execute node-use <version>
+  npm-global-manager.sh --json plan node-default <version>
+  npm-global-manager.sh --json execute node-default <version>
   npm-global-manager.sh --json plan node-uninstall <version>
   npm-global-manager.sh --json execute node-uninstall <version>
   npm-global-manager.sh --json plan cleanup <target>
-  npm-global-manager.sh --json execute cleanup <target>
+  npm-global-manager.sh --json execute cleanup <target> [plan-token]
+  npm-global-manager.sh --json execute cleanup logs [keep-count]
   npm-global-manager.sh --json plan project-nvmrc <project-path> <version>
   npm-global-manager.sh --json execute project-nvmrc <project-path> <version>
   npm-global-manager.sh --json status
@@ -60,9 +63,12 @@ Options:
 Notes:
   JSON execute requires NODE_MANAGER_ALLOW_JSON_EXECUTE=1 after app-side confirmation.
   execute cleanup logs proxies to logs-cleanup and does not require NODE_MANAGER_ALLOW_JSON_EXECUTE.
-  node-install also accepts --lts, --lts=<line>, lts/*, and lts/<line>.
+  node-install also accepts --lts, lowercase --lts=<line>, lts/*, and lowercase lts/<line>.
+  node-use changes only the execute process; use node-default for persistent selection.
   project-nvmrc execute also requires NODE_MANAGER_ALLOW_PROJECT_WRITE=1 because it writes outside scripts/node-manager.
   cleanup targets: npm-cache-verify, npm-cache-clean, node-gyp-cache, orphan-bins, nvm-old-versions, logs.
+  A plan token is available for destructive candidate-based cleanup targets.
+  cleanup logs keeps its legacy optional keep-count argument and does not use a plan token.
 EOF
 }
 
@@ -242,6 +248,12 @@ resolve_nvm_install_request_json() {
     local requested="${1:-}"
     requested="${requested:-$NVM_INSTALL_VERSION}"
 
+    validate_nvm_install_configuration || {
+        printf '{"code":"invalid-nvm-install-configuration","action":"nvm-install","configuredVersion":"%s","installUrl":"%s"}\n' \
+            "$(json_escape "$NVM_INSTALL_VERSION")" "$(json_escape "$NVM_INSTALL_URL")"
+        return 1
+    }
+
     if [ "$requested" != "$NVM_INSTALL_VERSION" ]; then
         printf '{"code":"unsupported-nvm-install-version","action":"nvm-install","requestedVersion":"%s","configuredVersion":"%s"}\n' \
             "$(json_escape "$requested")" "$(json_escape "$NVM_INSTALL_VERSION")"
@@ -266,12 +278,12 @@ normalize_node_install_target() {
             return 0
             ;;
         --lts=*)
-            [ -n "${target#--lts=}" ] || return 1
+            [[ "${target#--lts=}" =~ ^[a-z0-9._-]+$ ]] || return 1
             printf '%s\n' "$target"
             return 0
             ;;
         lts/*)
-            [ -n "${target#lts/}" ] || return 1
+            [[ "${target#lts/}" =~ ^[a-z0-9._-]+$ ]] || return 1
             printf '%s\n' "--lts=${target#lts/}"
             return 0
             ;;
@@ -303,12 +315,18 @@ collect_node_plan_state() {
     local default_info=""
     local default_version=""
     local default_status=""
+    local node_path=""
 
-    if load_nvm_into_current_shell >/dev/null 2>&1; then
+    if is_nvm_loaded; then
         nvm_available="true"
         current_version="$(nvm current 2>/dev/null || true)"
         default_info="$(parse_nvm_default_alias_output "$(nvm alias default 2>/dev/null || true)")"
     else
+        [ -s "$(nvm_script_path)" ] && nvm_available="true"
+        node_path="$(command -v node 2>/dev/null || true)"
+        if [ -n "$node_path" ] && is_node_path_nvm_managed "$node_path"; then
+            current_version="$(node -v 2>/dev/null || true)"
+        fi
         default_info="$(read_nvm_default_alias_file_info)"
     fi
     default_version="$(printf '%s' "$default_info" | awk -F'|' '{print $2}')"

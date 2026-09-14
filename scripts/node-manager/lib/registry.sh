@@ -24,11 +24,101 @@ get_current_registry() {
 npm_config_get_layer() {
     local key="$1"
     local location="$2"
+    local config_file=""
+    local value=""
+    local value_exit=0
+
     if [ "$location" = "effective" ]; then
-        npm config get "$key" 2>/dev/null || true
+        npm config get "$key" 2>/dev/null
+        return $?
+    fi
+
+    config_file="$(npm_config_file_for_layer "$location")" || {
+        printf '<unavailable>\n'
+        return 1
+    }
+    if [ ! -f "$config_file" ]; then
+        printf 'undefined\n'
         return 0
     fi
-    npm config get "$key" "--location=$location" 2>/dev/null || true
+    value="$(npmrc_explicit_value "$config_file" "$key")" || value_exit=$?
+    case "$value_exit" in
+        0) printf '%s\n' "$value" ;;
+        1) printf 'undefined\n' ;;
+        *)
+            printf '<unavailable>\n'
+            return 2
+            ;;
+    esac
+}
+
+npm_config_file_for_layer() {
+    local location="$1"
+    local prefix=""
+
+    case "$location" in
+        user)
+            npm config get userconfig 2>/dev/null
+            ;;
+        global)
+            npm config get globalconfig 2>/dev/null
+            ;;
+        project)
+            prefix="$(npm prefix 2>/dev/null)" || return 1
+            [ -n "$prefix" ] || return 1
+            printf '%s/.npmrc\n' "$prefix"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+npmrc_explicit_value() {
+    local config_file="$1"
+    local key="$2"
+
+    ruby -e '
+      config_file, wanted = ARGV
+      found = nil
+      begin
+        File.foreach(config_file) do |line|
+          stripped = line.strip
+          next if stripped.empty? || stripped.start_with?("#", ";")
+          name, value = line.split("=", 2)
+          next unless value && name.strip == wanted
+          value = value.strip
+          quote = value[0]
+          if value.length >= 2 && quote == value[-1] && ["\"", 39.chr].include?(quote)
+            value = value[1...-1]
+          end
+          found = value
+        end
+      rescue SystemCallError, ArgumentError
+        exit 2
+      end
+      exit 1 if found.nil?
+      puts found
+    ' "$config_file" "$key" 2>/dev/null
+}
+
+load_explicit_scope_registry_lines() {
+    local location="$1"
+    local config_file=""
+
+    config_file="$(npm_config_file_for_layer "$location")" || return 1
+    [ -f "$config_file" ] || return 0
+    parse_scope_registry_lines "$config_file"
+}
+
+load_effective_scope_registry_lines() {
+    local config_text=""
+
+    config_text="$(npm config list -l 2>/dev/null)" || return 1
+    printf '%s\n' "$config_text" \
+        | grep -E '^@[^:]+:registry[[:space:]]*=' \
+        | sed -n 's/^\(@[A-Za-z0-9._-][A-Za-z0-9._-]*:registry\)[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}$/\1=\2/p' \
+        || true
 }
 
 normalize_npm_config_value() {
@@ -51,7 +141,13 @@ print_scope_registry_layers() {
 }
 
 get_npm_cache_path() {
-    npm config get cache 2>/dev/null || true
+    local cache_path=""
+
+    cache_path="$(npm config get cache 2>/dev/null)" || return 1
+    case "$cache_path" in
+        ""|undefined|null) return 1 ;;
+    esac
+    printf '%s\n' "$cache_path"
 }
 
 # ──────────────────────────────────────────────
@@ -60,15 +156,37 @@ get_npm_cache_path() {
 
 set_registry_value() {
     local registry_url="$1"
+    local expected_user_value="${2-__unchecked__}"
+    local before_user_value=""
     local user_value=""
     local effective_value=""
 
+    command_exists ruby || return 127
     validate_registry_url "$registry_url" || return 1
-    npm config set registry "$registry_url" --location=user || return 1
-    user_value="$(npm config get registry --location=user 2>/dev/null || true)"
+    acquire_runtime_lock "npm-mutation" || return 1
+    if [ "$expected_user_value" != "__unchecked__" ]; then
+        before_user_value="$(npm_config_get_layer registry user)" || {
+            release_runtime_lock "npm-mutation"
+            return 1
+        }
+        if [ "$before_user_value" != "$expected_user_value" ]; then
+            release_runtime_lock "npm-mutation"
+            printf 'state-changed\n'
+            return 3
+        fi
+    fi
+    npm config set registry "$registry_url" --location=user || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    user_value="$(npm_config_get_layer registry user)" || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    effective_value="$(npm config get registry 2>/dev/null || true)"
+    release_runtime_lock "npm-mutation"
     [ "$user_value" = "$registry_url" ] || return 1
 
-    effective_value="$(npm config get registry 2>/dev/null || true)"
     if [ "$effective_value" = "$registry_url" ]; then
         printf 'effective-ok\n'
     else
@@ -78,25 +196,70 @@ set_registry_value() {
 }
 
 delete_registry_value() {
-    npm config delete registry --location=user || return 1
+    local expected_user_value="${1-__unchecked__}"
+    local before_user_value=""
     local value=""
-    value="$(npm config get registry --location=user 2>/dev/null || true)"
+
+    command_exists ruby || return 127
+    acquire_runtime_lock "npm-mutation" || return 1
+    if [ "$expected_user_value" != "__unchecked__" ]; then
+        before_user_value="$(npm_config_get_layer registry user)" || {
+            release_runtime_lock "npm-mutation"
+            return 1
+        }
+        if [ "$before_user_value" != "$expected_user_value" ]; then
+            release_runtime_lock "npm-mutation"
+            printf 'state-changed\n'
+            return 3
+        fi
+    fi
+    npm config delete registry --location=user || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    value="$(npm_config_get_layer registry user)" || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    release_runtime_lock "npm-mutation"
     [ -z "$value" ] || [ "$value" = "undefined" ] || [ "$value" = "null" ]
 }
 
 set_scope_registry_value() {
     local scope_name="$1"
     local registry_url="$2"
+    local expected_user_value="${3-__unchecked__}"
+    local before_user_value=""
     local user_value=""
     local effective_value=""
 
+    command_exists ruby || return 127
     validate_scope_name "$scope_name" || return 1
     validate_registry_url "$registry_url" || return 1
-    npm config set "${scope_name}:registry" "$registry_url" --location=user || return 1
-    user_value="$(npm config get "${scope_name}:registry" --location=user 2>/dev/null || true)"
+    acquire_runtime_lock "npm-mutation" || return 1
+    if [ "$expected_user_value" != "__unchecked__" ]; then
+        before_user_value="$(npm_config_get_layer "${scope_name}:registry" user)" || {
+            release_runtime_lock "npm-mutation"
+            return 1
+        }
+        if [ "$before_user_value" != "$expected_user_value" ]; then
+            release_runtime_lock "npm-mutation"
+            printf 'state-changed\n'
+            return 3
+        fi
+    fi
+    npm config set "${scope_name}:registry" "$registry_url" --location=user || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    user_value="$(npm_config_get_layer "${scope_name}:registry" user)" || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    effective_value="$(npm config get "${scope_name}:registry" 2>/dev/null || true)"
+    release_runtime_lock "npm-mutation"
     [ "$user_value" = "$registry_url" ] || return 1
 
-    effective_value="$(npm config get "${scope_name}:registry" 2>/dev/null || true)"
     if [ "$effective_value" = "$registry_url" ]; then
         printf 'effective-ok\n'
     else
@@ -107,10 +270,33 @@ set_scope_registry_value() {
 
 delete_scope_registry_value() {
     local scope_name="$1"
-    validate_scope_name "$scope_name" || return 1
-    npm config delete "${scope_name}:registry" --location=user || return 1
+    local expected_user_value="${2-__unchecked__}"
+    local before_user_value=""
     local value=""
-    value="$(npm config get "${scope_name}:registry" --location=user 2>/dev/null || true)"
+
+    command_exists ruby || return 127
+    validate_scope_name "$scope_name" || return 1
+    acquire_runtime_lock "npm-mutation" || return 1
+    if [ "$expected_user_value" != "__unchecked__" ]; then
+        before_user_value="$(npm_config_get_layer "${scope_name}:registry" user)" || {
+            release_runtime_lock "npm-mutation"
+            return 1
+        }
+        if [ "$before_user_value" != "$expected_user_value" ]; then
+            release_runtime_lock "npm-mutation"
+            printf 'state-changed\n'
+            return 3
+        fi
+    fi
+    npm config delete "${scope_name}:registry" --location=user || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    value="$(npm_config_get_layer "${scope_name}:registry" user)" || {
+        release_runtime_lock "npm-mutation"
+        return 1
+    }
+    release_runtime_lock "npm-mutation"
     [ -z "$value" ] || [ "$value" = "undefined" ] || [ "$value" = "null" ]
 }
 
@@ -120,13 +306,20 @@ verify_scope_registry_deleted_user_layer() {
     local effective_value=""
 
     validate_scope_name "$scope_name" || return 1
-    user_value="$(npm_config_get_layer "${scope_name}:registry" user)"
+    user_value="$(npm_config_get_layer "${scope_name}:registry" user)" || {
+        print_status_message "fail" "无法读取用户级 scope registry 配置"
+        return 1
+    }
     if [ -n "$user_value" ] && [ "$user_value" != "undefined" ] && [ "$user_value" != "null" ]; then
         print_status_message "warn" "用户级 scope registry 删除后仍存在: $user_value"
         return 1
     fi
 
-    effective_value="$(npm_config_get_layer "${scope_name}:registry" effective)"
+    if ! effective_value="$(npm_config_get_layer "${scope_name}:registry" effective)"; then
+        print_status_message "ok" "用户级 scope registry 已删除"
+        print_status_message "warn" "无法读取删除后的 effective scope registry"
+        return 0
+    fi
     if [ -n "$effective_value" ] && [ "$effective_value" != "undefined" ] && [ "$effective_value" != "null" ]; then
         print_status_message "ok" "用户级 scope registry 已删除"
         print_status_message "warn" "project/global/builtin 仍提供 effective scope registry: $effective_value"
@@ -143,27 +336,28 @@ verify_scope_registry_deleted_user_layer() {
 
 run_source_overview() {
     local registry=""
-    local user_npmrc="$HOME/.npmrc"
+    local user_npmrc=""
     local project_npmrc=""
 
     print_page_title "查看源配置"
 
-    project_npmrc="$(pwd)/.npmrc"
+    user_npmrc="$(npm_config_file_for_layer user 2>/dev/null || true)"
+    project_npmrc="$(npm_config_file_for_layer project 2>/dev/null || true)"
     registry="$(get_current_registry)"
 
     printf "当前 registry: %s\n" "${registry:-<unavailable>}"
     print_blank_line
 
-    printf "用户级 .npmrc: %s\n" "$user_npmrc"
-    if [ -f "$user_npmrc" ]; then
+    printf "用户级 .npmrc: %s\n" "${user_npmrc:-<unavailable>}"
+    if [ -n "$user_npmrc" ] && [ -f "$user_npmrc" ]; then
         printf "  状态: 存在\n"
     else
         printf "  状态: 不存在\n"
     fi
     print_blank_line
 
-    printf "项目级 .npmrc: %s\n" "$project_npmrc"
-    if [ -f "$project_npmrc" ]; then
+    printf "项目级 .npmrc: %s\n" "${project_npmrc:-<unavailable>}"
+    if [ -n "$project_npmrc" ] && [ -f "$project_npmrc" ]; then
         printf "  状态: 存在\n"
     else
         printf "  状态: 不存在\n"
@@ -174,7 +368,7 @@ run_source_overview() {
     printf "Scope Registry 配置:\n"
     print_separator
     local scope_lines=""
-    if [ -f "$user_npmrc" ]; then
+    if [ -n "$user_npmrc" ] && [ -f "$user_npmrc" ]; then
         scope_lines="$(parse_scope_registry_lines "$user_npmrc")"
     fi
 
@@ -186,9 +380,8 @@ run_source_overview() {
     # same scope shows up twice below (sort -u can't dedupe two different
     # textual representations of the same value).
     local config_scopes=""
-    config_scopes="$(npm config list -l 2>/dev/null \
-        | grep -E '^@[^:]+:registry[[:space:]]*=' \
-        | sed -n 's/^\(@[A-Za-z0-9._-][A-Za-z0-9._-]*:registry\)[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*\)"\{0,1\}$/\1=\2/p' || true)"
+    local config_scopes_available="yes"
+    config_scopes="$(load_effective_scope_registry_lines)" || config_scopes_available="no"
     local combined_scope_lines=""
     combined_scope_lines="$({
         printf '%s\n' "$scope_lines"
@@ -199,7 +392,11 @@ run_source_overview() {
     fi
 
     if [ -z "$combined_scope_lines" ]; then
-        printf "  <无>\n"
+        if [ "$config_scopes_available" = "yes" ]; then
+            printf "  <无>\n"
+        else
+            printf "  <effective npm config 无法读取>\n"
+        fi
     else
         print_blank_line
         printf "Scope Registry 分层:\n"
@@ -237,11 +434,18 @@ run_switch_registry_flow() {
     local choice=""
     local registry_url=""
     local current_registry=""
+    local user_registry=""
 
     current_registry="$(get_current_registry)"
+    if ! user_registry="$(npm_config_get_layer registry user)"; then
+        print_status_message "fail" "无法读取用户级 registry 配置"
+        pause_before_return
+        return 1
+    fi
 
     print_page_title "切换 registry"
     printf "当前 registry: %s\n" "${current_registry:-<unavailable>}"
+    printf "用户级 registry: %s\n" "${user_registry:-undefined}"
     print_blank_line
 
     printf "1) npm 官方源 https://registry.npmjs.org/\n"
@@ -287,7 +491,7 @@ run_switch_registry_flow() {
     printf "执行切换...\n"
     print_separator
     local set_status=""
-    if set_status="$(set_registry_value "$registry_url")"; then
+    if set_status="$(set_registry_value "$registry_url" "$user_registry")"; then
         local actual_registry=""
         actual_registry="$(get_current_registry)"
         print_blank_line
@@ -299,7 +503,7 @@ run_switch_registry_flow() {
                 print_status_message "ok" "effective registry 已生效"
                 ;;
             effective-mismatch:*)
-                print_status_message "warn" "effective registry 被 project/global/builtin 覆盖"
+                print_status_message "warn" "effective registry 被 project、环境变量或 CLI 等更高优先级配置覆盖"
                 printf "  期望 effective: %s\n" "$registry_url"
                 printf "  实际 effective: %s\n" "${set_status#effective-mismatch:}"
                 ;;
@@ -311,7 +515,11 @@ run_switch_registry_flow() {
             print_status_message "warn" "安装命令当前仍会使用: $actual_registry"
         fi
     else
-        print_status_message "fail" "registry 切换失败"
+        if [ "$set_status" = "state-changed" ]; then
+            print_status_message "fail" "确认后用户级 registry 已变化，已取消覆盖"
+        else
+            print_status_message "fail" "registry 切换失败"
+        fi
         printf "  当前 registry: %s\n" "$(get_current_registry)"
     fi
 
@@ -326,10 +534,21 @@ run_reset_registry_flow() {
     print_page_title "删除用户级 registry"
 
     current_registry="$(get_current_registry)"
-    user_registry="$(npm config get registry --location=user 2>/dev/null || true)"
+    if ! user_registry="$(npm_config_get_layer registry user)"; then
+        print_status_message "fail" "无法读取用户级 registry 配置，已取消删除"
+        pause_before_return
+        return 1
+    fi
 
     printf "当前 effective registry: %s\n" "${current_registry:-<unavailable>}"
-    printf "用户级 registry: %s\n" "${user_registry:-<unavailable>}"
+    printf "用户级 registry: %s\n" "${user_registry:-undefined}"
+    case "$user_registry" in
+        ""|undefined|null)
+            printf "当前没有显式的用户级 registry 配置，无需删除。\n"
+            pause_before_return
+            return 0
+            ;;
+    esac
     print_blank_line
     printf "将只删除用户级 registry 配置，npm 会回退到项目级/global/builtin/effective 配置。\n"
     if ! prompt_yes_no "确认删除用户级 registry？" "n"; then
@@ -337,13 +556,18 @@ run_reset_registry_flow() {
     fi
 
     print_blank_line
-    if delete_registry_value; then
+    local delete_status=""
+    if delete_status="$(delete_registry_value "$user_registry")"; then
         effective_registry="$(get_current_registry)"
         print_status_message "ok" "用户级 registry 已删除"
         printf "  当前 effective registry: %s\n" "${effective_registry:-<unavailable>}"
     else
-        print_status_message "fail" "用户级 registry 删除失败"
-        printf "  当前 user registry: %s\n" "$(npm config get registry --location=user 2>/dev/null || true)"
+        if [ "$delete_status" = "state-changed" ]; then
+            print_status_message "fail" "确认后用户级 registry 已变化，已取消删除"
+        else
+            print_status_message "fail" "用户级 registry 删除失败"
+        fi
+        printf "  当前 user registry: %s\n" "$(npm_config_get_layer registry user 2>/dev/null || printf '<unavailable>')"
     fi
 
     pause_before_return
@@ -393,9 +617,16 @@ run_scope_registry_flow() {
 
             print_blank_line
             local existing_scope_registry=""
+            local existing_user_scope_registry=""
             existing_scope_registry="$(npm config get "${scope_name}:registry" 2>/dev/null || true)"
+            if ! existing_user_scope_registry="$(npm_config_get_layer "${scope_name}:registry" user)"; then
+                print_status_message "fail" "无法读取用户级 scope registry 配置"
+                pause_before_return
+                return 1
+            fi
             if [ -n "$existing_scope_registry" ] && [ "$existing_scope_registry" != "undefined" ] && [ "$existing_scope_registry" != "null" ]; then
                 printf "当前 %s:registry = %s\n" "$scope_name" "$existing_scope_registry"
+                printf "当前用户级值 = %s\n" "${existing_user_scope_registry:-undefined}"
                 printf "准备覆盖为   %s:registry = %s\n" "$scope_name" "$registry_url"
             else
                 printf "准备设置 %s:registry = %s\n" "$scope_name" "$registry_url"
@@ -406,7 +637,7 @@ run_scope_registry_flow() {
 
             print_blank_line
             local set_status=""
-            if set_status="$(set_scope_registry_value "$scope_name" "$registry_url")"; then
+            if set_status="$(set_scope_registry_value "$scope_name" "$registry_url" "$existing_user_scope_registry")"; then
                 print_status_message "ok" "scope registry 已添加"
                 printf "  %s:registry = %s\n" "$scope_name" "$(npm config get "${scope_name}:registry" 2>/dev/null || true)"
                 case "$set_status" in
@@ -414,26 +645,35 @@ run_scope_registry_flow() {
                         print_status_message "ok" "effective scope registry 已生效"
                         ;;
                     effective-mismatch:*)
-                        print_status_message "warn" "effective scope registry 被 project/global/builtin 覆盖"
+                        print_status_message "warn" "effective scope registry 被 project、环境变量或 CLI 等更高优先级配置覆盖"
                         printf "  期望 effective: %s\n" "$registry_url"
                         printf "  实际 effective: %s\n" "${set_status#effective-mismatch:}"
                         ;;
                 esac
             else
-                print_status_message "fail" "scope registry 添加失败"
+                if [ "$set_status" = "state-changed" ]; then
+                    print_status_message "fail" "确认后用户级 scope registry 已变化，已取消覆盖"
+                else
+                    print_status_message "fail" "scope registry 添加失败"
+                fi
             fi
             pause_before_return
             ;;
         2)
-            # List existing scope registries
-            config_scopes="$(npm config list -l 2>/dev/null | grep -E '^@[^:]+:registry' || true)"
+            # Deletion is intentionally user-layer only, so do not offer
+            # project/global values that this action cannot remove.
+            if ! config_scopes="$(load_explicit_scope_registry_lines user)"; then
+                print_status_message "fail" "无法读取用户级 scope registry 配置"
+                pause_before_return
+                return 1
+            fi
             if [ -z "$config_scopes" ]; then
-                printf "当前没有 scope registry 配置。\n"
+                printf "当前没有用户级 scope registry 配置。\n"
                 pause_before_return
                 return 0
             fi
 
-            printf "当前 scope registry:\n"
+            printf "当前用户级 scope registry:\n"
             printf "%s\n" "$config_scopes"
             print_blank_line
 
@@ -448,23 +688,46 @@ run_scope_registry_flow() {
             fi
 
             print_blank_line
+            local deleting_user_scope_registry=""
+            if ! deleting_user_scope_registry="$(npm_config_get_layer "${scope_name}:registry" user)"; then
+                print_status_message "fail" "无法读取用户级 scope registry 配置"
+                pause_before_return
+                return 1
+            fi
+            case "$deleting_user_scope_registry" in
+                ""|undefined|null)
+                    printf "%s 没有显式的用户级 registry 配置，无需删除。\n" "$scope_name"
+                    pause_before_return
+                    continue
+                    ;;
+            esac
             printf "准备删除 %s:registry\n" "$scope_name"
-            if ! prompt_yes_no "确认删除？" "y"; then
+            printf "  用户级值: %s\n" "$deleting_user_scope_registry"
+            if ! prompt_yes_no "确认删除？" "n"; then
                 return 0
             fi
 
             print_blank_line
-            if delete_scope_registry_value "$scope_name"; then
+            local delete_scope_status=""
+            if delete_scope_status="$(delete_scope_registry_value "$scope_name" "$deleting_user_scope_registry")"; then
                 verify_scope_registry_deleted_user_layer "$scope_name" || true
             else
-                print_status_message "fail" "用户级 scope registry 删除失败"
+                if [ "$delete_scope_status" = "state-changed" ]; then
+                    print_status_message "fail" "确认后用户级 scope registry 已变化，已取消删除"
+                else
+                    print_status_message "fail" "用户级 scope registry 删除失败"
+                fi
                 printf "  user: %s\n" "$(npm_config_get_layer "${scope_name}:registry" user)"
             fi
             pause_before_return
             ;;
         3)
             print_page_title "查看 scope registry"
-            config_scopes="$(npm config list -l 2>/dev/null | grep -E '^@[^:]+:registry' || true)"
+            if ! config_scopes="$(load_effective_scope_registry_lines)"; then
+                print_status_message "fail" "无法读取 effective scope registry 配置"
+                pause_before_return
+                continue
+            fi
             if [ -n "$config_scopes" ]; then
                 printf "%s\n" "$config_scopes"
             else
@@ -518,19 +781,19 @@ run_source_menu() {
         action="$(dispatch_source_choice "$choice")"
         case "$action" in
             view-source)
-                require_capabilities npm || continue
+                require_capabilities npm ruby || continue
                 run_source_overview
                 ;;
             switch-registry)
-                require_capabilities npm || continue
+                require_capabilities npm ruby || continue
                 run_switch_registry_flow
                 ;;
             scope-registry)
-                require_capabilities npm || continue
+                require_capabilities npm ruby || continue
                 run_scope_registry_flow
                 ;;
             reset-registry)
-                require_capabilities npm || continue
+                require_capabilities npm ruby || continue
                 run_reset_registry_flow
                 ;;
             back)

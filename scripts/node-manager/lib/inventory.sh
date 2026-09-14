@@ -8,7 +8,9 @@ parse_global_package_names() {
     local json_path="$1"
     ruby -rjson -e '
         data = JSON.parse(File.read(ARGV[0]))
+        abort "package inventory must be an object" unless data.is_a?(Hash)
         deps = data["dependencies"] || {}
+        abort "dependencies must be an object" unless deps.is_a?(Hash)
         puts deps.keys.sort
     ' "$json_path" 2>/dev/null
 }
@@ -17,9 +19,13 @@ parse_global_package_versions() {
     local json_path="$1"
     ruby -rjson -e '
         data = JSON.parse(File.read(ARGV[0]))
+        abort "package inventory must be an object" unless data.is_a?(Hash)
         deps = data["dependencies"] || {}
+        abort "dependencies must be an object" unless deps.is_a?(Hash)
         deps.keys.sort.each do |name|
-          ver = deps[name]["version"] rescue "?"
+          package = deps[name]
+          abort "package entry must be an object" unless package.is_a?(Hash)
+          ver = package["version"].is_a?(String) ? package["version"] : "?"
           puts "#{name}|#{ver}"
         end
     ' "$json_path" 2>/dev/null
@@ -28,9 +34,13 @@ parse_global_package_versions() {
 parse_global_package_versions_stdin() {
     ruby -rjson -e '
         data = JSON.parse(STDIN.read)
+        abort "package inventory must be an object" unless data.is_a?(Hash)
         deps = data["dependencies"] || {}
+        abort "dependencies must be an object" unless deps.is_a?(Hash)
         deps.keys.sort.each do |name|
-          ver = deps[name]["version"] rescue "?"
+          package = deps[name]
+          abort "package entry must be an object" unless package.is_a?(Hash)
+          ver = package["version"].is_a?(String) ? package["version"] : "?"
           puts "#{name}|#{ver}"
         end
     ' 2>/dev/null
@@ -40,8 +50,11 @@ parse_outdated_package_rows() {
     local json_path="$1"
     ruby -rjson -e '
         data = JSON.parse(File.read(ARGV[0]))
+        abort "outdated payload must be an object" unless data.is_a?(Hash)
         data.keys.sort.each do |name|
-          row = data[name] || {}
+          row = data[name]
+          abort "outdated row must be an object" unless row.is_a?(Hash)
+          abort "outdated row is missing versions" unless %w[current wanted latest].all? { |key| row[key].is_a?(String) && !row[key].empty? }
           puts [name, row["current"], row["wanted"], row["latest"]].join("|")
         end
     ' "$json_path" 2>/dev/null
@@ -58,8 +71,11 @@ parse_scope_registry_lines() {
 parse_outdated_package_rows_stdin() {
     ruby -rjson -e '
         data = JSON.parse(STDIN.read)
+        abort "outdated payload must be an object" unless data.is_a?(Hash)
         data.keys.sort.each do |name|
-          row = data[name] || {}
+          row = data[name]
+          abort "outdated row must be an object" unless row.is_a?(Hash)
+          abort "outdated row is missing versions" unless %w[current wanted latest].all? { |key| row[key].is_a?(String) && !row[key].empty? }
           puts [name, row["current"], row["wanted"], row["latest"]].join("|")
         end
     ' 2>/dev/null
@@ -71,33 +87,6 @@ parse_outdated_package_rows_stdin() {
 
 load_global_package_inventory_json() {
     npm ls -g --depth=0 --json 2>/dev/null
-}
-
-get_global_package_names() {
-    local json=""
-    json="$(load_global_package_inventory_json)" || true
-    if [ -n "$json" ]; then
-        printf '%s' "$json" | ruby -rjson -e '
-            data = JSON.parse(STDIN.read)
-            deps = data["dependencies"] || {}
-            puts deps.keys.sort
-        ' 2>/dev/null
-    fi
-}
-
-get_global_package_versions() {
-    local json=""
-    json="$(load_global_package_inventory_json)" || true
-    if [ -n "$json" ]; then
-        printf '%s' "$json" | ruby -rjson -e '
-            data = JSON.parse(STDIN.read)
-            deps = data["dependencies"] || {}
-            deps.keys.sort.each do |name|
-              ver = deps[name]["version"] rescue "?"
-              puts "#{name}|#{ver}"
-            end
-        ' 2>/dev/null
-    fi
 }
 
 get_package_bin_commands() {
@@ -214,21 +203,6 @@ resolve_safe_user_cache_delete_path() {
     esac
 }
 
-is_owned_symlink() {
-    local symlink_path="$1"
-    local package_dir="$2"
-    local target=""
-
-    [ -L "$symlink_path" ] || return 1
-    target="$(readlink "$symlink_path" 2>/dev/null)" || return 1
-    case "$target" in
-        /*) ;;
-        *) target="$(dirname "$symlink_path")/$target" ;;
-    esac
-
-    is_path_within_dir "$target" "$package_dir"
-}
-
 resolve_symlink_target_path() {
     local symlink_path="$1"
     local target=""
@@ -245,27 +219,51 @@ resolve_symlink_target_path() {
 capture_symlink_snapshot() {
     local symlink_path="$1"
     local package_dir="$2"
+    local raw_target=""
     local target=""
+    local inode=""
 
     [ -L "$symlink_path" ] || return 1
+    raw_target="$(readlink "$symlink_path" 2>/dev/null)" || return 1
     target="$(resolve_symlink_target_path "$symlink_path")" || return 1
     is_path_within_dir "$target" "$package_dir" || return 1
-    printf '%s|%s|%s\n' "$symlink_path" "$target" "$package_dir"
+    inode="$(stat -f '%i' "$symlink_path" 2>/dev/null || stat -c '%i' "$symlink_path" 2>/dev/null || true)"
+    [ -n "$inode" ] || return 1
+    printf '%s|%s|%s|%s|%s\n' "$symlink_path" "$raw_target" "$target" "$package_dir" "$inode"
 }
 
 verify_symlink_snapshot_current() {
     local snapshot="$1"
     local symlink_path=""
+    local expected_raw_target=""
     local expected_target=""
     local package_dir=""
+    local expected_inode=""
+    local actual_raw_target=""
     local actual_target=""
+    local actual_inode=""
 
-    IFS='|' read -r symlink_path expected_target package_dir <<< "$snapshot"
-    [ -n "$symlink_path" ] && [ -n "$expected_target" ] && [ -n "$package_dir" ] || return 1
+    IFS='|' read -r symlink_path expected_raw_target expected_target package_dir expected_inode <<< "$snapshot"
+    [ -n "$symlink_path" ] && [ -n "$expected_raw_target" ] && [ -n "$expected_target" ] && [ -n "$package_dir" ] && [ -n "$expected_inode" ] || return 1
     [ -L "$symlink_path" ] || return 1
-    actual_target="$(resolve_symlink_target_path "$symlink_path")" || return 1
-    [ "$actual_target" = "$expected_target" ] || return 1
-    is_path_within_dir "$actual_target" "$package_dir"
+    actual_raw_target="$(readlink "$symlink_path" 2>/dev/null)" || return 1
+    [ "$actual_raw_target" = "$expected_raw_target" ] || return 1
+    actual_inode="$(stat -f '%i' "$symlink_path" 2>/dev/null || stat -c '%i' "$symlink_path" 2>/dev/null || true)"
+    [ "$actual_inode" = "$expected_inode" ] || return 1
+
+    if [ -e "$symlink_path" ]; then
+        actual_target="$(resolve_symlink_target_path "$symlink_path")" || return 1
+        [ "$actual_target" = "$expected_target" ] || return 1
+        is_path_within_dir "$actual_target" "$package_dir"
+    fi
+}
+
+verify_broken_symlink_snapshot_current() {
+    local snapshot="$1"
+    local symlink_path="${snapshot%%|*}"
+
+    verify_symlink_snapshot_current "$snapshot" || return 1
+    [ -L "$symlink_path" ] && [ ! -e "$symlink_path" ]
 }
 
 capture_directory_snapshot() {
@@ -326,26 +324,87 @@ directory_snapshot_inode_matches() {
     [ "$actual_inode" = "$expected_inode" ]
 }
 
-remove_owned_symlink_residue() {
-    local symlink_path="$1"
-    local package_dir="$2"
+refresh_directory_snapshot_if_same_inode() {
+    local snapshot="$1"
+    local dir_path=""
+    local parent_dir=""
+    local expected_inode=""
+    local expected_mtime=""
+    local refreshed_snapshot=""
+    local refreshed_dir=""
+    local refreshed_parent=""
+    local refreshed_inode=""
 
-    is_owned_symlink "$symlink_path" "$package_dir" || return 1
-    rm -f "$symlink_path" 2>/dev/null || return 1
-    [ ! -e "$symlink_path" ] && [ ! -L "$symlink_path" ]
+    IFS='|' read -r dir_path parent_dir expected_inode expected_mtime <<< "$snapshot"
+    [ -n "$dir_path" ] && [ -n "$parent_dir" ] && [ -n "$expected_inode" ] || return 1
+    directory_snapshot_inode_matches "$snapshot" || return 1
+    refreshed_snapshot="$(capture_directory_snapshot "$dir_path" "$parent_dir")" || return 1
+    IFS='|' read -r refreshed_dir refreshed_parent refreshed_inode _ <<< "$refreshed_snapshot"
+    [ "$refreshed_dir" = "$dir_path" ] && [ "$refreshed_parent" = "$parent_dir" ] && [ "$refreshed_inode" = "$expected_inode" ] || return 1
+    printf '%s\n' "$refreshed_snapshot"
 }
 
 remove_snapshot_symlink_residue() {
     local snapshot="$1"
     local symlink_path=""
 
-    verify_symlink_snapshot_current "$snapshot" || return 1
+    verify_broken_symlink_snapshot_current "$snapshot" || return 1
     symlink_path="${snapshot%%|*}"
     rm -f "$symlink_path" 2>/dev/null || return 1
     [ ! -e "$symlink_path" ] && [ ! -L "$symlink_path" ]
 }
 
-nvm_version_user_package_count() {
+capture_orphan_symlink_snapshot() {
+    local symlink_path="$1"
+    local raw_target=""
+    local inode=""
+
+    [ -L "$symlink_path" ] && [ ! -e "$symlink_path" ] || return 1
+    raw_target="$(readlink "$symlink_path" 2>/dev/null)" || return 1
+    inode="$(stat -f '%i' "$symlink_path" 2>/dev/null || stat -c '%i' "$symlink_path" 2>/dev/null || true)"
+    [ -n "$raw_target" ] && [ -n "$inode" ] || return 1
+    printf '%s|%s|%s\n' "$symlink_path" "$raw_target" "$inode"
+}
+
+verify_orphan_symlink_snapshot_current() {
+    local snapshot="$1"
+    local symlink_path=""
+    local expected_raw_target=""
+    local expected_inode=""
+    local actual_raw_target=""
+    local actual_inode=""
+
+    IFS='|' read -r symlink_path expected_raw_target expected_inode <<< "$snapshot"
+    [ -n "$symlink_path" ] && [ -n "$expected_raw_target" ] && [ -n "$expected_inode" ] || return 1
+    [ -L "$symlink_path" ] && [ ! -e "$symlink_path" ] || return 1
+    actual_raw_target="$(readlink "$symlink_path" 2>/dev/null)" || return 1
+    [ "$actual_raw_target" = "$expected_raw_target" ] || return 1
+    actual_inode="$(stat -f '%i' "$symlink_path" 2>/dev/null || stat -c '%i' "$symlink_path" 2>/dev/null || true)"
+    [ "$actual_inode" = "$expected_inode" ]
+}
+
+remove_orphan_symlink_snapshot() {
+    local snapshot="$1"
+    local symlink_path="${snapshot%%|*}"
+
+    verify_orphan_symlink_snapshot_current "$snapshot" || return 1
+    rm -f "$symlink_path" 2>/dev/null || return 1
+    [ ! -L "$symlink_path" ] && [ ! -e "$symlink_path" ]
+}
+
+validate_global_package_inventory_json() {
+    ruby -rjson -e '
+      data = JSON.parse(STDIN.read)
+      abort "package inventory must be an object" unless data.is_a?(Hash)
+      dependencies = data["dependencies"]
+      abort "dependencies must be an object" unless dependencies.nil? || dependencies.is_a?(Hash)
+      (dependencies || {}).each_value do |package|
+        abort "package entry must be an object" unless package.is_a?(Hash)
+      end
+    ' >/dev/null 2>&1
+}
+
+load_nvm_version_package_inventory_json() {
     local version_dir="$1"
     local npm_path="$version_dir/bin/npm"
     local package_json=""
@@ -353,25 +412,31 @@ nvm_version_user_package_count() {
     [ -x "$npm_path" ] || return 2
     package_json="$("$npm_path" ls -g --depth=0 --json 2>/dev/null)" || return 2
     [ -n "$package_json" ] || return 2
+    printf '%s' "$package_json" | validate_global_package_inventory_json || return 2
+    printf '%s\n' "$package_json"
+}
+
+nvm_version_user_package_count() {
+    local version_dir="$1"
+    local package_json=""
+
+    package_json="$(load_nvm_version_package_inventory_json "$version_dir")" || return 2
     printf '%s' "$package_json" | count_user_global_packages_from_json
 }
 
 nvm_version_package_summary() {
     local version_dir="$1"
-    local npm_path="$version_dir/bin/npm"
     local package_json=""
 
-    [ -x "$npm_path" ] || return 2
-    package_json="$("$npm_path" ls -g --depth=0 --json 2>/dev/null)" || return 2
-    [ -n "$package_json" ] || return 2
+    package_json="$(load_nvm_version_package_inventory_json "$version_dir")" || return 2
     printf '%s' "$package_json" | ruby -rjson -e '
         data = JSON.parse(STDIN.read)
-        protected = ["npm", "corepack"]
+        protected = ARGV
         deps = data["dependencies"] || {}
         user = deps.keys.reject { |name| protected.include?(name) }
         prot = deps.keys.select { |name| protected.include?(name) }
         puts "user=#{user.length}|protected=#{prot.length}|total=#{deps.length}|packages=#{deps.keys.sort.join(",")}"
-    ' 2>/dev/null
+    ' "${PROTECTED_GLOBAL_PACKAGES[@]}" 2>/dev/null
 }
 
 get_package_directory_size() {
@@ -423,15 +488,56 @@ check_bin_entries() {
 
 get_installed_global_package_version() {
     local package_name="$1"
-    local json=""
-    json="$(npm ls -g "$package_name" --depth=0 --json 2>/dev/null || true)"
-    if [ -n "$json" ]; then
-        printf '%s' "$json" | ruby -rjson -e '
-            d = JSON.parse(STDIN.read)
-            v = d.dig("dependencies",ARGV[0],"version")
-            puts v || ""
-        ' "$package_name" 2>/dev/null || true
+    local install_state=""
+
+    # This display-oriented helper preserves its historical empty-string
+    # fallback. Mutation boundaries must call the tri-state query below.
+    install_state="$(query_global_package_install_state "$package_name")" || return 0
+    printf '%s\n' "${install_state#*|}"
+}
+
+query_global_package_install_state() {
+    local package_name="$1"
+    local package_json=""
+    local installed_version=""
+    local parse_exit=0
+    local npm_exit=0
+
+    package_json="$(npm ls -g "$package_name" --depth=0 --json 2>/dev/null)" || npm_exit=$?
+    if [ -z "$package_json" ] || ! printf '%s' "$package_json" | validate_json_text; then
+        printf 'unknown|\n'
+        return 2
     fi
+    if [ "$npm_exit" -gt 1 ]; then
+        printf 'unknown|\n'
+        return 2
+    fi
+
+    installed_version="$(printf '%s' "$package_json" | ruby -rjson -e '
+      data = JSON.parse(STDIN.read)
+      exit 2 unless data.is_a?(Hash) && !data.key?("error")
+      dependencies = data["dependencies"]
+      exit 2 unless dependencies.is_a?(Hash)
+      package = dependencies[ARGV[0]]
+      exit 1 unless package.is_a?(Hash)
+      version = package["version"]
+      exit 2 unless version.is_a?(String) && !version.empty?
+      puts version
+    ' "$package_name" 2>/dev/null)" || parse_exit=$?
+    case "$parse_exit" in
+        0)
+            printf 'installed|%s\n' "$installed_version"
+            return 0
+            ;;
+        1)
+            printf 'absent|\n'
+            return 1
+            ;;
+        *)
+            printf 'unknown|\n'
+            return 2
+            ;;
+    esac
 }
 
 validate_json_text() {
@@ -443,14 +549,10 @@ count_user_global_packages_from_json() {
     command_exists ruby || return 2
     ruby -rjson -e '
         data = JSON.parse(STDIN.read)
-        protected = ["npm", "corepack"]
+        protected = ARGV
         deps = data["dependencies"] || {}
         puts deps.keys.reject { |name| protected.include?(name) }.length
-    ' 2>/dev/null
-}
-
-detect_node_gyp_cache_dir() {
-    detect_node_gyp_cache_dirs | sed -n '1s/|.*$//p'
+    ' "${PROTECTED_GLOBAL_PACKAGES[@]}" 2>/dev/null
 }
 
 detect_node_gyp_cache_dirs() {

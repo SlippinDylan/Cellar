@@ -1,7 +1,7 @@
 # Node / npm 全局环境管理脚本规格
 
 日期：2026-06-11
-状态：Ready for implementation planning
+状态：Final（终版范围以需求大纲的完整功能树为准）
 目标脚本：`scripts/node/npm-global-manager.sh`
 正式实现：`scripts/node-manager/main.sh` 与 `scripts/node-manager/lib/*.sh`；目标脚本作为兼容入口保留
 参考脚本：`scripts/homebrew/brew-app-manager.sh`
@@ -104,9 +104,9 @@ q. 退出
 
 批量安装约束：
 
-- 第一版默认串行安装
-- 并行安装不是第一版硬要求
-- 如果保留并行结构，必须作为高级选项并明确风险
+- 默认串行安装
+- 并行安装是有意关闭的高级选项，不计入终版缺口
+- 如果未来启用并行结构，必须明确提示 cache、lock 与网络竞争风险
 
 ### 卸载项目
 
@@ -166,18 +166,19 @@ npm 没有 Homebrew `tap`，这一层正式替换为源管理。
 - 安装 `nvm`
 - 安装 Node.js 版本
 - 更改全局 Node 版本
-- 清理 npm 环境
-
-第一版不强制实现但后续会需要：
-
 - 卸载 Node.js 版本
 - 指定项目 Node 版本
+- 清理 npm 环境
 - 清理全局 `bin` 孤儿软链接
 - 清理 `nvm` 旧版本残留
 
 ## `nvm` 安装规则
 
 必须使用官方安装脚本。
+
+- 默认固定安装 nvm `v0.40.5`，执行前校验官方 `install.sh` 的 SHA256；显式改版时版本、URL 与 SHA256 必须成套配置。
+- 执行已校验脚本时固定官方仓库与 `METHOD=script`，不继承可改写源码、自动 source 其他脚本、写入非标准 profile 或顺带安装 Node 的环境变量。
+- 新安装的 `NVM_DIR` 必须是 HOME 或 `XDG_CONFIG_HOME` 下的真实子目录，不能是根目录或软链接。
 
 安装完成后：
 
@@ -187,9 +188,11 @@ npm 没有 Homebrew `tap`，这一层正式替换为源管理。
 
 不能把 `source ~/.zshrc` 当成唯一生效方式。
 
+命名 LTS 使用 nvm 官方小写 alias（如 `--lts=iron`）；安装与切换完成后必须把 alias 解析到具体版本，并与实际 current Node 精确核对。
+
 ## 清理规则
 
-第一版清理要保守，不要做大范围删除。
+清理必须保守，不做大范围模糊删除。
 
 允许的优先项：
 
@@ -227,9 +230,9 @@ npm 没有 Homebrew `tap`，这一层正式替换为源管理。
 
 建议把 shell 测试与夹具放在 `scripts/node/tests/` 下。
 
-## 第一版交付标准
+## 终版交付标准
 
-满足以下条件即可认为第一版可交付：
+满足以下条件即可认为终版功能范围已交付：
 
 - 启动摘要可用
 - 主菜单与子菜单完整
@@ -242,8 +245,11 @@ npm 没有 Homebrew `tap`，这一层正式替换为源管理。
 - `scope registry` 管理可用
 - `nvm` 安装可用
 - Node 版本安装与切换可用
-- 基础卸载扫描与卸载可用
-- 基础清理入口可用
+- Node 版本卸载与保护规则可用
+- 项目 `.nvmrc` 写入与确认流程可用
+- 全局包卸载扫描、残留候选和二次确认可用
+- npm cache、npm 用户缓存目录、node-gyp、孤儿 bin 和 nvm 旧版本清理可用
+- 兼容入口保持为薄启动脚本，业务实现只存在于 `scripts/node-manager`
 
 ## 参考文档
 

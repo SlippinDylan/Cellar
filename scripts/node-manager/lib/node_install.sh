@@ -5,24 +5,42 @@
 # ──────────────────────────────────────────────
 
 run_install_nvm_flow() {
+    local nvm_verified="no"
     print_page_title "安装 nvm"
 
     # Check if nvm is already installed
     export NVM_DIR="${NVM_DIR:-$(detect_nvm_dir)}"
     if [ -s "$NVM_DIR/nvm.sh" ]; then
-        print_status_message "ok" "nvm 已安装"
         printf "  NVM_DIR: %s\n" "$NVM_DIR"
-
-        # Try to load and verify
-        load_nvm_into_current_shell || true
-        if is_nvm_loaded; then
+        if nvm_installation_is_usable; then
+            print_status_message "ok" "nvm 已安装且可用"
             printf "  nvm 版本: %s\n" "$(nvm --version 2>/dev/null || true)"
+            print_blank_line
+            printf "如需重新安装，请先删除 %s 目录。\n" "$NVM_DIR"
+            pause_before_return
+            return 0
         fi
+        print_status_message "fail" "检测到 nvm.sh，但 nvm 无法加载或验证"
+        printf "  请检查文件完整性与 shell 配置，不会自动覆盖现有安装。\n"
         print_blank_line
-        printf "如需重新安装，请先删除 %s 目录。\n" "$NVM_DIR"
         pause_before_return
-        return 0
+        return 1
     fi
+
+    if ! validate_nvm_install_configuration; then
+        print_status_message "fail" "nvm 安装配置无效；版本、官方 URL 与 SHA256 必须成套匹配"
+        pause_before_return
+        return 1
+    fi
+
+    local safe_nvm_dir=""
+    safe_nvm_dir="$(resolve_safe_nvm_install_dir "$NVM_DIR")" || {
+        print_status_message "fail" "NVM_DIR 不在允许的安装范围内: $NVM_DIR"
+        printf "安装目标必须是 HOME 或 XDG_CONFIG_HOME 下的真实子目录，且不能是软链接。\n"
+        pause_before_return
+        return 1
+    }
+    export NVM_DIR="$safe_nvm_dir"
 
     printf "将使用官方安装脚本安装 nvm。\n"
     printf "安装脚本: %s\n" "$NVM_INSTALL_URL"
@@ -73,9 +91,10 @@ run_install_nvm_flow() {
     # Load nvm into current script process
     print_blank_line
     printf "正在加载 nvm 到当前会话...\n"
-    if load_nvm_into_current_shell; then
+    if load_nvm_into_current_shell && is_nvm_loaded && [ -n "$(nvm --version 2>/dev/null || true)" ]; then
         print_status_message "ok" "nvm 已加载到当前脚本进程"
         printf "  nvm 版本: %s\n" "$(nvm --version 2>/dev/null || true)"
+        nvm_verified="yes"
     else
         print_status_message "warn" "nvm 安装成功但无法在当前进程加载"
     fi
@@ -89,6 +108,7 @@ run_install_nvm_flow() {
 
     # Detect which profile file was actually modified by comparing before/after
     local nvm_profile=""
+    local nvm_profile_state=""
     local pi=0
     for pf in "${profile_files[@]}"; do
         local after_hash=""
@@ -96,9 +116,13 @@ run_install_nvm_flow() {
             after_hash="$(md5 -q "$pf" 2>/dev/null || md5sum "$pf" 2>/dev/null | awk '{print $1}')"
         fi
         local before_hash="${profile_hashes_before[$pi]:-}"
-        # If file is new or hash changed, and it contains NVM_DIR, it was modified
-        if [ -n "$after_hash" ] && [ "$after_hash" != "$before_hash" ] && profile_has_complete_nvm_init "$pf"; then
+        if [ -n "$after_hash" ] && profile_has_complete_nvm_init "$pf"; then
             nvm_profile="$pf"
+            if [ "$after_hash" != "$before_hash" ]; then
+                nvm_profile_state="updated"
+            else
+                nvm_profile_state="existing"
+            fi
             break
         fi
         pi=$((pi + 1))
@@ -109,7 +133,11 @@ run_install_nvm_flow() {
     printf "重要提示:\n"
     printf "  nvm 已安装到 %s\n" "$NVM_DIR"
     if [ -n "$nvm_profile" ]; then
-        printf "  初始化配置已写入: %s\n" "$nvm_profile"
+        if [ "$nvm_profile_state" = "updated" ]; then
+            printf "  初始化配置已写入: %s\n" "$nvm_profile"
+        else
+            printf "  已存在有效初始化配置: %s\n" "$nvm_profile"
+        fi
         printf "  请执行以下操作之一使其在终端中永久生效:\n"
         printf "    1. 新开一个终端窗口\n"
         printf "    2. 手动执行: source %s\n" "$nvm_profile"
@@ -122,6 +150,7 @@ run_install_nvm_flow() {
     print_separator
 
     pause_before_return
+    [ "$nvm_verified" = "yes" ]
 }
 
 # ──────────────────────────────────────────────
@@ -236,6 +265,14 @@ run_install_node_flow() {
             if [ ${#lts_names[@]} -gt 0 ]; then
                 version="$(select_version_from_number_or_literal "$version" "${lts_names[@]}")"
             fi
+
+            local normalized_version=""
+            if ! normalized_version="$(normalize_node_version "$version")"; then
+                print_status_message "fail" "版本号无效: $version"
+                pause_before_return
+                return 1
+            fi
+            version="$normalized_version"
 
             print_blank_line
             printf "正在安装 Node.js %s ...\n" "$version"

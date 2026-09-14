@@ -34,8 +34,17 @@ run_uninstall_flow() {
         pause_before_return
         return 1
     fi
+    if ! printf '%s' "$packages_json" | validate_global_package_inventory_json; then
+        printf "npm 全局包列表 JSON 结构不受支持，已停止卸载流程。\n"
+        pause_before_return
+        return 1
+    fi
 
-    package_list="$(printf '%s' "$packages_json" | parse_global_package_versions_stdin)" || true
+    package_list="$(printf '%s' "$packages_json" | parse_global_package_versions_stdin)" || {
+        printf "npm 全局包列表解析失败，已停止卸载流程。\n"
+        pause_before_return
+        return 1
+    }
 
     if [ -z "$package_list" ]; then
         printf "当前没有已安装的全局包。\n"
@@ -225,11 +234,13 @@ run_uninstall_flow() {
         if uninstall_global_package "$package_name" "$uninstall_log_file"; then
             # Post-uninstall verification: package list, directory, bin residue
             local still_installed=""
-            if npm_package_is_installed "$package_name"; then
-                still_installed="yes"
-            else
-                still_installed="no"
-            fi
+            local install_state_exit=0
+            query_global_package_install_state "$package_name" >/dev/null || install_state_exit=$?
+            case "$install_state_exit" in
+                0) still_installed="yes" ;;
+                1) still_installed="no" ;;
+                *) still_installed="unknown" ;;
+            esac
             local dir_still_exists="no"
             [ -d "$pkg_dir" ] && dir_still_exists="yes"
 
@@ -253,7 +264,7 @@ run_uninstall_flow() {
                         if [ "${cap_bin_snapshot_indices[$bs_i]}" = "$idx" ]; then
                             local snapshot="${cap_bin_snapshots[$bs_i]}"
                             local snapshot_path="${snapshot%%|*}"
-                            if [ "$snapshot_path" = "$bin_path" ] && verify_symlink_snapshot_current "$snapshot"; then
+                            if [ "$snapshot_path" = "$bin_path" ] && verify_broken_symlink_snapshot_current "$snapshot"; then
                                 bin_residue="${bin_residue}${cmd} "
                                 residue_bins+=("$bin_path")
                                 residue_bin_snapshots+=("$snapshot")
@@ -269,6 +280,9 @@ run_uninstall_flow() {
             if [ "$still_installed" = "yes" ]; then
                 status="warn"
                 detail="npm 报告成功但仍出现在列表中"
+            elif [ "$still_installed" = "unknown" ]; then
+                status="warn"
+                detail="npm uninstall 已返回成功，但无法复查安装状态；已禁止残留清理"
             else
                 # Dir residue and bin residue are independent conditions;
                 # report both when both are present instead of only the
@@ -280,9 +294,12 @@ run_uninstall_flow() {
                     detail="包目录仍存在"
                     local ds_i=0
                     while [ "$ds_i" -lt "${#cap_dir_indices[@]}" ]; do
-                        if [ "${cap_dir_indices[$ds_i]}" = "$idx" ] && directory_snapshot_inode_matches "${cap_dir_snapshots[$ds_i]}"; then
+                        if [ "${cap_dir_indices[$ds_i]}" = "$idx" ]; then
+                            local refreshed_dir_snapshot=""
+                            refreshed_dir_snapshot="$(refresh_directory_snapshot_if_same_inode "${cap_dir_snapshots[$ds_i]}" 2>/dev/null || true)"
+                            [ -n "$refreshed_dir_snapshot" ] || break
                             residue_dirs+=("$pkg_dir")
-                            residue_dir_snapshots+=("${cap_dir_snapshots[$ds_i]}")
+                            residue_dir_snapshots+=("$refreshed_dir_snapshot")
                             break
                         fi
                         ds_i=$((ds_i + 1))
@@ -409,8 +426,10 @@ run_uninstall_flow() {
     printf "卸载后剩余全局包:\n"
     local remaining_packages_json=""
     local remaining_package_list=""
-    if remaining_packages_json="$(load_global_package_inventory_json)" && [ -n "$remaining_packages_json" ] && printf '%s' "$remaining_packages_json" | validate_json_text; then
-        remaining_package_list="$(printf '%s' "$remaining_packages_json" | parse_global_package_versions_stdin 2>/dev/null || true)"
+    if remaining_packages_json="$(load_global_package_inventory_json)" && \
+        [ -n "$remaining_packages_json" ] && \
+        printf '%s' "$remaining_packages_json" | validate_global_package_inventory_json && \
+        remaining_package_list="$(printf '%s' "$remaining_packages_json" | parse_global_package_versions_stdin 2>/dev/null)"; then
         if [ -n "$remaining_package_list" ]; then
             printf "  数量: %s\n" "$(printf '%s\n' "$remaining_package_list" | sed '/^$/d' | wc -l | tr -d ' ')"
         else

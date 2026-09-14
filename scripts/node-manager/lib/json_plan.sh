@@ -1,5 +1,138 @@
 # shellcheck shell=bash
 
+cleanup_plan_fingerprint_material() {
+    local target="$1"
+    local cache_path=""
+    local candidate_path=""
+    local candidate_snapshot=""
+    local global_bin=""
+    local current_version=""
+    local default_info=""
+    local installed_versions=""
+    local node_path=""
+    local version=""
+    local version_dir=""
+    local package_summary=""
+
+    case "$target" in
+        npm-cache-clean)
+            cache_path="$(npm config get cache 2>/dev/null)" || return 1
+            case "$cache_path" in
+                ""|undefined|null) return 1 ;;
+            esac
+            printf 'cache|%s\n' "$cache_path"
+            ;;
+        node-gyp-cache)
+            while IFS='|' read -r candidate_path _; do
+                [ -d "$candidate_path" ] || continue
+                candidate_path="$(resolve_safe_user_cache_delete_path "$candidate_path" 2>/dev/null)" || return 1
+                candidate_snapshot="$(capture_directory_snapshot "$candidate_path" "$(dirname "$candidate_path")" 2>/dev/null)" || return 1
+                printf 'node-gyp|%s\n' "$candidate_snapshot"
+            done <<< "$(detect_node_gyp_cache_dirs)"
+            ;;
+        orphan-bins)
+            global_bin="$(get_global_bin_dir 2>/dev/null)" || return 1
+            [ -n "$global_bin" ] || return 1
+            printf 'global-bin|%s\n' "$global_bin"
+            if [ -d "$global_bin" ]; then
+                [ -r "$global_bin" ] && [ -x "$global_bin" ] || return 1
+                while IFS= read -r candidate_path; do
+                    [ -n "$candidate_path" ] || continue
+                    [ ! -e "$candidate_path" ] || continue
+                    candidate_snapshot="$(capture_orphan_symlink_snapshot "$candidate_path" 2>/dev/null)" || return 1
+                    printf 'orphan|%s\n' "$candidate_snapshot"
+                done < <(find "$global_bin" -maxdepth 1 -type l 2>/dev/null)
+            fi
+            ;;
+        nvm-old-versions)
+            node_path="$(command -v node 2>/dev/null || true)"
+            if [ -n "$node_path" ] && is_node_path_nvm_managed "$node_path"; then
+                current_version="$(node -v 2>/dev/null)" || return 1
+                current_version="$(normalize_node_concrete_version "$current_version")" || return 1
+            elif [ -n "$node_path" ]; then
+                current_version="system"
+            else
+                current_version="none"
+            fi
+            default_info="$(read_nvm_default_alias_file_info)" || return 1
+            installed_versions="$(scan_installed_node_versions_from_dirs)" || return 1
+            printf 'current|%s\n' "$current_version"
+            printf 'default|%s\n' "$default_info"
+            while IFS= read -r version; do
+                [ -n "$version" ] || continue
+                version_dir="$(nvm_version_dir "$version")"
+                package_summary="$(nvm_version_package_summary "$version_dir" 2>/dev/null)" || return 1
+                printf 'version|%s|%s|%s\n' "$version" "$version_dir" "$package_summary"
+            done <<< "$installed_versions"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+cleanup_plan_token_from_material() {
+    local material="$1"
+
+    command_exists shasum || return 1
+    printf '%s\n' "$material" | LC_ALL=C sort | shasum -a 256 | awk '{print $1}'
+}
+
+cleanup_plan_paths_from_material() {
+    local target="$1"
+    local material="$2"
+    local record=""
+    local snapshot=""
+    local current_version=""
+    local default_version=""
+    local version=""
+    local version_dir=""
+    local user_field=""
+    local user_count=""
+
+    case "$target" in
+        npm-cache-clean)
+            printf '%s\n' "${material#cache|}"
+            ;;
+        node-gyp-cache)
+            while IFS= read -r record; do
+                case "$record" in
+                    node-gyp\|*)
+                        snapshot="${record#node-gyp|}"
+                        printf '%s\n' "${snapshot%%|*}"
+                        ;;
+                esac
+            done <<< "$material"
+            ;;
+        orphan-bins)
+            while IFS= read -r record; do
+                case "$record" in
+                    orphan\|*)
+                        snapshot="${record#orphan|}"
+                        printf '%s\n' "${snapshot%%|*}"
+                        ;;
+                esac
+            done <<< "$material"
+            ;;
+        nvm-old-versions)
+            current_version="$(printf '%s\n' "$material" | sed -n 's/^current|//p' | head -1)"
+            default_version="$(printf '%s\n' "$material" | sed -n 's/^default|[^|]*|\([^|]*\)|.*$/\1/p' | head -1)"
+            while IFS= read -r record; do
+                case "$record" in
+                    version\|*)
+                        IFS='|' read -r _ version version_dir user_field _ <<< "$record"
+                        user_count="${user_field#user=}"
+                        if [ "$user_count" = "0" ] && [ "$version" != "$current_version" ] && [ "$version" != "$default_version" ]; then
+                            printf '%s\n' "$version_dir"
+                        fi
+                        ;;
+                esac
+            done <<< "$material"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 render_non_package_action_plan_json() {
     local action="$1"
     local subject="${2:-}"
@@ -8,6 +141,8 @@ render_non_package_action_plan_json() {
     local requires_confirmation="true"
     local execute_supported="true"
     local external_write="false"
+    local plan_token=""
+    local cleanup_plan_material=""
 
     case "$action" in
         registry-set)
@@ -41,8 +176,13 @@ render_non_package_action_plan_json() {
             ;;
         nvm-install)
             local nvm_install_request_json=""
+            local safe_nvm_dir=""
             nvm_install_request_json="$(resolve_nvm_install_request_json "$subject")" || {
                 printf '%s\n' "$nvm_install_request_json"
+                return 1
+            }
+            safe_nvm_dir="$(resolve_safe_nvm_install_dir "$(detect_nvm_dir)")" || {
+                printf '{"code":"unsafe-nvm-install-dir","action":"nvm-install","path":"%s"}\n' "$(json_escape "$(detect_nvm_dir)")"
                 return 1
             }
             target_type="nvm"
@@ -55,7 +195,7 @@ render_non_package_action_plan_json() {
             }
             target_type="node-version"
             ;;
-        node-use|node-uninstall)
+        node-use|node-default|node-uninstall)
             validate_node_concrete_action_version "$subject" || {
                 print_invalid_node_version_for_action_json "$action" "$subject"
                 return 1
@@ -69,6 +209,18 @@ render_non_package_action_plan_json() {
             }
             target_type="cleanup"
             [ "$subject" = "npm-cache-verify" ] && requires_confirmation="false"
+            case "$subject" in
+                npm-cache-clean|node-gyp-cache|orphan-bins|nvm-old-versions)
+                    cleanup_plan_material="$(cleanup_plan_fingerprint_material "$subject" 2>/dev/null)" || {
+                        printf '{"code":"cleanup-plan-unavailable","action":"cleanup","target":"%s"}\n' "$(json_escape "$subject")"
+                        return 1
+                    }
+                    plan_token="$(cleanup_plan_token_from_material "$cleanup_plan_material" 2>/dev/null)" || {
+                        printf '{"code":"cleanup-plan-unavailable","action":"cleanup","target":"%s"}\n' "$(json_escape "$subject")"
+                        return 1
+                    }
+                    ;;
+            esac
             ;;
         project-nvmrc)
             [ -n "$subject" ] && [ -n "$extra" ] || {
@@ -129,9 +281,9 @@ render_non_package_action_plan_json() {
             printf ',"sha256":"%s"' "$(json_escape "$NVM_INSTALL_SHA256")"
             printf ',"sha256Configured":%s' "$([ -n "$NVM_INSTALL_SHA256" ] && printf true || printf false)"
             printf ',"allowUnverified":%s' "$([ "$NVM_ALLOW_UNVERIFIED_INSTALL" = "1" ] && printf true || printf false)"
-            printf ',"targetDir":"%s"' "$(json_escape "$(detect_nvm_dir)")"
+            printf ',"targetDir":"%s"' "$(json_escape "$safe_nvm_dir")"
             ;;
-        node-install|node-use|node-uninstall)
+        node-install|node-use|node-default|node-uninstall)
             local normalized_subject=""
             local current_version=""
             local node_plan_state=""
@@ -139,6 +291,9 @@ render_non_package_action_plan_json() {
             local default_version=""
             local default_status=""
             local version_dir=""
+            local global_package_summary=""
+            local node_executable="true"
+            local node_blocked_reason=""
             if [ "$action" = "node-install" ]; then
                 normalized_subject="$(normalize_node_install_target "$subject" 2>/dev/null || printf '%s' "$subject")"
             else
@@ -160,30 +315,62 @@ render_non_package_action_plan_json() {
             printf ',"defaultStatus":"%s"' "$(json_escape "$default_status")"
             printf ',"versionDir":"%s"' "$(json_escape "$version_dir")"
             if [ -n "$version_dir" ] && [ -d "$version_dir" ]; then
+                global_package_summary="$(nvm_version_package_summary "$version_dir" 2>/dev/null || true)"
                 printf ',"versionDirExists":true'
                 printf ',"versionDirSize":"%s"' "$(json_escape "$(du -sh "$version_dir" 2>/dev/null | awk '{print $1}')")"
-                printf ',"globalPackageSummary":"%s"' "$(json_escape "$(nvm_version_package_summary "$version_dir" 2>/dev/null || true)")"
+                printf ',"globalPackageSummary":"%s"' "$(json_escape "$global_package_summary")"
             else
                 printf ',"versionDirExists":false'
+            fi
+            if [ "$nvm_available" != "true" ]; then
+                node_executable="false"
+                node_blocked_reason="nvm-unavailable"
+            elif [ "$action" != "node-install" ] && [ ! -d "$version_dir" ]; then
+                node_executable="false"
+                node_blocked_reason="node-version-not-installed"
             fi
             if [ "$action" = "node-uninstall" ]; then
                 printf ',"protectedByCurrent":%s' "$([ "$normalized_subject" = "$current_version" ] && printf true || printf false)"
                 printf ',"protectedByDefault":%s' "$([ "$normalized_subject" = "$default_version" ] && printf true || printf false)"
+                if [ "$default_status" != "resolved" ]; then
+                    node_executable="false"
+                    node_blocked_reason="default-node-unresolved"
+                elif [ "$normalized_subject" = "$current_version" ]; then
+                    node_executable="false"
+                    node_blocked_reason="cannot-uninstall-current-node"
+                elif [ "$normalized_subject" = "$default_version" ]; then
+                    node_executable="false"
+                    node_blocked_reason="cannot-uninstall-default-node"
+                elif [ -d "$version_dir" ] && [ -z "$global_package_summary" ]; then
+                    node_executable="false"
+                    node_blocked_reason="node-package-inventory-unavailable"
+                fi
+            fi
+            printf ',"executable":%s' "$node_executable"
+            printf ',"blockedReason":"%s"' "$(json_escape "$node_blocked_reason")"
+            if [ "$action" = "node-use" ]; then
+                printf ',"processOnly":true,"persistent":false'
+            elif [ "$action" = "node-default" ]; then
+                printf ',"processOnly":false,"persistent":true'
             fi
             ;;
         cleanup)
             printf ',"paths":'
             case "$subject" in
                 npm-cache-verify|npm-cache-clean)
-                    json_print_string_array "$(npm config get cache 2>/dev/null || true)"
+                    if [ "$subject" = "npm-cache-clean" ]; then
+                        json_print_string_array "$(cleanup_plan_paths_from_material "$subject" "$cleanup_plan_material")"
+                    else
+                        json_print_string_array "$(npm config get cache 2>/dev/null || true)"
+                    fi
                     ;;
                 node-gyp-cache)
                     local node_gyp_paths=()
                     local node_gyp_path=""
-                    while IFS='|' read -r node_gyp_path _; do
+                    while IFS= read -r node_gyp_path; do
                         [ -n "$node_gyp_path" ] || continue
                         node_gyp_paths+=("$node_gyp_path")
-                    done <<< "$(detect_node_gyp_cache_dirs)"
+                    done <<< "$(cleanup_plan_paths_from_material "$subject" "$cleanup_plan_material")"
                     if [ "${#node_gyp_paths[@]}" -gt 0 ]; then
                         json_print_string_array "${node_gyp_paths[@]}"
                     else
@@ -191,15 +378,25 @@ render_non_package_action_plan_json() {
                     fi
                     ;;
                 orphan-bins)
-                    json_print_string_array "$(get_global_bin_dir 2>/dev/null || true)"
+                    local orphan_paths=()
+                    local orphan_path=""
+                    while IFS= read -r orphan_path; do
+                        [ -n "$orphan_path" ] || continue
+                        orphan_paths+=("$orphan_path")
+                    done <<< "$(cleanup_plan_paths_from_material "$subject" "$cleanup_plan_material")"
+                    if [ "${#orphan_paths[@]}" -gt 0 ]; then
+                        json_print_string_array "${orphan_paths[@]}"
+                    else
+                        json_print_string_array
+                    fi
                     ;;
                 nvm-old-versions)
                     local nvm_old_paths=()
-                    local old_ver=""
-                    while IFS= read -r old_ver; do
-                        [ -n "$old_ver" ] || continue
-                        nvm_old_paths+=("$(nvm_version_dir "$old_ver")")
-                    done <<< "$(get_installed_node_versions 2>/dev/null || true)"
+                    local old_path=""
+                    while IFS= read -r old_path; do
+                        [ -n "$old_path" ] || continue
+                        nvm_old_paths+=("$old_path")
+                    done <<< "$(cleanup_plan_paths_from_material "$subject" "$cleanup_plan_material")"
                     if [ "${#nvm_old_paths[@]}" -gt 0 ]; then
                         json_print_string_array "${nvm_old_paths[@]}"
                     else
@@ -211,6 +408,11 @@ render_non_package_action_plan_json() {
                     ;;
                 *)
                     json_print_string_array
+                    ;;
+            esac
+            case "$subject" in
+                npm-cache-clean|node-gyp-cache|orphan-bins|nvm-old-versions)
+                    printf ',"planToken":"%s"' "$(json_escape "$plan_token")"
                     ;;
             esac
             ;;
@@ -227,6 +429,14 @@ render_non_package_action_plan_json() {
             printf ',"currentNvmrc":"%s"' "$(json_escape "$current_nvmrc")"
             printf ',"packageJsonExists":%s' "$([ -f "$subject/package.json" ] && printf true || printf false)"
             printf ',"enginesNode":"%s"' "$(json_escape "$engines_node")"
+            printf ',"nvmrcIsSymlink":%s' "$([ -L "$subject/.nvmrc" ] && printf true || printf false)"
+            if [ ! -d "$subject" ]; then
+                printf ',"executable":false,"blockedReason":"project-path-not-directory"'
+            elif ! capture_project_nvmrc_snapshot "$subject/.nvmrc" >/dev/null 2>&1; then
+                printf ',"executable":false,"blockedReason":"project-nvmrc-not-regular-file"'
+            else
+                printf ',"executable":true,"blockedReason":""'
+            fi
             ;;
     esac
     printf '}\n'
@@ -241,6 +451,8 @@ render_action_plan_json() {
     local installed_version=""
     local target_version=""
     local log_file_hint=""
+    local install_state=""
+    local install_state_exit=0
 
     [ -n "$action" ] || {
         printf '{"code":"missing-argument","argument":"action"}\n'
@@ -276,10 +488,26 @@ render_action_plan_json() {
             ;;
     esac
 
-    installed_version="$(get_installed_global_package_version "$package_name")"
-    if [ "$action" = "uninstall" ] && [ -z "$installed_version" ]; then
-        printf '{"code":"package-not-installed","action":"uninstall","packageName":"%s"}\n' "$(json_escape "$package_name")"
-        return 1
+    install_state="$(query_global_package_install_state "$package_name")" || install_state_exit=$?
+    case "$install_state_exit" in
+        0) installed_version="${install_state#*|}" ;;
+        1)
+            installed_version=""
+            if [ "$action" != "install" ]; then
+                printf '{"code":"package-not-installed","action":"%s","packageName":"%s"}\n' "$(json_escape "$action")" "$(json_escape "$package_name")"
+                return 1
+            fi
+            ;;
+        *)
+            printf '{"code":"package-state-unavailable","action":"%s","packageName":"%s"}\n' "$(json_escape "$action")" "$(json_escape "$package_name")"
+            return 1
+            ;;
+    esac
+    if [ "$action" = "update-latest" ]; then
+        target_version="$(get_registry_latest_version "$package_name")" || {
+            printf '{"code":"latest-version-unavailable","action":"update-latest","packageName":"%s"}\n' "$(json_escape "$package_name")"
+            return 1
+        }
     fi
     log_file_hint="$(create_log_file_hint "$action" "$package_name")"
 

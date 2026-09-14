@@ -48,7 +48,7 @@ collect_startup_summary() {
         else
             nvm_status="<not-loaded>"
         fi
-        current_node="<not-loaded>"
+        current_node="${node_version:-<unavailable>}"
         default_info="$(read_nvm_default_alias_file_info)"
         default_node="$(printf '%s' "$default_info" | awk -F'|' '{print $2}')"
         [ -n "$default_node" ] || default_node="<unresolved>"

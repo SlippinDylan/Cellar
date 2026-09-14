@@ -19,6 +19,9 @@ EOF
        v22.3.0    (Latest LTS: Jod)
 EOF
         ;;
+    version)
+        printf '%s\n' "${MOCK_NVM_LTS_VERSION:-v20.11.1}"
+        ;;
     install|use|alias|uninstall)
         exit "${MOCK_NVM_MUTATION_EXIT:-0}"
         ;;

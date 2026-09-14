@@ -34,12 +34,59 @@ nvm_script_path() {
     printf '%s\n' "$dir/nvm.sh"
 }
 
+resolve_safe_nvm_install_dir() {
+    local requested_dir="${1:-$(detect_nvm_dir)}"
+    local parent_dir=""
+    local base_name=""
+    local resolved_parent=""
+    local resolved_target=""
+    local resolved_home=""
+    local resolved_xdg=""
+
+    case "$requested_dir" in
+        /*) ;;
+        *) return 1 ;;
+    esac
+    [ ! -L "$requested_dir" ] || return 1
+    parent_dir="$(dirname "$requested_dir")"
+    base_name="$(basename "$requested_dir")"
+    [ -n "$base_name" ] && [ "$base_name" != "." ] && [ "$base_name" != ".." ] || return 1
+    resolved_parent="$(cd "$parent_dir" 2>/dev/null && pwd -P)" || return 1
+    if [ -d "$requested_dir" ]; then
+        resolved_target="$(cd "$requested_dir" 2>/dev/null && pwd -P)" || return 1
+    else
+        resolved_target="$resolved_parent/$base_name"
+    fi
+
+    resolved_home="$(cd "$HOME" 2>/dev/null && pwd -P)" || return 1
+    case "$resolved_target" in
+        "$resolved_home"/*)
+            printf '%s\n' "$resolved_target"
+            return 0
+            ;;
+    esac
+
+    if [ -n "${XDG_CONFIG_HOME:-}" ] && [ -d "$XDG_CONFIG_HOME" ]; then
+        resolved_xdg="$(cd "$XDG_CONFIG_HOME" 2>/dev/null && pwd -P)" || return 1
+        case "$resolved_target" in
+            "$resolved_xdg"/*)
+                printf '%s\n' "$resolved_target"
+                return 0
+                ;;
+        esac
+    fi
+    return 1
+}
+
 profile_has_complete_nvm_init() {
     local profile_file="$1"
     [ -f "$profile_file" ] || return 1
-    grep -F 'NVM_DIR' "$profile_file" >/dev/null 2>&1 || return 1
-    grep -F 'nvm.sh' "$profile_file" >/dev/null 2>&1 || return 1
-    return 0
+    awk '
+      /^[[:space:]]*#/ { next }
+      /NVM_DIR/ { has_nvm_dir = 1 }
+      /nvm\.sh/ { has_nvm_source = 1 }
+      END { exit !(has_nvm_dir && has_nvm_source) }
+    ' "$profile_file"
 }
 
 nvm_versions_root() {
@@ -52,11 +99,9 @@ nvm_version_dir() {
 }
 
 sort_node_versions() {
-    ruby -e '
-      versions = STDIN.read.lines.map(&:strip).reject(&:empty?)
-      versions.sort_by! { |v| v.sub(/^v/, "").split(".").map(&:to_i) }
-      puts versions
-    ' 2>/dev/null || sort
+    sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e 's/^v//' \
+        | sort -t. -k1,1n -k2,2n -k3,3n \
+        | sed 's/^/v/'
 }
 
 scan_installed_node_versions_from_dirs() {
@@ -70,7 +115,7 @@ scan_installed_node_versions_from_dirs() {
     find "$versions_root" -mindepth 1 -maxdepth 1 -type d -name 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null \
         | while IFS= read -r entry; do
             version="$(basename "$entry")"
-            if [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ -x "$entry/bin/node" ]; then
                 printf '%s\n' "$version"
             fi
         done \
@@ -89,6 +134,12 @@ parse_nvm_default_alias_output() {
         printf '||unresolved\n'
         return 0
     }
+
+    if printf '%s' "$alias_output" | grep -F '(-> N/A)' >/dev/null 2>&1; then
+        alias_value="$(printf '%s' "$alias_output" | sed -n 's/^default[[:space:]]*->[[:space:]]*\([^[:space:](]*\).*$/\1/p')"
+        printf '%s||unresolved\n' "$alias_value"
+        return 0
+    fi
 
     alias_value="$(printf '%s' "$alias_output" | sed -n 's/^default[[:space:]]*->[[:space:]]*\([^[:space:](]*\).*$/\1/p')"
     resolved_version="$(printf '%s' "$alias_output" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | tail -1 || true)"

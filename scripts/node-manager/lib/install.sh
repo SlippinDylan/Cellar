@@ -15,6 +15,8 @@ run_single_install_flow() {
     local target_is_pinned="no"
     local bare_name=""
     local installed_version=""
+    local install_state=""
+    local install_state_exit=0
     local registry=""
 
     print_page_title "单独安装 global package"
@@ -47,7 +49,16 @@ run_single_install_flow() {
     if package_spec_is_pinned_version "$package_name"; then
         target_is_pinned="yes"
     fi
-    installed_version="$(get_installed_global_package_version "$bare_name")"
+    install_state="$(query_global_package_install_state "$bare_name")" || install_state_exit=$?
+    case "$install_state_exit" in
+        0) installed_version="${install_state#*|}" ;;
+        1) installed_version="" ;;
+        *)
+            print_status_message "fail" "无法读取 $bare_name 的全局安装状态，已取消安装"
+            pause_before_return
+            return 1
+            ;;
+    esac
 
     print_blank_line
     printf "准备安装:\n"
@@ -74,7 +85,21 @@ run_single_install_flow() {
 
         if install_global_package "$package_name" "$log_file"; then
             # Verify installation: version must be readable
-            installed_version="$(get_installed_global_package_version "$bare_name")"
+            install_state_exit=0
+            install_state="$(query_global_package_install_state "$bare_name")" || install_state_exit=$?
+            if [ "$install_state_exit" -eq 2 ]; then
+                print_blank_line
+                print_status_message "warn" "$package_name: npm install 已返回成功，但无法复查安装状态"
+                printf "  为避免重复变更，不会自动重试。\n"
+                printf "  日志文件: %s\n" "$log_file"
+                pause_before_return
+                return 1
+            fi
+            if [ "$install_state_exit" -eq 0 ]; then
+                installed_version="${install_state#*|}"
+            else
+                installed_version=""
+            fi
 
             local verify_result=""
             local verify_status=""
@@ -184,7 +209,18 @@ run_batch_install_flow() {
             pause_before_return
             return 1
         fi
-        batch_package_names+=("$(extract_package_name "$package_name")")
+        local bare_package_name=""
+        local configured_package_name=""
+        bare_package_name="$(extract_package_name "$package_name")"
+        for configured_package_name in "${batch_package_names[@]+"${batch_package_names[@]}"}"; do
+            if [ "$configured_package_name" = "$bare_package_name" ]; then
+                print_status_message "fail" "清单包含重复包名: $bare_package_name"
+                printf "每个 global package 只能配置一个版本或 tag: %s\n" "$GLOBAL_PACKAGES_FILE"
+                pause_before_return
+                return 1
+            fi
+        done
+        batch_package_names+=("$bare_package_name")
         local target_version=""
         if ! target_version="$(resolve_install_target_version "$package_name")"; then
             print_status_message "fail" "无法解析请求的目标版本: $package_name"
@@ -208,7 +244,18 @@ run_batch_install_flow() {
         local bare_package_name="${batch_package_names[$pkg_index]}"
         local target_version="${batch_target_versions[$pkg_index]}"
         local installed_version=""
-        installed_version="$(get_installed_global_package_version "$bare_package_name")"
+        local install_state=""
+        local install_state_exit=0
+        install_state="$(query_global_package_install_state "$bare_package_name")" || install_state_exit=$?
+        case "$install_state_exit" in
+            0) installed_version="${install_state#*|}" ;;
+            1) installed_version="" ;;
+            *)
+                print_status_message "fail" "无法读取 $bare_package_name 的全局安装状态，已取消批量安装"
+                pause_before_return
+                return 1
+                ;;
+        esac
         if is_install_spec_satisfied "$package_name" "$installed_version" "$target_version"; then
             already_installed="yes"
         else
@@ -216,10 +263,10 @@ run_batch_install_flow() {
         fi
         batch_installed_flags+=("$already_installed")
         if [ "$already_installed" = "yes" ]; then
-            printf "  [已安装] %s -> target %s, installed %s\n" "$package_name" "$target_version" "${installed_version:-<unknown>}"
+            printf "  %2d) [已安装] %s -> target %s, installed %s\n" "$((pkg_index + 1))" "$package_name" "$target_version" "${installed_version:-<unknown>}"
             installed=$((installed + 1))
         else
-            printf "  [待安装] %s -> target %s, installed %s\n" "$package_name" "$target_version" "${installed_version:-<not installed>}"
+            printf "  %2d) [待安装] %s -> target %s, installed %s\n" "$((pkg_index + 1))" "$package_name" "$target_version" "${installed_version:-<not installed>}"
         fi
         pkg_index=$((pkg_index + 1))
     done
@@ -292,7 +339,17 @@ run_batch_install_flow() {
             local target_version="${batch_target_versions[$((selected_index - 1))]}"
             local target_pinned="${batch_target_pinned[$((selected_index - 1))]}"
             local installed_version=""
-            installed_version="$(get_installed_global_package_version "$bare_package_name")"
+            local install_state=""
+            local install_state_exit=0
+            install_state="$(query_global_package_install_state "$bare_package_name")" || install_state_exit=$?
+            if [ "$install_state_exit" -eq 2 ]; then
+                print_status_message "warn" "$package_name 当前安装状态不可读，已跳过"
+                unknown=$((unknown + 1))
+                continue
+            fi
+            if [ "$install_state_exit" -eq 0 ]; then
+                installed_version="${install_state#*|}"
+            fi
             if is_install_spec_satisfied "$package_name" "$installed_version" "$target_version"; then
                 already_installed="yes"
             else
@@ -330,7 +387,19 @@ run_batch_install_flow() {
                     local verify_status=""
                     local verify_message=""
                     local verify_target=""
-                    new_ver="$(get_installed_global_package_version "$bare_package_name")"
+                    install_state_exit=0
+                    install_state="$(query_global_package_install_state "$bare_package_name")" || install_state_exit=$?
+                    if [ "$install_state_exit" -eq 2 ]; then
+                        print_status_message "warn" "$package_name npm install 已返回成功，但无法复查安装状态"
+                        printf "  为避免重复变更，不会自动重试。\n"
+                        unknown=$((unknown + 1))
+                        installed_ok="unknown"
+                        printf "[%s] UNKNOWN post-install inventory unavailable\n" "$package_name" >> "$log_file" 2>/dev/null || true
+                        break
+                    fi
+                    if [ "$install_state_exit" -eq 0 ]; then
+                        new_ver="${install_state#*|}"
+                    fi
                     if [ "$target_pinned" = "yes" ]; then
                         verify_result="$(verify_install_result_for_spec "$package_name" "$new_ver" "$target_version" || true)"
                     else
@@ -363,12 +432,14 @@ run_batch_install_flow() {
 
             if [ "$installed_ok" = "no" ]; then
                 local final_installed_version=""
-                final_installed_version="$(get_installed_global_package_version "$bare_package_name")"
-                if [ -z "$final_installed_version" ]; then
-                    print_status_message "warn" "$package_name 已重试 $INSTALL_MAX_RETRIES 次，无法确认安装结果"
+                install_state_exit=0
+                install_state="$(query_global_package_install_state "$bare_package_name")" || install_state_exit=$?
+                if [ "$install_state_exit" -eq 2 ]; then
+                    print_status_message "warn" "$package_name 已重试 $INSTALL_MAX_RETRIES 次，最终状态不可读"
                     unknown=$((unknown + 1))
                     printf "[%s] UNKNOWN after %d retries (no installed version detected)\n" "$package_name" "$INSTALL_MAX_RETRIES" >> "$log_file" 2>/dev/null || true
                 else
+                    [ "$install_state_exit" -eq 0 ] && final_installed_version="${install_state#*|}"
                     print_status_message "fail" "$package_name 已重试 $INSTALL_MAX_RETRIES 次"
                     failed=$((failed + 1))
                     printf "[%s] FAILED after %d retries (installed=%s, target=%s)\n" "$package_name" "$INSTALL_MAX_RETRIES" "$final_installed_version" "$target_version" >> "$log_file" 2>/dev/null || true

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -u
+
+case "${1:-}" in
+    -v|--version|"")
+        printf '%s\n' "${MOCK_NODE_VERSION:-v20.11.1}"
+        ;;
+    *)
+        printf 'mock node: unsupported args:' >&2
+        printf ' %s' "$@" >&2
+        printf '\n' >&2
+        exit 64
+        ;;
+esac

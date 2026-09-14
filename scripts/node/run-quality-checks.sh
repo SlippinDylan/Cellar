@@ -10,12 +10,14 @@ MANAGER_PATH="$MANAGER_DIR/main.sh"
 TEST_PATH="$SCRIPT_DIR/tests/npm-global-manager-test.sh"
 INSTALL_SHELLCHECK_PATH="$SCRIPT_DIR/tools/install-shellcheck.sh"
 LOCAL_SHELLCHECK="$MANAGER_DIR/.runtime/tools/shellcheck/shellcheck"
+MOCK_PATHS=("$SCRIPT_DIR"/tests/mocks/*)
 CHECK_PATHS=(
     "$SCRIPT_PATH"
     "$MANAGER_PATH"
     "$MANAGER_DIR"/lib/*.sh
     "$TEST_PATH"
     "$INSTALL_SHELLCHECK_PATH"
+    "${MOCK_PATHS[@]}"
 )
 
 printf "== syntax ==\n"
@@ -28,11 +30,13 @@ fi
 
 printf "\n== shellcheck ==\n"
 if [ -x "$LOCAL_SHELLCHECK" ]; then
-    "$LOCAL_SHELLCHECK" -x -P SCRIPTDIR "$SCRIPT_PATH" || exit 1
-    "$LOCAL_SHELLCHECK" "$TEST_PATH" "$INSTALL_SHELLCHECK_PATH" || exit 1
+    "$LOCAL_SHELLCHECK" -e SC1091 "$SCRIPT_PATH" || exit 1
+    "$LOCAL_SHELLCHECK" -e SC1091,SC2034 "$MANAGER_PATH" || exit 1
+    "$LOCAL_SHELLCHECK" "$MANAGER_DIR"/lib/*.sh "$TEST_PATH" "$INSTALL_SHELLCHECK_PATH" "${MOCK_PATHS[@]}" || exit 1
 elif command -v shellcheck >/dev/null 2>&1; then
-    shellcheck -x -P SCRIPTDIR "$SCRIPT_PATH" || exit 1
-    shellcheck "$TEST_PATH" "$INSTALL_SHELLCHECK_PATH" || exit 1
+    shellcheck -e SC1091 "$SCRIPT_PATH" || exit 1
+    shellcheck -e SC1091,SC2034 "$MANAGER_PATH" || exit 1
+    shellcheck "$MANAGER_DIR"/lib/*.sh "$TEST_PATH" "$INSTALL_SHELLCHECK_PATH" "${MOCK_PATHS[@]}" || exit 1
 else
     portable_sort_pattern='sort -''V'
     printf "shellcheck not installed; running fallback static checks\n"

@@ -9,6 +9,14 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+resolve_current_shell_process_id() {
+    # Bash 3.2 has no BASHPID and keeps $$ equal to the parent shell inside
+    # command substitutions. A helper shell's grandparent is the Bash process
+    # actually executing this function, so it provides a stable real owner PID.
+    CURRENT_SHELL_PROCESS_ID="$(/bin/sh -c 'ps -o ppid= -p "$PPID" | tr -d " "')"
+    [ -n "$CURRENT_SHELL_PROCESS_ID" ]
+}
+
 manager_runtime_dir() {
     printf '%s\n' "$RUNTIME_DIR"
 }
@@ -84,21 +92,80 @@ runtime_lock_recorded_pid_start() {
     sed -n 's/^pidStart=//p' "$lock_dir/metadata" 2>/dev/null | head -1
 }
 
+runtime_lock_recorded_owner_token() {
+    local lock_dir="$1"
+    sed -n 's/^ownerToken=//p' "$lock_dir/metadata" 2>/dev/null | head -1
+}
+
+runtime_lock_is_stale() {
+    local lock_dir="$1"
+    local lock_pid=""
+    local recorded_start=""
+    local current_start=""
+
+    lock_pid="$(runtime_lock_owner_pid "$lock_dir")"
+    [ -n "$lock_pid" ] || return 1
+    if ! kill -0 "$lock_pid" 2>/dev/null; then
+        return 0
+    fi
+
+    recorded_start="$(runtime_lock_recorded_pid_start "$lock_dir")"
+    current_start="$(runtime_lock_owner_pid_start_signature "$lock_pid")"
+    [ -n "$recorded_start" ] && [ -n "$current_start" ] && [ "$recorded_start" != "$current_start" ]
+}
+
+initialize_runtime_lock_dir() {
+    local lock_dir="$1"
+    local lock_name="$2"
+    local recovered_stale_pid="${3:-}"
+    local owner_pid=""
+    local owner_start=""
+
+    resolve_current_shell_process_id || return 1
+    owner_pid="$CURRENT_SHELL_PROCESS_ID"
+    owner_start="$(runtime_lock_owner_pid_start_signature "$owner_pid")"
+    [ -n "$owner_start" ] || return 1
+
+    {
+        printf 'pid=%s\n' "$owner_pid"
+        printf 'pidStart=%s\n' "$owner_start"
+        printf 'ownerToken=%s\n' "$RUNTIME_LOCK_OWNER_TOKEN"
+        printf 'created=%s\n' "$(date +%s)"
+        printf 'action=%s\n' "$lock_name"
+        if [ -n "$recovered_stale_pid" ]; then
+            printf 'recoveredStalePid=%s\n' "$recovered_stale_pid"
+        fi
+    } > "$lock_dir/metadata" 2>/dev/null || return 1
+    printf '%s\n' "$owner_pid" > "$lock_dir/pid" 2>/dev/null || return 1
+}
+
 runtime_lock_owned_by_current_process() {
     local lock_name="${1:-global}"
     local lock_dir=""
     local lock_pid=""
+    local owner_token=""
+    local current_pid=""
+    local recorded_start=""
+    local current_start=""
 
     lock_dir="$(manager_lock_dir "$lock_name")"
     [ -d "$lock_dir" ] || return 1
+    resolve_current_shell_process_id || return 1
+    current_pid="$CURRENT_SHELL_PROCESS_ID"
     lock_pid="$(runtime_lock_owner_pid "$lock_dir")"
-    [ "$lock_pid" = "$$" ]
+    [ "$lock_pid" = "$current_pid" ] || return 1
+    owner_token="$(runtime_lock_recorded_owner_token "$lock_dir")"
+    [ -n "$owner_token" ] && [ "$owner_token" = "$RUNTIME_LOCK_OWNER_TOKEN" ] || return 1
+    recorded_start="$(runtime_lock_recorded_pid_start "$lock_dir")"
+    current_start="$(runtime_lock_owner_pid_start_signature "$current_pid")"
+    [ -n "$recorded_start" ] && [ -n "$current_start" ] && [ "$recorded_start" = "$current_start" ]
 }
 
 acquire_runtime_lock() {
     local lock_name="${1:-global}"
     local lock_dir=""
     local lock_pid=""
+    local recovery_lock_file=""
 
     ensure_runtime_dirs || return 1
     lock_dir="$(manager_lock_dir "$lock_name")"
@@ -108,59 +175,59 @@ acquire_runtime_lock() {
     fi
 
     if mkdir "$lock_dir" 2>/dev/null; then
-        {
-            printf 'pid=%s\n' "$$"
-            printf 'pidStart=%s\n' "$(runtime_lock_owner_pid_start_signature "$$")"
-            printf 'created=%s\n' "$(date +%s)"
-            printf 'action=%s\n' "$lock_name"
-        } > "$lock_dir/metadata" 2>/dev/null || true
-        printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
+        if ! initialize_runtime_lock_dir "$lock_dir" "$lock_name"; then
+            rm -f "$lock_dir/pid" "$lock_dir/metadata" 2>/dev/null || true
+            rmdir "$lock_dir" 2>/dev/null || true
+            return 1
+        fi
         add_held_runtime_lock "$lock_name"
         return 0
     fi
 
     lock_pid="$(runtime_lock_owner_pid "$lock_dir")"
-    local lock_is_stale="no"
-    if [ -n "$lock_pid" ]; then
-        if ! kill -0 "$lock_pid" 2>/dev/null; then
-            lock_is_stale="yes"
-        else
-            # The PID is alive, but PIDs get recycled: if the process
-            # currently holding this PID started at a different time than
-            # the one recorded when the lock was acquired, the original
-            # lock holder is gone and an unrelated process just happens to
-            # reuse its PID. Only treat this as positive proof of staleness
-            # when both signatures are actually available — an unreadable
-            # signature must never be treated as a mismatch, or a live,
-            # legitimate lock holder could get its lock yanked out from
-            # under it.
-            local recorded_start=""
-            local current_start=""
-            recorded_start="$(runtime_lock_recorded_pid_start "$lock_dir")"
-            current_start="$(runtime_lock_owner_pid_start_signature "$lock_pid")"
-            if [ -n "$recorded_start" ] && [ -n "$current_start" ] && [ "$recorded_start" != "$current_start" ]; then
-                lock_is_stale="yes"
-            fi
-        fi
+    runtime_lock_is_stale "$lock_dir" || return 1
+
+    # Serialize stale recovery so two contenders cannot both delete and
+    # recreate the same lock path based on an earlier observation.
+    recovery_lock_file="${lock_dir}.recovery"
+    command_exists lockf || return 1
+    if [ -d "$recovery_lock_file" ]; then
+        # Compatibility with the short-lived directory-based recovery lock.
+        # Only an empty legacy directory is safe to retire automatically.
+        rmdir "$recovery_lock_file" 2>/dev/null || return 1
+    fi
+    [ ! -L "$recovery_lock_file" ] || return 1
+    [ ! -e "$recovery_lock_file" ] || [ -f "$recovery_lock_file" ] || return 1
+    # Append mode preserves an existing recovery file and avoids truncating a
+    # path if it was replaced between recovery attempts.
+    exec 9>>"$recovery_lock_file" || return 1
+    if ! lockf -s -t 0 9; then
+        exec 9>&-
+        return 1
+    fi
+    if ! runtime_lock_is_stale "$lock_dir"; then
+        exec 9>&-
+        return 1
     fi
 
-    if [ "$lock_is_stale" = "yes" ]; then
-        rm -rf "$lock_dir" 2>/dev/null || return 1
-        if mkdir "$lock_dir" 2>/dev/null; then
-            {
-                printf 'pid=%s\n' "$$"
-                printf 'pidStart=%s\n' "$(runtime_lock_owner_pid_start_signature "$$")"
-                printf 'created=%s\n' "$(date +%s)"
-                printf 'action=%s\n' "$lock_name"
-                printf 'recoveredStalePid=%s\n' "$lock_pid"
-            } > "$lock_dir/metadata" 2>/dev/null || true
-            printf '%s\n' "$$" > "$lock_dir/pid" 2>/dev/null || true
-            add_held_runtime_lock "$lock_name"
-            return 0
-        fi
+    rm -rf "$lock_dir" 2>/dev/null || {
+        exec 9>&-
+        return 1
+    }
+    if ! mkdir "$lock_dir" 2>/dev/null; then
+        exec 9>&-
+        return 1
     fi
+    if ! initialize_runtime_lock_dir "$lock_dir" "$lock_name" "$lock_pid"; then
+        rm -f "$lock_dir/pid" "$lock_dir/metadata" 2>/dev/null || true
+        rmdir "$lock_dir" 2>/dev/null || true
+        exec 9>&-
+        return 1
+    fi
+    exec 9>&-
+    add_held_runtime_lock "$lock_name"
+    return 0
 
-    return 1
 }
 
 release_runtime_lock() {
@@ -206,7 +273,7 @@ run_dependency_preflight() {
     local missing_required=0
     local cmd=""
 
-    for cmd in find readlink du md5 mktemp sed awk grep; do
+    for cmd in find readlink du md5 mktemp sed awk grep lockf ps tr env; do
         if ! command_exists "$cmd"; then
             print_status_message "fail" "缺少必需命令: $cmd"
             missing_required=$((missing_required + 1))

@@ -4,18 +4,35 @@
 # Flow: project Node version (.nvmrc)
 # ──────────────────────────────────────────────
 
+capture_project_nvmrc_snapshot() {
+    local nvmrc_path="$1"
+    local digest=""
+
+    [ ! -L "$nvmrc_path" ] || return 1
+    if [ -e "$nvmrc_path" ]; then
+        [ -f "$nvmrc_path" ] || return 1
+        digest="$(md5 -q "$nvmrc_path" 2>/dev/null)" || return 1
+        [ -n "$digest" ] || return 1
+        printf 'present|%s\n' "$digest"
+    else
+        printf 'absent|\n'
+    fi
+}
+
+verify_project_nvmrc_snapshot() {
+    local nvmrc_path="$1"
+    local expected_snapshot="$2"
+    local current_snapshot=""
+
+    current_snapshot="$(capture_project_nvmrc_snapshot "$nvmrc_path")" || return 1
+    [ "$current_snapshot" = "$expected_snapshot" ]
+}
+
 run_project_node_flow() {
     local project_path=""
     local version=""
 
     print_page_title "指定项目 Node 版本"
-    if [ "${NODE_MANAGER_ALLOW_PROJECT_WRITE:-0}" != "1" ]; then
-        print_status_message "warn" "该功能会写入所选项目目录，默认已禁用以保持 scripts/node 输出边界"
-        printf "如需启用，请在明确授权后设置 NODE_MANAGER_ALLOW_PROJECT_WRITE=1。\n"
-        pause_before_return
-        return 0
-    fi
-
     if ! is_nvm_loaded; then
         if ! load_nvm_into_current_shell; then
             printf "nvm 未安装或无法加载。请先安装 nvm。\n"
@@ -45,7 +62,14 @@ run_project_node_flow() {
     # Check for package.json
     local pkg_json="$project_path/package.json"
     local nvmrc="$project_path/.nvmrc"
+    local nvmrc_snapshot=""
     local engines_node=""
+
+    if ! nvmrc_snapshot="$(capture_project_nvmrc_snapshot "$nvmrc")"; then
+        print_status_message "fail" ".nvmrc 不是可安全覆盖的普通文件: $nvmrc"
+        pause_before_return
+        return 1
+    fi
 
     print_blank_line
     printf "项目路径: %s\n" "$project_path"
@@ -138,7 +162,7 @@ run_project_node_flow() {
         local existing=""
         existing="$(cat "$nvmrc" 2>/dev/null)"
         printf "  现有内容: %s\n" "$existing"
-        if ! prompt_yes_no "是否覆盖？" "y"; then
+        if ! prompt_yes_no "是否覆盖？" "n"; then
             return 0
         fi
     fi
@@ -173,6 +197,12 @@ run_project_node_flow() {
             pause_before_return
             return 0
         fi
+    fi
+
+    if ! verify_project_nvmrc_snapshot "$nvmrc" "$nvmrc_snapshot"; then
+        print_status_message "fail" "确认后 .nvmrc 状态已变化，已取消写入"
+        pause_before_return
+        return 1
     fi
 
     if atomic_write_file "$nvmrc" "$version"; then

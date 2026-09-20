@@ -28,7 +28,7 @@ struct NodeVersionsPage: View {
                         Label("安装 Node", systemImage: "plus")
                     }
                     .help("安装 Node 版本")
-                    .disabled(model.isNodeWorking)
+                    .disabled(model.isBusy)
                 }
                 ToolbarSpacer(.fixed, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) {
@@ -41,7 +41,7 @@ struct NodeVersionsPage: View {
                         Label("版本操作", systemImage: "ellipsis.circle")
                     }
                     .help("管理所选 Node 版本")
-                    .disabled(selection == nil || model.isNodeWorking)
+                    .disabled(selection == nil || model.isBusy)
                 }
             }
             .sheet(isPresented: $showingInstall) {
@@ -56,7 +56,7 @@ struct NodeVersionsPage: View {
                             showingInstall = false
                             Task { await model.prepareNodeAction(.init(action: .installNVM)) }
                         }
-                        .disabled(node.summary.nvmLoaded)
+                        .disabled(node.summary.nvmLoaded || model.isBusy)
                         Spacer()
                         Button("取消", role: .cancel) { showingInstall = false }.keyboardShortcut(.cancelAction)
                         Button("继续") {
@@ -65,7 +65,7 @@ struct NodeVersionsPage: View {
                             Task { await model.prepareNodeAction(.init(action: .installNode, subject: value)) }
                         }
                         .buttonStyle(.glassProminent).keyboardShortcut(.defaultAction)
-                        .disabled(installTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(installTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isBusy)
                     }
                 }
                 .padding(24).frame(width: 480)
@@ -102,7 +102,7 @@ struct NodeVersionsPage: View {
                     TextField("具体版本，例如 v22.14.0", text: $projectVersion).textFieldStyle(.roundedBorder)
                     Button("准备写入") { prepareProjectNVMRC() }
                         .buttonStyle(.glassProminent)
-                        .disabled(projectDirectory == nil || projectVersion.isEmpty || model.isNodeWorking)
+                        .disabled(projectDirectory == nil || projectVersion.isEmpty || model.isBusy)
                 }
                 Text("只写入用户明确选择目录中的 .nvmrc；计划会显示现有内容、package.json engines.node 和符号链接阻塞状态。")
                     .font(.footnote).foregroundStyle(.secondary)

@@ -46,7 +46,7 @@ struct NodeMaintenancePage: View {
                                         let value = item.target == "logs" ? "100" : nil
                                         Task { await model.prepareNodeAction(.init(action: .cleanup, subject: item.target, value: value)) }
                                     }
-                                    .disabled(model.isNodeWorking)
+                                    .disabled(model.isBusy)
                                 }
                                 .padding(.vertical, 10)
                                 if index < actions.count - 1 { Divider() }

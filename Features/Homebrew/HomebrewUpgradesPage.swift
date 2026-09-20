@@ -73,20 +73,20 @@ struct HomebrewUpgradesPage: View {
                     selection.formUnion(visible)
                 }
             }
-            .disabled(visiblePackages(snapshot).isEmpty || model.isHomebrewWorking || model.isRefreshing)
+            .disabled(visiblePackages(snapshot).isEmpty || model.isBusy)
 
             Spacer()
 
             Button("升级所选 Formula（\(selectedTargets(.formula).count)）") {
                 Task { await model.prepareHomebrewUpgrade(selectedTargets(.formula)) }
             }
-            .disabled(selectedTargets(.formula).isEmpty || model.isHomebrewWorking || model.isRefreshing)
+            .disabled(selectedTargets(.formula).isEmpty || model.isBusy)
 
             Button("升级所选 Cask（\(selectedTargets(.cask).count)）") {
                 Task { await model.prepareHomebrewUpgrade(selectedTargets(.cask)) }
             }
             .buttonStyle(.borderedProminent)
-            .disabled(selectedTargets(.cask).isEmpty || model.isHomebrewWorking || model.isRefreshing)
+            .disabled(selectedTargets(.cask).isEmpty || model.isBusy)
         }
     }
 

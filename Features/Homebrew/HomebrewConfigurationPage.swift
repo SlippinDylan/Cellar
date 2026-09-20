@@ -75,7 +75,7 @@ struct HomebrewConfigurationPage: View {
                         prepareAddTap()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(trimmedTapName.isEmpty || model.isHomebrewWorking || model.isRefreshing)
+                    .disabled(trimmedTapName.isEmpty || model.isBusy)
 
                     Spacer()
 
@@ -85,8 +85,7 @@ struct HomebrewConfigurationPage: View {
                     }
                     .disabled(
                         selectedTap == nil
-                            || model.isHomebrewWorking
-                            || model.isRefreshing
+                            || model.isBusy
                             || snapshot.sectionErrors[.taps] != nil
                     )
                 }

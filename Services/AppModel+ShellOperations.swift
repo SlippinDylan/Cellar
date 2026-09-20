@@ -2,7 +2,7 @@ import Foundation
 
 extension AppModel {
     func prepareShellAction(_ request: ShellActionRequest) async {
-        guard !isRefreshing, !isHomebrewWorking, !isNodeWorking, !isShellWorking, let managers else { return }
+        guard !isBusy, let managers else { return }
         isShellWorking = true
         shellOperationError = nil
         shellActionResult = nil
@@ -19,7 +19,7 @@ extension AppModel {
     }
 
     func executeShellPlan() async {
-        guard let plan = shellPlan, plan.canExecute, !isShellWorking, let managers else { return }
+        guard let plan = shellPlan, plan.canExecute, !isBusy, let managers else { return }
         shellPlan = nil
         isShellWorking = true
         shellOperationError = nil

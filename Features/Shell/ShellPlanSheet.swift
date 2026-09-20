@@ -28,7 +28,7 @@ struct ShellPlanSheet: View {
                     Task { await model.executeShellPlan() }
                 } label: { Text("确认并执行") }
                 .buttonStyle(.glassProminent).keyboardShortcut(.defaultAction)
-                .disabled(!plan.canExecute || model.isShellWorking)
+                .disabled(!plan.canExecute || model.isBusy)
             }
         }
         .padding(24).frame(width: 620)

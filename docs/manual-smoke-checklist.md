@@ -2,7 +2,7 @@
 
 本清单用于验证自动测试无法证明的真实 macOS、窗口和本机工具行为。检查会读取用户的 Homebrew、Node/npm/nvm 和 Shell 状态；Homebrew 写操作只允许在明确准备的专用测试环境执行。
 
-只读检查也可能让 Homebrew 或 npm 访问网络并更新自身 cache。写操作会真实修改 Homebrew、npm、nvm 或项目 `.nvmrc` 状态且不提供事务回滚；不要使用有价值的生产环境验收安装、升级、卸载、清理或配置变更。
+只读检查也可能让 Homebrew 或 npm 访问网络并更新自身 cache。写操作会真实修改 Homebrew、npm、nvm、项目 `.nvmrc` 或 Shell 配置且不提供事务回滚；不要使用有价值的生产环境验收安装、升级、卸载、清理或配置变更。
 
 ## 启动与窗口
 

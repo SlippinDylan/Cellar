@@ -5,34 +5,57 @@ struct NodePlanSheet: View {
     let plan: NodeActionPlan
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(spacing: 0) {
             Label(plan.request.action.title, systemImage: plan.request.action.isDestructive ? "exclamationmark.triangle" : "shippingbox")
                 .font(.title2.bold())
-            GroupBox("操作计划") {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                    NodeValueRow(label: "动作", value: plan.request.action.rawValue)
-                    NodeValueRow(label: "目标", value: plan.displayTarget)
-                    if let installed = plan.payload.installedVersion, !installed.isEmpty {
-                        NodeValueRow(label: "当前版本", value: installed)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    GroupBox("操作计划") {
+                        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                            NodeValueRow(label: "动作", value: plan.request.action.rawValue)
+                            NodeValueRow(label: "目标", value: plan.displayTarget)
+                            if let installed = plan.payload.installedVersion, !installed.isEmpty {
+                                NodeValueRow(label: "当前版本", value: installed)
+                            }
+                            if let target = plan.payload.targetVersion, !target.isEmpty {
+                                NodeValueRow(label: "目标版本", value: target)
+                            }
+                            if let value = plan.payload.value, !value.isEmpty {
+                                NodeValueRow(label: "值", value: value)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
                     }
-                    if let target = plan.payload.targetVersion, !target.isEmpty {
-                        NodeValueRow(label: "目标版本", value: target)
+
+                    if let paths = plan.payload.paths, !paths.isEmpty {
+                        GroupBox("影响路径") {
+                            VStack(alignment: .leading, spacing: 5) {
+                                ForEach(paths, id: \.self) {
+                                    Text($0).font(.callout.monospaced()).textSelection(.enabled)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
-                    if let value = plan.payload.value, !value.isEmpty { NodeValueRow(label: "值", value: value) }
+
+                    if let blockedReason = plan.payload.blockedReason, !blockedReason.isEmpty {
+                        Label("计划已阻止：\(blockedReason)", systemImage: "xmark.octagon")
+                            .foregroundStyle(.red)
+                    }
+
+                    Text(disclosure).font(.callout).foregroundStyle(.secondary)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            if let paths = plan.payload.paths, !paths.isEmpty {
-                GroupBox("影响路径") {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(paths, id: \.self) { Text($0).font(.callout.monospaced()).textSelection(.enabled) }
-                    }
-                }
-            }
-            if let blockedReason = plan.payload.blockedReason, !blockedReason.isEmpty {
-                Label("计划已阻止：\(blockedReason)", systemImage: "xmark.octagon").foregroundStyle(.red)
-            }
-            Text(disclosure).font(.callout).foregroundStyle(.secondary)
+
+            Divider()
             HStack {
                 Spacer()
                 Button("取消", role: .cancel) { model.dismissNodePlan() }.keyboardShortcut(.cancelAction)
@@ -40,10 +63,11 @@ struct NodePlanSheet: View {
                     Task { await model.executeNodePlan() }
                 } label: { Text("确认并执行") }
                 .buttonStyle(.glassProminent).keyboardShortcut(.defaultAction)
-                .disabled(!plan.canExecute || model.isNodeWorking)
+                .disabled(!plan.canExecute || model.isBusy)
             }
+            .padding(20)
         }
-        .padding(24).frame(width: 620)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 420, idealHeight: 560)
     }
 
     private var disclosure: String {
@@ -61,34 +85,57 @@ struct NodeResultSheet: View {
     let result: NodeActionResult
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(spacing: 0) {
             Label(
                 result.operation.status == "ok" ? "操作完成" : "操作需要检查",
                 systemImage: result.operation.status == "ok" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
             )
-            .font(.title2.bold()).foregroundStyle(result.operation.status == "ok" ? .green : .orange)
-            GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                    NodeValueRow(label: "动作", value: result.operation.action)
-                    NodeValueRow(label: "目标", value: result.operation.subject)
-                    NodeValueRow(label: "状态", value: result.operation.status)
-                    NodeValueRow(label: "退出状态", value: "\(result.operation.exitCode)")
-                    NodeValueRow(label: "日志", value: result.operation.logFile)
-                    if let error = result.postflightError { NodeValueRow(label: "复查错误", value: error) }
-                }
-                .textSelection(.enabled)
-            }
-            if let residues = result.operation.residues, !residues.directories.isEmpty || !residues.bins.isEmpty {
-                GroupBox("仍存在的残留") {
-                    VStack(alignment: .leading, spacing: 5) {
-                        ForEach(residues.directories + residues.bins, id: \.self) {
-                            Text($0).font(.callout.monospaced()).textSelection(.enabled)
+            .font(.title2.bold())
+            .foregroundStyle(result.operation.status == "ok" ? .green : .orange)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    GroupBox {
+                        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                            NodeValueRow(label: "动作", value: result.operation.action)
+                            NodeValueRow(label: "目标", value: result.operation.subject)
+                            NodeValueRow(label: "状态", value: result.operation.status)
+                            NodeValueRow(label: "退出状态", value: "\(result.operation.exitCode)")
+                            NodeValueRow(label: "日志", value: result.operation.logFile)
+                            if let error = result.postflightError {
+                                NodeValueRow(label: "复查错误", value: error)
+                            }
+                        }
+                        .textSelection(.enabled)
+                    }
+                    if let residues = result.operation.residues,
+                       !residues.directories.isEmpty || !residues.bins.isEmpty
+                    {
+                        GroupBox("仍存在的残留") {
+                            VStack(alignment: .leading, spacing: 5) {
+                                ForEach(residues.directories + residues.bins, id: \.self) {
+                                    Text($0).font(.callout.monospaced()).textSelection(.enabled)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            HStack { Spacer(); Button("关闭") { model.dismissNodeFeedback() }.keyboardShortcut(.defaultAction) }
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("关闭") { model.dismissNodeFeedback() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
         }
-        .padding(24).frame(width: 620)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 400, idealHeight: 520)
     }
 }

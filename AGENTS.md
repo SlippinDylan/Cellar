@@ -21,7 +21,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - `CellarApp.swift`：SwiftUI Scene、AppKit delegate 和退出策略。
 - `Features/`：概览、Homebrew、Node、Shell、操作记录及主导航。
 - `Services/`：App 状态、刷新编排、任务登记和系统探测。
-- `Models/`：页面状态、Manager JSON DTO 和只读业务模型。
+- `Models/`：页面状态、Manager JSON DTO、操作计划与结果模型。
 - `Bridge/`：`Process`、受控环境、Manager 快照安装和 JSON 解码。
 - `Resources/Managers/`：从冻结脚本复制的只读生产快照。
 - `CellarTests/`：契约、环境解析、进程、生命周期和快照测试。

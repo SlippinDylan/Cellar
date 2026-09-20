@@ -126,7 +126,7 @@ struct HomebrewInstalledPage: View {
                         Button("准备卸载 Formula", role: .destructive) {
                             Task { await model.prepareHomebrewUninstall(package.identity) }
                         }
-                        .disabled(model.isHomebrewWorking || model.isRefreshing)
+                        .disabled(model.isBusy)
                     } else {
                         if !package.artifacts.isEmpty {
                             detailSection("Homebrew Artifact") {
@@ -144,15 +144,15 @@ struct HomebrewInstalledPage: View {
                         }
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Button("准备普通卸载") {
+                        Button("准备普通卸载", role: .destructive) {
                                 Task { await model.prepareHomebrewUninstall(package.identity) }
                             }
-                            .disabled(model.isHomebrewWorking || model.isRefreshing)
+                            .disabled(model.isBusy)
 
                             Button("准备 Zap 卸载", role: .destructive) {
                                 Task { await model.prepareHomebrewUninstall(package.identity, zap: true) }
                             }
-                            .disabled(model.isHomebrewWorking || model.isRefreshing)
+                            .disabled(model.isBusy)
 
                             Text("Zap 可能删除 Cask 定义的用户配置和数据。Cellar 不会使用 sudo，也不会额外删除文件。")
                                 .font(.caption)

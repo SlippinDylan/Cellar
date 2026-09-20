@@ -50,13 +50,13 @@ Features → Services → Bridge → Manager / 系统 CLI
 
 `CellarApp` 使用 `WindowGroup` 创建普通前台窗口，并通过 `defaultSize(width:height:)` 设置 1080 × 720 点的首次默认尺寸。App 不设置 `LSUIElement`，也不声明 `MenuBarExtra`。
 
-`AppRootView` 统一为当前一级页面设置 `navigationTitle` 和 `navigationSubtitle`，并在 titlebar 下方绘制水平分割线。概览的最后刷新时间附在副标题后。各页面不再重复绘制内容区大标题，内容使用统一的 24pt 边距；概览使用两列状态卡片，模块页的横向状态总览卡占满内容宽度。
+`AppRootView` 统一为当前一级功能页设置 `navigationTitle` 和 `navigationSubtitle`，并在 titlebar 下方绘制水平分割线。设置是 Sidebar 底部的 utility 页，以工具栏 pane selector 取代标题内容。概览的最后刷新时间附在副标题后。各页面不再重复绘制内容区大标题，内容使用统一的 24pt 边距；概览使用两列状态卡片，模块页的横向状态总览卡占满内容宽度。
 
 首次读取期间，各页面复用 `PageLoadingView` 占满详情区域并将 `ProgressView` 水平、垂直居中。失败空态同样占满详情区域，不依赖固定高度模拟居中。
 
 左侧 Sidebar 使用 `DisclosureGroup` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。三个模块的二级页面均承载对应真实功能。
 
-左侧导航不使用会自行管理 AppKit scroller 的 SwiftUI `List`。它由 `ScrollView`、`LazyVStack`、`DisclosureGroup` 和自定义选择行组成，并通过 `scrollIndicators(.hidden)` 隐藏直接 ScrollView 的 indicator。滚轮和触控板滚动、分类展开、缩进与选择高亮仍然可用。
+左侧导航使用系统 `List(.sidebar)` 和 `DisclosureGroup`，并通过 `scrollIndicators(.hidden)` 保留滚轮与触控板滚动、分类展开、缩进和系统选择高亮，不自定义主导航的选中样式。
 
 `AppDelegate` 通过 `NSApplicationDelegateAdaptor` 接入 AppKit：
 
@@ -88,7 +88,7 @@ OperationStore.end
 
 `isRefreshing` 保证同一 `AppModel` 不会同时运行两次刷新。Hosted XCTest 通过 `XCTestConfigurationFilePath` 跳过启动自动刷新，避免测试访问真实开发环境。
 
-Homebrew 写操作与全局刷新共享活动任务登记；同一时间只允许一个 Homebrew mutation，执行期间禁用重复提交并应用既有退出保护。操作开始前由 Bridge 生成计划，View 只负责展示计划和发送确认/取消意图。执行结束后无论成功或失败都 post-refresh 受影响状态。
+Homebrew、Node、Shell 与全局刷新共享 `AppModel.isBusy` 派生状态和活动任务登记。查询、计划或执行正在等待外部进程时，不启动另一次刷新或跨模块操作；已展示的计划在确认入口会再次检查该状态。操作开始前由 Bridge 生成计划，View 只负责展示计划和发送确认/取消意图。执行结束后无论成功或失败都 post-refresh 受影响状态。
 
 当前操作记录只在内存中存在。没有持久化、独立任务队列或进度百分比。Homebrew 命令不是事务；执行结果记录退出码、stdout、stderr 和 post-refresh 错误，状态层不能把非零退出简单解释成“什么都没发生”。
 
@@ -104,7 +104,7 @@ Homebrew 写操作与全局刷新共享活动任务登记；同一时间只允�
 当前快照版本是 `1c9d71b`。`ManagerSnapshotInstaller` 从 `Bundle.main.resourceURL/Managers` 读取资源，并安装到：
 
 ```text
-~/Library/Application Support/Cellar/Managers/1c9d71b/
+~/Library/Application Support/Cellar/Managers/1c9d71b-app2/
 ```
 
 安装过程先验证三套入口文件，再复制到同级随机 staging 目录，最后移动到版本目录。已有完整版本直接复用；缺少入口文件的版本目录会被删除并重新安装。安装后再次验证入口可读性。
@@ -242,18 +242,18 @@ Sparkle XCFramework 原始 macOS slice 是 universal。Cellar build phase 只处
 
 工程包含 `Cellar` App Target 和 `CellarTests` Target。两者最低部署版本为 macOS 26.0，显式排除 `x86_64`，发布产物只允许 arm64。App Sandbox 关闭。
 
-仓库包含 CI、签名 Release、DMG、Discord 通知以及 Sparkle/Homebrew tap 分发自动化。`Config/Release/manifest.json` 默认关闭发布；缺少 GitHub Secrets 或未执行真实流水线时不能把本地无签名构建描述为正式版本。
+仓库包含 CI、签名 Release、DMG、Discord 通知以及 Sparkle/Homebrew tap 分发自动化。发布流水线在构建前验证 Sparkle 公私钥配对，并保持 GitHub Release 为 draft，直到签名 appcast 与 channel Cask 已写入 Homebrew tap。`Config/Release/manifest.json` 默认关闭发布；缺少 GitHub Secrets 或未执行真实流水线时不能把本地无签名构建描述为正式版本。
 
 ## 稳定不变量
 
 - 只有用户确认的 Homebrew、Node 或 Shell 操作可以修改对应状态。
-- 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup、自动孤儿清理、`sudo` 或 App 自行残留删除。
+- 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile` 正文，不执行 Homebrew cleanup、自动孤儿清理、`sudo` 或 App 自行 Cask 残留删除。
 - Homebrew mutation 必须计划、确认、单操作锁定、执行并 post-refresh；卸载禁止隐式 update 与 autoremove。
 - 不把某个 Node 的 npm 全局包描述为整台机器唯一集合。
 - 不因更新检查失败丢弃已经读取的 Node 数据。
 - 不加载用户 `.zshrc`，不猜测无法解析的 nvm 默认版本。
 - 不从 View 直接执行命令，不从 Models 执行 IO。
-- 不修改冻结的 `scripts/`，不手工修补 Manager 快照。
+- 不修改冻结的 `scripts/` 或其逐字节快照；Cellar-owned adapter 与冻结来源分文件维护。
 - 不在 App Bundle Resources 中写运行数据。
 - 不让自动测试访问真实用户环境或 Application Support。
 

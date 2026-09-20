@@ -30,7 +30,7 @@ struct OhMyZshPage: View {
                             Label("安装 Oh My Zsh", systemImage: "square.and.arrow.down")
                         }
                         .help("准备安装 Oh My Zsh")
-                        .disabled(model.isShellWorking)
+                        .disabled(model.isBusy)
                     }
                 }
             }

@@ -57,7 +57,7 @@ struct HomebrewDoctorPage: View {
                         )
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isHomebrewWorking || model.isRefreshing)
+                    .disabled(model.isBusy)
                 }
 
                 if let report = model.homebrewDiagnosticReport {

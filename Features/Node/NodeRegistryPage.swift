@@ -27,11 +27,11 @@ struct NodeRegistryPage: View {
                             Button("准备设置") {
                                 Task { await model.prepareNodeAction(.init(action: .setRegistry, subject: registry)) }
                             }
-                            .buttonStyle(.glassProminent).disabled(registry.isEmpty || model.isNodeWorking)
+                            .buttonStyle(.glassProminent).disabled(registry.isEmpty || model.isBusy)
                             Button("删除用户配置", role: .destructive) {
                                 Task { await model.prepareNodeAction(.init(action: .deleteRegistry)) }
                             }
-                            .disabled(model.isNodeWorking)
+                            .disabled(model.isBusy)
                         }
                     }
                     GroupBox("Scope Registry") {
@@ -45,12 +45,12 @@ struct NodeRegistryPage: View {
                                 Button("准备删除", role: .destructive) {
                                     Task { await model.prepareNodeAction(.init(action: .deleteScopeRegistry, subject: scope)) }
                                 }
-                                .disabled(scope.isEmpty || model.isNodeWorking)
+                                .disabled(scope.isEmpty || model.isBusy)
                                 Button("准备设置") {
                                     Task { await model.prepareNodeAction(.init(action: .setScopeRegistry, subject: scope, value: scopeRegistry)) }
                                 }
                                 .buttonStyle(.glassProminent)
-                                .disabled(scope.isEmpty || scopeRegistry.isEmpty || model.isNodeWorking)
+                                .disabled(scope.isEmpty || scopeRegistry.isEmpty || model.isBusy)
                             }
                         }
                     }

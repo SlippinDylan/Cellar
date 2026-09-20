@@ -2,7 +2,7 @@ import Foundation
 
 extension AppModel {
     func prepareNodeAction(_ request: NodeActionRequest) async {
-        guard !isRefreshing, !isHomebrewWorking, !isNodeWorking, let managers else { return }
+        guard !isBusy, let managers else { return }
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
@@ -23,7 +23,7 @@ extension AppModel {
     }
 
     func executeNodePlan() async {
-        guard let plan = nodePlan, plan.canExecute, !isNodeWorking, let managers else { return }
+        guard let plan = nodePlan, plan.canExecute, !isBusy, let managers else { return }
         nodePlan = nil
         isNodeWorking = true
         nodeOperationError = nil

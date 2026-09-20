@@ -39,6 +39,20 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertNotNil(snapshot.sectionErrors[.outdated])
     }
 
+    func testRejectsMismatchedFullyQualifiedPackageIdentity() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        do {
+            _ = try await fixture.client.loadPackage(
+                HomebrewPackageIdentity(name: "other/tools/demo", kind: .formula)
+            )
+            XCTFail("Expected package identity mismatch")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("身份与请求不匹配"))
+        }
+    }
+
     func testDoctorReturnsTextDiagnosticsDespiteNonzeroExit() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
@@ -133,6 +147,66 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertFalse(plan.canExecute)
         XCTAssertEqual(plan.associatedPackages.map(\.name), ["acme/tools/demo"])
     }
+
+    func testRejectsInstallWhenStateChangedAfterPlanning() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        let plan = try await fixture.client.planInstall(
+            HomebrewPackageIdentity(name: "newpkg", kind: .formula)
+        )
+        try Data().write(to: fixture.directoryURL.appending(path: "new-installed"))
+
+        do {
+            _ = try await fixture.client.execute(plan)
+            XCTFail("Expected stale install plan rejection")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("状态已经变化"))
+        }
+        let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertFalse(log.contains("install --formula newpkg"))
+    }
+
+    func testReportsPartialWhenCommandFailsAfterChangingState() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        try Data().write(to: fixture.directoryURL.appending(path: "uninstall-reports-failure"))
+
+        let plan = try await fixture.client.planFormulaUninstall("demo")
+        let result = try await fixture.client.execute(plan)
+
+        XCTAssertEqual(result.command.terminationStatus, 1)
+        XCTAssertEqual(result.outcome, .partial)
+        XCTAssertNotNil(result.snapshot)
+    }
+
+    func testReportsUnknownStateWhenPostflightRefreshFails() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        let plan = try await fixture.client.planFormulaUninstall("demo")
+        try Data().write(to: fixture.directoryURL.appending(path: "postflight-fails"))
+        let result = try await fixture.client.execute(plan)
+
+        XCTAssertEqual(result.command.terminationStatus, 0)
+        XCTAssertEqual(result.outcome, .stateUnknown)
+        XCTAssertNil(result.snapshot)
+        XCTAssertNotNil(result.postflightError)
+    }
+
+    func testReportsUnknownStateWhenPostflightPackageSectionFails() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        let plan = try await fixture.client.planFormulaUninstall("demo")
+        try Data().write(to: fixture.directoryURL.appending(path: "postflight-packages-fail"))
+        let result = try await fixture.client.execute(plan)
+
+        XCTAssertEqual(result.command.terminationStatus, 0)
+        XCTAssertEqual(result.outcome, .stateUnknown)
+        XCTAssertNotNil(result.snapshot)
+        XCTAssertNotNil(result.snapshot?.sectionErrors[.packages])
+    }
 }
 
 private struct FakeBrewFixture {
@@ -161,6 +235,10 @@ private struct FakeBrewFixture {
 
         case "$*" in
           "--version")
+            if [ -f "$state_dir/postflight-fails" ] && [ -f "$state_dir/formula-removed" ]; then
+              printf '%s\n' 'postflight unavailable' >&2
+              exit 1
+            fi
             printf '%s\n' 'Homebrew 5.0.0' 'Homebrew/homebrew-core (git revision test)'
             ;;
           "-p") printf '%s\n' '/Library/Developer/CommandLineTools' ;;
@@ -170,6 +248,10 @@ private struct FakeBrewFixture {
           "--cellar") printf '%s\n' '/opt/homebrew/Cellar' ;;
           "config") printf '%s\n' 'HOMEBREW_VERSION: 5.0.0' 'CPU: arm64' ;;
           "info --json=v2 --installed")
+            if [ -f "$state_dir/postflight-packages-fail" ] && [ -f "$state_dir/formula-removed" ]; then
+              printf '%s\n' 'installed package query unavailable' >&2
+              exit 1
+            fi
             formula='{"name":"demo","full_name":"acme/tools/demo","tap":"acme/tools","desc":"Demo formula","homepage":"https://example.test/demo","versions":{"stable":"2.0.0","head":null,"bottle":true},"installed":[{"version":"1.0.0","future":"ignored"}],"dependencies":["libexample"],"pinned":false,"deprecated":false,"disabled":false,"future":{"nested":true}}'
             cask='{"token":"sample","full_token":"acme/apps/sample","tap":"acme/apps","name":["Sample"],"desc":"Sample cask","homepage":"https://example.test/sample","version":"3.0","installed":"3.0","outdated":false,"artifacts":[{"app":["Sample.app"]},{"zap":[{"trash":["~/Library/Preferences/com.acme.sample.plist"]}]}],"future":42}'
             [ -f "$state_dir/formula-removed" ] && formula=''
@@ -213,6 +295,9 @@ private struct FakeBrewFixture {
           "info --json=v2 --formula demo"|"info --json=v2 --formula acme/tools/demo")
             printf '%s\n' '{"formulae":[{"name":"demo","full_name":"acme/tools/demo","tap":"acme/tools","desc":"Demo formula","homepage":null,"versions":{"stable":"2.0.0","head":null},"installed":[{"version":"1.0.0"}],"dependencies":["libexample"],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}'
             ;;
+          "info --json=v2 --formula other/tools/demo")
+            printf '%s\n' '{"formulae":[{"name":"demo","full_name":"acme/tools/demo","tap":"acme/tools","desc":"Demo formula","homepage":null,"versions":{"stable":"2.0.0","head":null},"installed":[],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}'
+            ;;
           "info --json=v2 --formula newpkg")
             installed='[]'
             [ -f "$state_dir/new-installed" ] && installed='[{"version":"1.0.0"}]'
@@ -225,6 +310,7 @@ private struct FakeBrewFixture {
           "uninstall --formula acme/tools/demo")
             touch "$state_dir/formula-removed"
             printf '%s\n' 'completed'
+            [ ! -f "$state_dir/uninstall-reports-failure" ] || exit 1
             ;;
           "uninstall --cask --zap acme/apps/sample")
             touch "$state_dir/cask-removed"

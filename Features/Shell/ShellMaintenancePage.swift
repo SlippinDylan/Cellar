@@ -21,7 +21,7 @@ struct ShellMaintenancePage: View {
                         Label("准备整理", systemImage: "folder.badge.gearshape")
                     }
                     .help("准备整理 Zsh 文件")
-                    .disabled(model.isShellWorking || !shell.zshrcExists)
+                    .disabled(model.isBusy || !shell.zshrcExists)
                 }
             }
         }

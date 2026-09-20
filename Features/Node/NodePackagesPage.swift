@@ -30,7 +30,7 @@ struct NodePackagesPage: View {
                         Label("安装全局包", systemImage: "plus")
                     }
                     .help("安装 npm 全局包")
-                    .disabled(model.isNodeWorking)
+                    .disabled(model.isBusy)
                 }
                 ToolbarSpacer(.fixed, placement: .primaryAction)
                 ToolbarItem(placement: .primaryAction) {
@@ -41,7 +41,7 @@ struct NodePackagesPage: View {
                         Label("更新到 Latest", systemImage: "arrow.up.circle")
                     }
                     .help("将所选包更新到 Latest")
-                    .disabled(selectedPackage?.isOutdated != true || model.isNodeWorking)
+                    .disabled(selectedPackage?.isOutdated != true || model.isBusy)
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(role: .destructive) {
@@ -51,7 +51,7 @@ struct NodePackagesPage: View {
                         Label("卸载", systemImage: "trash")
                     }
                     .help("卸载所选全局包")
-                    .disabled(selectedPackage == nil || model.isNodeWorking)
+                    .disabled(selectedPackage == nil || model.isBusy)
                 }
             }
             .sheet(isPresented: $showingInstall) {
@@ -70,7 +70,7 @@ struct NodePackagesPage: View {
                         Button("继续") { prepareInstall() }
                             .buttonStyle(.glassProminent)
                             .keyboardShortcut(.defaultAction)
-                            .disabled(packageSpec.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(packageSpec.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isBusy)
                     }
                 }
                 .padding(24)

@@ -77,7 +77,7 @@ struct ShellExtensionsPage: View {
                     Label("安装插件", systemImage: "plus")
                 }
                 .help("从 GitHub 安装插件")
-                .disabled(!shell.ohMyZshInstalled || model.isShellWorking)
+                .disabled(!shell.ohMyZshInstalled || model.isBusy)
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {
@@ -85,7 +85,7 @@ struct ShellExtensionsPage: View {
                     Label("应用插件配置", systemImage: "checkmark")
                 }
                 .help("应用所选插件")
-                .disabled(!shell.ohMyZshInstalled || model.isShellWorking)
+                .disabled(!shell.ohMyZshInstalled || model.isBusy)
             }
         } else {
             ToolbarItem(placement: .primaryAction) {
@@ -93,7 +93,7 @@ struct ShellExtensionsPage: View {
                     Label("应用主题", systemImage: "checkmark")
                 }
                 .help("应用所选主题")
-                .disabled(selectedTheme == nil || selectedTheme == shell.currentTheme || model.isShellWorking)
+                .disabled(selectedTheme == nil || selectedTheme == shell.currentTheme || model.isBusy)
             }
         }
     }
@@ -127,7 +127,7 @@ struct ShellExtensionsPage: View {
                     Task { await model.prepareShellAction(.init(action: .installPlugin, subject: pluginURL)) }
                 }
                 .buttonStyle(.glassProminent).keyboardShortcut(.defaultAction)
-                .disabled(pluginURL.isEmpty)
+                .disabled(pluginURL.isEmpty || model.isBusy)
             }
         }
         .padding(24).frame(width: 520)

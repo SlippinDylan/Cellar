@@ -47,29 +47,32 @@ struct AppRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 300)
         } detail: {
-            selectedPage
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .navigationTitle(model.selectedDestination.navigationTitle)
-                .navigationSubtitle(navigationSubtitle)
-                .toolbar {
-                    if model.selectedDestination != .settings {
-                        ToolbarItem(placement: .primaryAction) {
-                            if isWorking {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .help("正在执行任务")
-                            } else {
-                                Button {
-                                    Task { await model.refresh() }
-                                } label: {
-                                    Label("刷新", systemImage: "arrow.clockwise")
-                                }
-                                .keyboardShortcut("r", modifiers: .command)
-                                .help("刷新本机环境（⌘R）")
+            VStack(spacing: 0) {
+                Divider()
+                selectedPage
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .navigationTitle(model.selectedDestination.navigationTitle)
+            .navigationSubtitle(navigationSubtitle)
+            .toolbar {
+                if model.selectedDestination != .settings {
+                    ToolbarItem(placement: .primaryAction) {
+                        if model.isBusy {
+                            ProgressView()
+                                .controlSize(.small)
+                                .help("正在执行任务")
+                        } else {
+                            Button {
+                                Task { await model.refresh() }
+                            } label: {
+                                Label("刷新", systemImage: "arrow.clockwise")
                             }
+                            .keyboardShortcut("r", modifiers: .command)
+                            .help("刷新本机环境（⌘R）")
                         }
                     }
                 }
+            }
         }
         .navigationSplitViewStyle(.prominentDetail)
         .task {
@@ -77,10 +80,6 @@ struct AppRootView: View {
                 await model.refresh()
             }
         }
-    }
-
-    private var isWorking: Bool {
-        model.isRefreshing || model.isHomebrewWorking || model.isNodeWorking || model.isShellWorking
     }
 
     private var navigationSubtitle: String {
@@ -121,6 +120,7 @@ struct AppRootView: View {
         .foregroundStyle(selected ? Color.white : Color.primary)
         .background(selected ? Color.accentColor : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func sidebarGroup<Page: SidebarPage>(

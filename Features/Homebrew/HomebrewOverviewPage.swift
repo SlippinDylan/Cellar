@@ -91,7 +91,7 @@ struct HomebrewOverviewPage: View {
                                 )
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(model.isHomebrewWorking || model.isRefreshing)
+                            .disabled(model.isBusy)
                         }
                     }
 

@@ -33,7 +33,7 @@ struct HomebrewDiscoverPage: View {
                                 )
                             }
                             .buttonStyle(.borderedProminent)
-                            .disabled(trimmedQuery.isEmpty || model.isHomebrewWorking || model.isRefreshing)
+                            .disabled(trimmedQuery.isEmpty || model.isBusy)
                         }
                     }
                 }
@@ -126,7 +126,7 @@ struct HomebrewDiscoverPage: View {
                         Task { await model.prepareHomebrewInstall(selection) }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isHomebrewWorking || model.isRefreshing)
+                    .disabled(model.isBusy)
                 }
 
                 Text("安装可能联网、下载依赖并修改 Homebrew 管理的目录；实际命令执行前仍需确认计划。")

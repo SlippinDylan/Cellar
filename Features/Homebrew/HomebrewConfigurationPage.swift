@@ -2,8 +2,8 @@ import SwiftUI
 
 struct HomebrewConfigurationPage: View {
     @ObservedObject var model: AppModel
-    @State private var tapName = ""
     @State private var selectedTap: String?
+    @State private var showingAddTap = false
 
     var body: some View {
         HomebrewPageState(model: model) { snapshot in
@@ -20,11 +20,27 @@ struct HomebrewConfigurationPage: View {
                 .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(24)
             }
+            .onChange(of: snapshot.taps.map(\.name)) { _, names in
+                if let selectedTap, !names.contains(selectedTap) {
+                    self.selectedTap = nil
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showingAddTap = true } label: {
+                        Label("添加 Tap", systemImage: "plus")
+                    }
+                    .disabled(model.isBusy)
+                }
+            }
+            .sheet(isPresented: $showingAddTap) {
+                AddTapSheet(model: model)
+            }
         }
     }
 
     private func pathCard(_ snapshot: HomebrewSnapshot) -> some View {
-        StatusOverviewCard(tint: .blue) {
+        StatusOverviewCard {
             Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 10) {
                 pathRow("Prefix", snapshot.configuration.prefix)
                 pathRow("Repository", snapshot.configuration.repository)
@@ -49,9 +65,12 @@ struct HomebrewConfigurationPage: View {
                         GridRow {
                             Text(key)
                                 .foregroundStyle(.secondary)
+                                .frame(width: 180, alignment: .leading)
                             Text(snapshot.configuration.values[key] ?? "—")
                                 .fontDesign(.monospaced)
                                 .textSelection(.enabled)
+                                .lineLimit(3)
+                                .truncationMode(.middle)
                         }
                     }
                 }
@@ -66,19 +85,11 @@ struct HomebrewConfigurationPage: View {
     private func tapsCard(_ snapshot: HomebrewSnapshot) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    TextField("user/repository", text: $tapName)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { prepareAddTap() }
-
-                    Button("添加 Tap") {
-                        prepareAddTap()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(trimmedTapName.isEmpty || model.isBusy)
-
+                HStack {
+                    Text("选择 Tap 后可以先扫描关联安装项，再生成安全移除计划。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                     Spacer()
-
                     Button("安全移除", role: .destructive) {
                         guard let selectedTap else { return }
                         Task { await model.prepareHomebrewRemoveTap(selectedTap) }
@@ -101,7 +112,7 @@ struct HomebrewConfigurationPage: View {
                     ContentUnavailableView(
                         "没有额外 Tap",
                         systemImage: "point.3.connected.trianglepath.dotted",
-                        description: Text("可以输入 user/repository 添加 Tap。")
+                        description: Text("可以从工具栏添加 user/repository。")
                     )
                     .frame(maxWidth: .infinity, minHeight: 180)
                 } else {
@@ -119,6 +130,7 @@ struct HomebrewConfigurationPage: View {
                         }
                         .width(min: 55, ideal: 65, max: 80)
                     }
+                    .alternatingRowBackgrounds(.disabled)
                     .frame(minHeight: 220, idealHeight: 280)
                 }
 
@@ -136,8 +148,11 @@ struct HomebrewConfigurationPage: View {
         GridRow {
             Text(label)
                 .foregroundStyle(.secondary)
+                .frame(width: 120, alignment: .leading)
             Text(value)
                 .fontDesign(.monospaced)
+                .lineLimit(2)
+                .truncationMode(.middle)
         }
     }
 
@@ -145,13 +160,42 @@ struct HomebrewConfigurationPage: View {
         snapshot.configuration.cellar
     }
 
-    private var trimmedTapName: String {
+}
+
+private struct AddTapSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: AppModel
+    @State private var tapName = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Label("添加 Homebrew Tap", systemImage: "point.3.connected.trianglepath.dotted")
+                .font(.title2.weight(.semibold))
+            TextField("user/repository", text: $tapName)
+                .textFieldStyle(.roundedBorder)
+                .onSubmit(prepare)
+            Text("第三方 Tap 可能访问网络并修改 Homebrew 管理的仓库状态。下一步只生成计划。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("取消", role: .cancel) { dismiss() }
+                Button("生成计划") { prepare() }
+                    .buttonStyle(.glassProminent)
+                    .disabled(trimmedName.isEmpty || model.isBusy)
+            }
+        }
+        .padding(24)
+        .frame(width: 520)
+    }
+
+    private var trimmedName: String {
         tapName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func prepareAddTap() {
-        guard !trimmedTapName.isEmpty else { return }
-        let name = trimmedTapName
-        Task { await model.prepareHomebrewAddTap(name) }
+    private func prepare() {
+        guard !trimmedName.isEmpty else { return }
+        dismiss()
+        Task { await model.prepareHomebrewAddTap(trimmedName) }
     }
 }

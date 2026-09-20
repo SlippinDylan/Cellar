@@ -187,7 +187,8 @@ actor HomebrewClient {
     func diagnose() async throws -> HomebrewDiagnosticReport {
         try validateExecutable()
         let result = try await run(["doctor"])
-        let lines = outputLines(result.standardOutput) + outputLines(result.standardError)
+        let allLines = outputLines(result.standardOutput) + outputLines(result.standardError)
+        let lines = Array(allLines.prefix(1_000))
         let diagnostics: [HomebrewDiagnostic]
         if result.standardOutputWasTruncated || result.standardErrorWasTruncated {
             diagnostics = [HomebrewDiagnostic(
@@ -205,26 +206,59 @@ actor HomebrewClient {
             )]
         } else {
             let defaultSeverity: HomebrewDiagnosticSeverity = result.terminationStatus == 0 ? .info : .warning
-            diagnostics = lines.enumerated().map { index, line in
+            var parsed = lines.enumerated().map { index, line in
                 HomebrewDiagnostic(
                     id: "\(index):\(line)",
                     severity: diagnosticSeverity(for: line, default: defaultSeverity),
                     message: line
                 )
             }
+            if allLines.count > lines.count {
+                parsed.append(HomebrewDiagnostic(
+                    id: "doctor-line-limit",
+                    severity: .warning,
+                    message: "brew doctor 返回了过多诊断行，界面只显示前 \(lines.count) 条"
+                ))
+            }
+            diagnostics = parsed
         }
         return HomebrewDiagnosticReport(diagnostics: diagnostics, command: result)
     }
 
     func planInstall(_ identity: HomebrewPackageIdentity) async throws -> HomebrewActionPlan {
-        let package = try await loadPackage(identity)
-        guard !package.isInstalled else {
-            throw HomebrewClientError.invalidPlan("软件包已经安装：\(package.identity.name)")
+        try await planInstall([identity])
+    }
+
+    func planInstall(_ identities: [HomebrewPackageIdentity]) async throws -> HomebrewActionPlan {
+        guard !identities.isEmpty, identities.count <= 100 else {
+            throw HomebrewClientError.invalidPlan("单次安装计划需要 1 至 100 个目标")
+        }
+        let validatedTargets = try identities.map {
+            HomebrewPackageIdentity(name: try validatedPackageName($0.name), kind: $0.kind)
+        }
+        guard Set(validatedTargets).count == validatedTargets.count else {
+            throw HomebrewClientError.invalidPlan("安装计划不能包含重复目标")
+        }
+        guard Set(validatedTargets.map(\.kind)).count == 1 else {
+            throw HomebrewClientError.invalidPlan("单次安装不能混合 Formula 与 Cask")
+        }
+
+        var packages: [HomebrewPackage] = []
+        packages.reserveCapacity(validatedTargets.count)
+        for target in validatedTargets {
+            let package = try await loadPackage(target)
+            guard !package.isInstalled else {
+                throw HomebrewClientError.invalidPlan("软件包已经安装：\(package.identity.name)")
+            }
+            packages.append(package)
+        }
+        guard Set(packages.map(\.identity)).count == packages.count else {
+            throw HomebrewClientError.invalidPlan("多个安装名称解析到了同一个软件包")
         }
         return plan(
             action: .install,
-            targets: [package.identity],
-            stateFingerprint: packageFingerprint(package)
+            targets: packages.map(\.identity),
+            stateFingerprint: packagesFingerprint(packages)
         )
     }
 
@@ -395,11 +429,17 @@ actor HomebrewClient {
     private func validateFreshness(of plan: HomebrewActionPlan) async throws {
         switch plan.action {
         case .install:
-            guard let target = plan.targets.first else {
+            guard !plan.targets.isEmpty else {
                 throw HomebrewClientError.invalidPlan("安装计划缺少目标")
             }
-            let package = try await loadPackage(target)
-            guard !package.isInstalled, packageFingerprint(package) == plan.stateFingerprint else {
+            var packages: [HomebrewPackage] = []
+            packages.reserveCapacity(plan.targets.count)
+            for target in plan.targets {
+                packages.append(try await loadPackage(target))
+            }
+            guard packages.allSatisfy({ !$0.isInstalled }),
+                  packagesFingerprint(packages) == plan.stateFingerprint
+            else {
                 throw HomebrewClientError.invalidPlan("软件包状态已经变化，请重新生成安装计划")
             }
         case .upgrade:
@@ -464,6 +504,13 @@ actor HomebrewClient {
         ].joined(separator: "|")
     }
 
+    private func packagesFingerprint(_ packages: [HomebrewPackage]) -> String {
+        packages
+            .map { "\($0.identity.kind.rawValue):\($0.identity.name)=\(packageFingerprint($0))" }
+            .sorted()
+            .joined(separator: "||")
+    }
+
     private func identitiesFingerprint(_ identities: [HomebrewPackageIdentity]) -> String {
         identities.map { "\($0.kind.rawValue):\($0.name)" }.sorted().joined(separator: "|")
     }
@@ -516,17 +563,25 @@ actor HomebrewClient {
         if values.isDirectory != true {
             return Int64(values.totalFileAllocatedSize ?? values.fileAllocatedSize ?? 0)
         }
+        if let total = values.totalFileAllocatedSize, total > 0 {
+            return Int64(total)
+        }
+        guard url.pathExtension.localizedCaseInsensitiveCompare("app") != .orderedSame else {
+            return nil
+        }
         guard let enumerator = FileManager.default.enumerator(
             at: url,
             includingPropertiesForKeys: Array(keys),
-            options: [],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
             errorHandler: { _, _ in true }
         ) else { return nil }
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .milliseconds(150))
         var total: Int64 = 0
         var visited = 0
         for case let itemURL as URL in enumerator {
             visited += 1
-            if visited > 100_000 { return nil }
+            if visited > 10_000 || clock.now >= deadline { return nil }
             guard let item = try? itemURL.resourceValues(forKeys: keys) else { continue }
             total += Int64(item.totalFileAllocatedSize ?? item.fileAllocatedSize ?? 0)
         }

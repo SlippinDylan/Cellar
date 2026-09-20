@@ -40,23 +40,43 @@ struct ShellResultSheet: View {
     let result: ShellActionResult
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(spacing: 0) {
             Label(result.operation.status == "ok" ? "操作完成" : "操作需要检查", systemImage: result.operation.status == "ok" ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                .font(.title2.bold()).foregroundStyle(result.operation.status == "ok" ? .green : .orange)
-            GroupBox {
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                    ShellValueRow(label: "动作", value: result.operation.action)
-                    ShellValueRow(label: "目标", value: result.operation.subject)
-                    ShellValueRow(label: "日志", value: result.operation.logFile)
-                    if !result.operation.backupPath.isEmpty {
-                        ShellValueRow(label: ".zshrc 备份", value: result.operation.backupPath)
+                .font(.title2.bold())
+                .foregroundStyle(result.operation.status == "ok" ? .green : .orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+
+            Divider()
+
+            ScrollView {
+                GroupBox {
+                    Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                        ShellValueRow(label: "动作", value: result.operation.action)
+                        ShellValueRow(label: "目标", value: result.operation.subject)
+                        ShellValueRow(label: "日志", value: result.operation.logFile)
+                        if !result.operation.backupPath.isEmpty {
+                            ShellValueRow(label: ".zshrc 备份", value: result.operation.backupPath)
+                        }
+                        if let error = result.postflightError {
+                            ShellValueRow(label: "复查错误", value: error)
+                        }
                     }
-                    if let error = result.postflightError { ShellValueRow(label: "复查错误", value: error) }
+                    .textSelection(.enabled)
                 }
-                .textSelection(.enabled)
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-            HStack { Spacer(); Button("关闭") { model.dismissShellFeedback() }.keyboardShortcut(.defaultAction) }
+
+            Divider()
+            HStack {
+                Spacer()
+                Button("关闭") { model.dismissShellFeedback() }
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
         }
-        .padding(24).frame(width: 620)
+        .frame(minWidth: 560, idealWidth: 620, minHeight: 360, idealHeight: 480)
     }
 }

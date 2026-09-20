@@ -7,7 +7,7 @@ struct ShellOverviewPage: View {
         ShellPageContainer(model: model) { shell in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    StatusOverviewCard(tint: .purple) {
+                    StatusOverviewCard {
                         HStack(spacing: 0) {
                             StatusMetric(title: "Zsh", value: shell.zshVersion ?? "—", systemImage: "terminal.fill", tint: .blue)
                             StatusMetricDivider()
@@ -39,8 +39,13 @@ struct ShellValueRow: View {
 
     var body: some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary)
+            Text(label)
+                .foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .leading)
             Text(value.isEmpty ? "—" : value)
+                .fontDesign(.monospaced)
+                .lineLimit(2)
+                .truncationMode(.middle)
         }
     }
 }

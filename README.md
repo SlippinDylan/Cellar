@@ -16,7 +16,7 @@ Cellar 是一个原生 macOS 开发环境工具。它把 Homebrew、Node/npm/nvm
 
 Cellar 启动后会自动刷新。Homebrew、Node 或 Shell 其中一项失败时，其他已经读取的状态仍会保留。npm 更新检查失败也不会清空 Node 版本和全局包列表。
 
-Homebrew 可以安装 Formula/Cask、更新 Homebrew 元数据、选择升级、卸载单个 Formula、以 standard 或 zap 模式卸载单个 Cask，以及添加或安全移除 Tap。每项写操作都会先展示计划并等待确认，完成后重新读取状态。Homebrew 操作不是事务；命令失败时可能已经完成其中一部分，Cellar 会保留实际结果而不会显示为整体回滚。
+Homebrew 可以单个或按同类型批量安装 Formula/Cask、更新 Homebrew 元数据、选择升级、卸载单个 Formula、以 standard 或 zap 模式卸载单个 Cask，以及添加或安全移除 Tap。批量输入一行一个名称，单次最多 100 项。每项写操作都会先展示计划并等待确认，完成后重新读取状态。Homebrew 操作不是事务；命令失败时可能已经完成其中一部分，Cellar 会保留实际结果而不会显示为整体回滚。
 
 Node 可以在当前受控 Node 环境中安装、更新和卸载 npm 全局包，管理 nvm/Node 版本、默认与 scope Registry，执行受限维护操作，并为用户明确选择的项目写入 `.nvmrc`。写操作同样先生成计划并确认；“用于本次 Cellar 会话”只改变 App 后续命令的受控 PATH，不改变已经打开的终端。
 
@@ -29,7 +29,7 @@ Shell 可以安装 Oh My Zsh、从 GitHub HTTPS 地址安装插件、更新受�
 - 不调用 `sudo`，不包含 Privileged Helper；需要更高权限的项目只报告给用户。
 - 不切换默认登录 Shell，不运行 `chsh`，也不删除 Oh My Zsh 或用户插件目录。
 - Node 环境支持默认的 `~/.nvm` 布局和常见系统路径；自定义 NVM_DIR、asdf、fnm 与 Volta 尚未支持。
-- Homebrew 与 Node 查询和写操作分别设置 5 分钟和 30 分钟 deadline；Shell 尚未配置 deadline，界面也没有用户取消入口。
+- Homebrew、Node 和 Shell 查询和写操作分别设置 5 分钟和 30 分钟 deadline；界面尚未提供用户取消入口。
 - 界面文本目前只有中文。
 
 ## 数据与网络

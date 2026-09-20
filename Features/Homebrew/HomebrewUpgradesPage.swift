@@ -44,6 +44,7 @@ struct HomebrewUpgradesPage: View {
                             Text(package.currentVersion ?? "—")
                         }
                     }
+                    .alternatingRowBackgrounds(.disabled)
 
                     Text("Formula 与 Cask 使用不同的明确命令，一次计划只提交一种类型。操作不是事务，失败时可能已有部分项目完成升级。")
                         .font(.caption)
@@ -52,6 +53,12 @@ struct HomebrewUpgradesPage: View {
                 }
             }
             .padding(24)
+            .onChange(of: filter) { _, _ in
+                selection.formIntersection(Set(visiblePackages(snapshot).map(\.identity)))
+            }
+            .onChange(of: snapshot.outdatedPackages.map(\.identity)) { _, identities in
+                selection.formIntersection(Set(identities))
+            }
         }
     }
 
@@ -77,16 +84,40 @@ struct HomebrewUpgradesPage: View {
 
             Spacer()
 
-            Button("升级所选 Formula（\(selectedTargets(.formula).count)）") {
-                Task { await model.prepareHomebrewUpgrade(selectedTargets(.formula)) }
-            }
-            .disabled(selectedTargets(.formula).isEmpty || model.isBusy)
+            Text("已选 \(selection.count) 项")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.secondary)
 
-            Button("升级所选 Cask（\(selectedTargets(.cask).count)）") {
-                Task { await model.prepareHomebrewUpgrade(selectedTargets(.cask)) }
+            upgradeControl
+        }
+    }
+
+    @ViewBuilder
+    private var upgradeControl: some View {
+        let formulaTargets = selectedTargets(.formula)
+        let caskTargets = selectedTargets(.cask)
+        if !formulaTargets.isEmpty && !caskTargets.isEmpty {
+            Menu {
+                Button("为 \(formulaTargets.count) 个 Formula 生成计划") {
+                    Task { await model.prepareHomebrewUpgrade(formulaTargets) }
+                }
+                Button("为 \(caskTargets.count) 个 Cask 生成计划") {
+                    Task { await model.prepareHomebrewUpgrade(caskTargets) }
+                }
+            } label: {
+                Label("准备升级…", systemImage: "arrow.up.circle")
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(selectedTargets(.cask).isEmpty || model.isBusy)
+            .buttonStyle(.glassProminent)
+            .disabled(model.isBusy)
+        } else {
+            let targets = formulaTargets.isEmpty ? caskTargets : formulaTargets
+            Button {
+                Task { await model.prepareHomebrewUpgrade(targets) }
+            } label: {
+                Label("准备升级 \(targets.count) 项", systemImage: "arrow.up.circle")
+            }
+            .buttonStyle(.glassProminent)
+            .disabled(targets.isEmpty || model.isBusy)
         }
     }
 

@@ -11,7 +11,7 @@ struct HomebrewOverviewPage: View {
                         HomebrewSectionErrorCard(title: error.title, message: error.message)
                     }
 
-                    StatusOverviewCard(tint: .blue) {
+                    StatusOverviewCard {
                         HStack(spacing: 0) {
                             StatusMetric(
                                 title: "Formula",
@@ -65,7 +65,7 @@ struct HomebrewOverviewPage: View {
                         Label("运行环境", systemImage: "terminal")
                     }
 
-                    StatusOverviewCard(tint: .orange) {
+                    StatusOverviewCard {
                         HStack(spacing: 16) {
                             Image(systemName: "arrow.triangle.2.circlepath")
                                 .font(.system(size: 24))
@@ -90,7 +90,7 @@ struct HomebrewOverviewPage: View {
                                     isWorking: model.isHomebrewWorking
                                 )
                             }
-                            .buttonStyle(.borderedProminent)
+                            .buttonStyle(.glassProminent)
                             .disabled(model.isBusy)
                         }
                     }
@@ -114,8 +114,11 @@ struct HomebrewOverviewPage: View {
         GridRow {
             Text(label)
                 .foregroundStyle(.secondary)
+                .frame(width: 120, alignment: .leading)
             Text(value.isEmpty ? "—" : value)
                 .fontDesign(.monospaced)
+                .lineLimit(2)
+                .truncationMode(.middle)
         }
     }
 

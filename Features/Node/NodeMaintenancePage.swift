@@ -3,13 +3,13 @@ import SwiftUI
 struct NodeMaintenancePage: View {
     @ObservedObject var model: AppModel
 
-    private let actions: [(target: String, title: String, detail: String)] = [
-        ("npm-cache-verify", "校验 npm cache", "只读校验，不删除 cache。"),
-        ("npm-cache-clean", "清理 npm cache", "删除 npm 管理的 cache 内容。"),
-        ("node-gyp-cache", "清理 node-gyp cache", "仅处理计划中经过安全解析的用户 cache 目录。"),
-        ("orphan-bins", "清理孤立命令链接", "仅删除计划确认且执行前复验仍为孤立状态的符号链接。"),
-        ("nvm-old-versions", "删除无用户包的旧 Node", "保留当前和默认版本，只处理没有用户全局包的版本。"),
-        ("logs", "整理 Manager 日志", "保留最近 100 个日志文件。")
+    private let actions: [(target: String, title: String, detail: String, icon: String, tint: Color)] = [
+        ("npm-cache-verify", "校验 npm cache", "只读校验，不删除 cache。", "checkmark.shield", .blue),
+        ("npm-cache-clean", "清理 npm cache", "删除 npm 管理的 cache 内容。", "trash", .orange),
+        ("node-gyp-cache", "清理 node-gyp cache", "仅处理计划中经过安全解析的用户 cache 目录。", "hammer", .orange),
+        ("orphan-bins", "清理孤立命令链接", "仅删除执行前复验仍为孤立状态的符号链接。", "link.badge.plus", .orange),
+        ("nvm-old-versions", "删除无用户包的旧 Node", "保留当前和默认版本，只处理没有用户全局包的版本。", "shippingbox.and.arrow.backward", .red),
+        ("logs", "整理 Manager 日志", "保留最近 100 个日志文件。", "doc.text.magnifyingglass", .orange)
     ]
 
     var body: some View {
@@ -36,19 +36,18 @@ struct NodeMaintenancePage: View {
                     GroupBox("维护操作") {
                         VStack(spacing: 0) {
                             ForEach(Array(actions.enumerated()), id: \.element.target) { index, item in
-                                HStack(alignment: .top, spacing: 12) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(item.title).font(.headline)
-                                        Text(item.detail).font(.callout).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Button(item.target == "npm-cache-verify" ? "运行" : "准备计划") {
+                                OperationRow(
+                                    title: item.title,
+                                    detail: item.detail,
+                                    systemImage: item.icon,
+                                    tint: item.tint,
+                                    actionTitle: item.target == "npm-cache-verify" ? "运行" : "准备计划",
+                                    role: item.target == "npm-cache-verify" ? nil : .destructive,
+                                    isEnabled: !model.isBusy
+                                ) {
                                         let value = item.target == "logs" ? "100" : nil
                                         Task { await model.prepareNodeAction(.init(action: .cleanup, subject: item.target, value: value)) }
-                                    }
-                                    .disabled(model.isBusy)
                                 }
-                                .padding(.vertical, 10)
                                 if index < actions.count - 1 { Divider() }
                             }
                         }

@@ -49,12 +49,19 @@ struct HomebrewInstalledPage: View {
                             .frame(minWidth: 430)
 
                         packageDetail(snapshot)
-                            .frame(minWidth: 260, idealWidth: 310, maxWidth: 380)
+                            .frame(minWidth: 280, idealWidth: 340)
                     }
                 }
             }
             .padding(24)
             .searchable(text: $query, prompt: "搜索已安装的名称或描述")
+            .onChange(of: filter) { _, _ in selection = nil }
+            .onChange(of: query) { _, _ in selection = nil }
+            .onChange(of: snapshot.packages.map(\.identity)) { _, identities in
+                if let selection, !identities.contains(selection) {
+                    self.selection = nil
+                }
+            }
         }
     }
 
@@ -83,6 +90,7 @@ struct HomebrewInstalledPage: View {
                     .foregroundStyle(package.tap == nil ? .secondary : .primary)
             }
         }
+        .alternatingRowBackgrounds(.disabled)
     }
 
     @ViewBuilder
@@ -126,6 +134,7 @@ struct HomebrewInstalledPage: View {
                         Button("准备卸载 Formula", role: .destructive) {
                             Task { await model.prepareHomebrewUninstall(package.identity) }
                         }
+                        .buttonStyle(.glass)
                         .disabled(model.isBusy)
                     } else {
                         if !package.artifacts.isEmpty {
@@ -143,15 +152,18 @@ struct HomebrewInstalledPage: View {
                             }
                         }
 
-                        VStack(alignment: .leading, spacing: 8) {
-                        Button("准备普通卸载", role: .destructive) {
-                                Task { await model.prepareHomebrewUninstall(package.identity) }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Menu {
+                                Button("普通卸载…", role: .destructive) {
+                                    Task { await model.prepareHomebrewUninstall(package.identity) }
+                                }
+                                Button("Zap 卸载…", role: .destructive) {
+                                    Task { await model.prepareHomebrewUninstall(package.identity, zap: true) }
+                                }
+                            } label: {
+                                Label("卸载…", systemImage: "trash")
                             }
-                            .disabled(model.isBusy)
-
-                            Button("准备 Zap 卸载", role: .destructive) {
-                                Task { await model.prepareHomebrewUninstall(package.identity, zap: true) }
-                            }
+                            .buttonStyle(.glass)
                             .disabled(model.isBusy)
 
                             Text("Zap 可能删除 Cask 定义的用户配置和数据。Cellar 不会使用 sudo，也不会额外删除文件。")
@@ -163,7 +175,6 @@ struct HomebrewInstalledPage: View {
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12))
         } else {
             HomebrewEmptyState(
                 title: "选择一个项目",

@@ -7,7 +7,7 @@ struct NodeOverviewPage: View {
         NodePageContainer(model: model) { node in
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    StatusOverviewCard(tint: .blue) {
+                    StatusOverviewCard {
                         HStack(spacing: 0) {
                             StatusMetric(title: "Node", value: node.summary.nodeVersion, systemImage: "shippingbox.fill", tint: .green)
                             StatusMetricDivider()
@@ -51,8 +51,13 @@ struct NodeValueRow: View {
 
     var body: some View {
         GridRow {
-            Text(label).foregroundStyle(.secondary)
+            Text(label)
+                .foregroundStyle(.secondary)
+                .frame(width: 110, alignment: .leading)
             Text(value.isEmpty ? "—" : value)
+                .fontDesign(.monospaced)
+                .lineLimit(2)
+                .truncationMode(.middle)
         }
     }
 }

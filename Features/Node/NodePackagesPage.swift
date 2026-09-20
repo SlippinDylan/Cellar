@@ -19,6 +19,7 @@ struct NodePackagesPage: View {
                     TableColumn("Wanted") { Text($0.wantedVersion ?? "—") }
                     TableColumn("Latest") { Text($0.latestVersion ?? "—") }
                 }
+                .alternatingRowBackgrounds(.disabled)
                 .searchable(text: $query, prompt: "搜索全局包")
             }
             .padding(24)
@@ -75,6 +76,12 @@ struct NodePackagesPage: View {
                 }
                 .padding(24)
                 .frame(width: 480)
+            }
+            .onChange(of: query) { _, _ in selection = nil }
+            .onChange(of: node.packages.map(\.id)) { _, identifiers in
+                if let selection, !identifiers.contains(selection) {
+                    self.selection = nil
+                }
             }
         }
     }

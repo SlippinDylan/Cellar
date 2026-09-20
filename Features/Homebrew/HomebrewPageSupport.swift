@@ -119,7 +119,7 @@ struct HomebrewSectionErrorCard: View {
     let message: String
 
     var body: some View {
-        StatusOverviewCard(tint: .orange) {
+        StatusOverviewCard {
             Label {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)

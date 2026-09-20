@@ -32,7 +32,19 @@ struct ShellExtensionsPage: View {
                 }
             }
             .onAppear { synchronize(shell) }
-            .onChange(of: shell.activePlugins) { _, _ in synchronize(shell) }
+            .onChange(of: shell.activePlugins) { previous, current in
+                var previousSet = Set(previous)
+                previousSet.insert("git")
+                if enabledPlugins == previousSet {
+                    enabledPlugins = Set(current)
+                    enabledPlugins.insert("git")
+                }
+            }
+            .onChange(of: shell.currentTheme) { previous, current in
+                if selectedTheme == previous || (previous.isEmpty && selectedTheme == nil) {
+                    selectedTheme = current.isEmpty ? nil : current
+                }
+            }
             .toolbar { extensionToolbar(shell) }
             .sheet(isPresented: $showingPluginInstall) { pluginInstallSheet }
         }
@@ -152,6 +164,12 @@ struct ShellExtensionsPage: View {
         enabledPlugins = Set(shell.activePlugins)
         enabledPlugins.insert("git")
         selectedTheme = shell.currentTheme.isEmpty ? nil : shell.currentTheme
+    }
+
+    private func pluginsHaveChanges(_ shell: ShellStatus) -> Bool {
+        var active = Set(shell.activePlugins)
+        active.insert("git")
+        return enabledPlugins != active
     }
 
     private func preparePluginSelection() {

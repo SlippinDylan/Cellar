@@ -50,13 +50,13 @@ Features → Services → Bridge → Manager / 系统 CLI
 
 `CellarApp` 使用 `WindowGroup` 创建普通前台窗口，并通过 `defaultSize(width:height:)` 设置 1080 × 720 点的首次默认尺寸。App 不设置 `LSUIElement`，也不声明 `MenuBarExtra`。
 
-`AppRootView` 统一为当前一级功能页设置 `navigationTitle` 和 `navigationSubtitle`，并在 titlebar 下方绘制水平分割线。设置是 Sidebar 底部的 utility 页，以工具栏 pane selector 取代标题内容。概览的最后刷新时间附在副标题后。各页面不再重复绘制内容区大标题，内容使用统一的 24pt 边距；概览使用两列状态卡片，模块页的横向状态总览卡占满内容宽度。
+`AppRootView` 统一为当前一级功能页设置 `navigationTitle` 和 `navigationSubtitle`，并在 titlebar 下方绘制水平分割线。设置是 Sidebar 底部的 utility 页，以工具栏 pane selector 取代标题内容。概览的最后刷新时间附在副标题后。各页面不再重复绘制内容区大标题，内容使用统一的 24pt 边距；概览使用紧凑环境状态带和系统路径信息区，模块页的横向状态总览占满内容宽度。
 
 首次读取期间，各页面复用 `PageLoadingView` 占满详情区域并将 `ProgressView` 水平、垂直居中。失败空态同样占满详情区域，不依赖固定高度模拟居中。
 
-左侧 Sidebar 使用 `DisclosureGroup` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。三个模块的二级页面均承载对应真实功能。
+左侧 Sidebar 使用 `List(.sidebar)` 的可折叠 `Section` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。三个模块的二级页面均承载对应真实功能。
 
-左侧导航使用系统 `List(.sidebar)` 和 `DisclosureGroup`，并通过 `scrollIndicators(.hidden)` 保留滚轮与触控板滚动、分类展开、缩进和系统选择高亮，不自定义主导航的选中样式。
+左侧导航使用系统 `List(.sidebar)` 和可折叠 `Section`，保留滚轮与触控板滚动、分类展开、缩进和系统选择高亮。滚动指示器使用 macOS 的 automatic 策略；不在 `List` 更新期间动态覆盖 AppKit scroll configuration。底部 utility 导航位于 `List` 外的固定区域，且 `List` 使用独立的 optional selection，不接收不在其 row tree 内或已折叠的 destination。
 
 `AppDelegate` 通过 `NSApplicationDelegateAdaptor` 接入 AppKit：
 
@@ -90,7 +90,7 @@ OperationStore.end
 
 Homebrew、Node、Shell 与全局刷新共享 `AppModel.isBusy` 派生状态和活动任务登记。查询、计划或执行正在等待外部进程时，不启动另一次刷新或跨模块操作；已展示的计划在确认入口会再次检查该状态。操作开始前由 Bridge 生成计划，View 只负责展示计划和发送确认/取消意图。执行结束后无论成功或失败都 post-refresh 受影响状态。
 
-当前操作记录只在内存中存在。没有持久化、独立任务队列或进度百分比。Homebrew 命令不是事务；执行结果记录退出码、stdout、stderr 和 post-refresh 错误，状态层不能把非零退出简单解释成“什么都没发生”。
+当前操作记录只在内存中存在，最多保留最近 100 条。没有持久化、独立任务队列或伪造的进度百分比；长操作只展示真实阶段和不定进度。Homebrew 命令不是事务；执行结果记录退出码、stdout、stderr 和 post-refresh 错误，状态层不能把非零退出简单解释成“什么都没发生”。
 
 ## Manager 快照
 
@@ -115,7 +115,7 @@ Bundle Resources 不产生运行时写入。Node Manager 的 `.runtime` 位于 A
 
 ## 进程边界
 
-`ProcessRunner` 是 actor，保存当前运行的 `Process` 对象。每个请求明确提供：
+`ProcessRunner` 是 actor，保存当前运行进程组的标识。它通过 `posix_spawn` 原子创建独立进程组，每个请求明确提供：
 
 - executable URL；
 - arguments；
@@ -124,9 +124,9 @@ Bundle Resources 不产生运行时写入。Node Manager 的 `.runtime` 位于 A
 - 空 stdin；
 - 分离的 stdout 和 stderr pipe。
 
-stdout 与 stderr 在独立任务中读取，进程结束后返回 `ProcessResult` 和退出码。两路输出默认分别最多保留 8 MiB，超过上限后继续 drain pipe 并在结果中标记截断。请求可以设置 deadline；超时或调用任务取消时向对应进程发送 terminate。App 代码不使用 `bash -c`，Node Manager 通过固定 `/bin/bash` 加脚本路径和参数数组启动。
+stdout 与 stderr 在独立任务中读取，进程结束后返回 `ProcessResult` 和退出码。两路输出默认分别最多保留 2 MiB，超过上限后继续 drain pipe 并在结果中标记截断。请求可以设置 deadline；超时、调用任务取消或组长退出后仍有后代持有 pipe 时，`ProcessRunner` 对专属进程组先发送 `SIGTERM`，500 ms 后仍有成员则发送 `SIGKILL`。组长在强制回收结束后才由 `waitpid` 回收，因此宽限期内组标识不会被系统复用为无关进程组。App 代码不使用 `bash -c`，Node Manager 通过固定 `/bin/bash` 加脚本路径和参数数组启动。
 
-Homebrew 与 Node 查询使用 5 分钟 deadline，写操作使用 30 分钟 deadline。当前 terminate 仍没有强制终止升级或独立进程组保证；子进程忽略终止信号时仍可能延迟收尾。Shell 请求尚未配置 deadline，界面也没有用户取消入口。
+Homebrew、Node 和 Shell 查询使用 5 分钟 deadline，写操作使用 30 分钟 deadline。取消与 deadline 会回收 App 为该请求创建的整个进程组；当前界面仍没有用户取消入口。
 
 ## 受控环境与 Node 选择
 
@@ -187,6 +187,7 @@ query → plan → confirm → execute → result → post-refresh
 ```
 
 - 安装与升级始终携带 Formula/Cask 类型，避免同名项目歧义。
+- 批量安装计划限定为 1–100 个同类型目标，逐项读取真实详情和复验指纹，执行后用真实安装状态区分成功、部分完成和失败。
 - `brew update` 是独立计划，不作为其他动作的隐式前置步骤。
 - Formula 卸载只接受一个目标，并显式禁止自动更新和 autoremove。
 - Cask standard 与 zap 是两个独立计划；artifact 在确认前展示。Bridge 只检查 Homebrew 明确声明且不含 glob 的绝对路径、`~/` 路径和明确 App bundle，统计现存路径的占用空间；执行后复查并报告仍存在的路径，App 不调用 `rm` 补删文件，也不做 bundle-id 或名称模糊扫描。
@@ -214,11 +215,11 @@ Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 
 ## 设置、About 与更新
 
-操作记录和设置位于 Sidebar 底部 `safeAreaBar`。设置页使用 macOS 26 工具栏与 Liquid Glass selector，在 About 中展示 Bundle 版本并触发 `ApplicationUpdateController`。
+操作记录和设置位于 Sidebar 底部的固定 utility 区域，与可滚动的 `List` 使用分割线隔开。设置页使用 macOS 26 工具栏与 Liquid Glass selector，在 About 中展示 Bundle 版本并触发 `ApplicationUpdateController`。
 
 更新使用固定 Sparkle 2.10.0。Debug 和普通本地 Release 默认 `CellarUpdaterEnabled=NO`，公钥为空；发布流水线必须从 `SPARKLE_PUBLIC_KEY` Secret 注入公钥并显式启用 updater。Feed 固定为 Homebrew tap GitHub Pages 下的 `cellar/appcast.xml`，stable/beta/alpha 通道由发布 manifest 注入。
 
-Sparkle XCFramework 原始 macOS slice 是 universal。Cellar build phase 只处理当前 `TARGET_BUILD_DIR` 中嵌入的已知 Sparkle Mach-O，裁剪为 arm64；发布流水线随后按嵌套依赖顺序重新签名。Package cache 和源 XCFramework 不修改。
+Sparkle XCFramework 原始 macOS slice 是 universal，且其预构建组件声明较低的系统版本。Cellar build phase 只处理当前 `TARGET_BUILD_DIR` 中嵌入的已知 Sparkle Mach-O：裁剪为 arm64，并把 build-version load command 的最低系统版本提升为 macOS 26.0；发布流水线随后按嵌套依赖顺序重新签名。Package cache 和源 XCFramework 不修改。
 
 ## 测试边界
 
@@ -259,10 +260,10 @@ Sparkle XCFramework 原始 macOS slice 是 universal。Cellar build phase 只处
 
 ## 当前已知限制
 
-- Homebrew 与 Node 已配置 deadline 和输出上限；Shell 尚未配置 deadline。
+- Homebrew、Node 和 Shell 已配置 deadline 和输出上限。
 - 界面没有用户取消入口；活动任务期间退出被拒绝。
+- 受支持的 brew 与 Manager 命令必须留在 Cellar 创建的专属进程组内；主动调用 `setsid` 或 `setpgrp` 脱离该组的第三方命令不属于受支持协议。
 - 自定义 nvm 目录和其他 Node 版本管理器未支持。
-- Homebrew 长命令的取消、deadline、强制终止和子进程组策略仍受通用 `ProcessRunner` 限制。
 - Homebrew 写操作不是事务，部分完成只能通过命令结果与 post-refresh 准确呈现，不能自动回滚。
 - Homebrew 交互 Manager 未接入 App；Zsh 交互菜单也未接入，App 只调用独立 JSON adapter。
 - 快照运行时验证入口完整性，不验证全部文件摘要。

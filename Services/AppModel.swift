@@ -68,19 +68,27 @@ final class AppModel: ObservableObject {
         isRefreshing || isHomebrewWorking || isNodeWorking || isShellWorking
     }
 
+    var activeOperationLabel: String? {
+        if isRefreshing { return "正在读取 Homebrew、Node 和 Shell" }
+        if isHomebrewWorking { return "正在处理 Homebrew 任务" }
+        if isNodeWorking { return "正在处理 Node 任务" }
+        if isShellWorking { return "正在处理 Shell 任务" }
+        return nil
+    }
+
     func refresh() async {
         guard !isBusy else { return }
         isRefreshing = true
         errorMessages = []
         let operationID = operationStore.begin()
         let activityID = UUID()
-        activities.insert(ActivityEntry(
+        recordActivity(ActivityEntry(
             id: activityID,
             date: Date(),
             title: "刷新本机环境",
             outcome: .started,
             detail: "正在读取 Homebrew、Node 和 Shell 状态"
-        ), at: 0)
+        ))
 
         defer {
             isRefreshing = false
@@ -113,24 +121,24 @@ final class AppModel: ObservableObject {
         }
 
         activities.removeAll { $0.id == activityID }
-        activities.insert(ActivityEntry(
+        recordActivity(ActivityEntry(
             id: UUID(),
             date: Date(),
             title: "刷新本机环境",
             outcome: errorMessages.isEmpty ? .succeeded : .failed,
             detail: errorMessages.isEmpty ? "已读取全部环境状态" : errorMessages.joined(separator: "；")
-        ), at: 0)
+        ))
     }
 
     func beginActivity(title: String, detail: String) -> UUID {
         let id = UUID()
-        activities.insert(ActivityEntry(
+        recordActivity(ActivityEntry(
             id: id,
             date: Date(),
             title: title,
             outcome: .started,
             detail: detail
-        ), at: 0)
+        ))
         return id
     }
 
@@ -142,14 +150,21 @@ final class AppModel: ObservableObject {
         command: HomebrewCommandOutput? = nil
     ) {
         activities.removeAll { $0.id == id }
-        activities.insert(ActivityEntry(
+        recordActivity(ActivityEntry(
             id: UUID(),
             date: Date(),
             title: title,
             outcome: outcome,
             detail: detail,
             command: command
-        ), at: 0)
+        ))
+    }
+
+    private func recordActivity(_ entry: ActivityEntry) {
+        activities.insert(entry, at: 0)
+        if activities.count > 100 {
+            activities.removeLast(activities.count - 100)
+        }
     }
 
     private func assign<Value>(_ result: Result<Value, Error>, name: String) -> Value? {

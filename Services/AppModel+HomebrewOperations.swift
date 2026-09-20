@@ -44,6 +44,12 @@ extension AppModel {
         }
     }
 
+    func prepareHomebrewInstall(_ identities: [HomebrewPackageIdentity]) async {
+        await prepareHomebrewPlan {
+            try await self.service.planHomebrewInstall(identities)
+        }
+    }
+
     func prepareHomebrewUpgrade(_ targets: [HomebrewPackageIdentity]) async {
         await prepareHomebrewPlan {
             try await self.service.planHomebrewUpgrade(targets)
@@ -113,7 +119,9 @@ extension AppModel {
                 activityDetail = result.activityDetail(prefix: "操作完成并已复查本机状态")
             case .partial:
                 activityOutcome = .partiallySucceeded
-                let message = "命令报告失败，但复查发现目标状态已经改变；请检查命令输出"
+                let message = result.command.terminationStatus == 0
+                    ? "命令结束后复查未确认所有目标，但部分目标状态已经改变；请检查命令输出"
+                    : "命令报告失败，但复查发现目标状态已经改变；请检查命令输出"
                 homebrewOperationError = message
                 activityDetail = result.activityDetail(prefix: message)
             case .failed:

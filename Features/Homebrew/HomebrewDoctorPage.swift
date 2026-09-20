@@ -56,7 +56,7 @@ struct HomebrewDoctorPage: View {
                             isWorking: model.isHomebrewWorking
                         )
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.glassProminent)
                     .disabled(model.isBusy)
                 }
 
@@ -103,7 +103,7 @@ struct HomebrewDoctorPage: View {
         systemImage: String,
         tint: Color
     ) -> some View {
-        StatusOverviewCard(tint: tint) {
+        StatusOverviewCard {
             StatusMetric(
                 title: title,
                 value: value,
@@ -153,12 +153,17 @@ struct HomebrewDoctorPage: View {
 
     private func diagnosticOutput(_ title: String, _ output: String) -> some View {
         DisclosureGroup(title) {
-            Text(output)
+            Text(displayed(output))
                 .font(.system(.callout, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 6)
         }
+    }
+
+    private func displayed(_ output: String) -> String {
+        let limit = 100_000
+        return output.count > limit ? String(output.prefix(limit)) + "\n… UI 显示已截断" : output
     }
 
 }

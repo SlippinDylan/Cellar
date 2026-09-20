@@ -25,9 +25,9 @@ struct HomebrewResultSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    StatusOverviewCard(tint: result.outcome.tint) {
+                    StatusOverviewCard {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(result.outcome.detail)
+                            Text(resultDetail)
                                 .font(.headline)
                             Text("退出状态：\(result.command.terminationStatus)")
                                 .font(.callout)
@@ -104,7 +104,7 @@ struct HomebrewResultSheet: View {
                 Button("关闭") {
                     model.dismissHomebrewFeedback()
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.glassProminent)
                 .keyboardShortcut(.defaultAction)
             }
             .padding(20)
@@ -114,7 +114,7 @@ struct HomebrewResultSheet: View {
 
     private func outputSection(_ title: String, text: String) -> some View {
         GroupBox(title) {
-            Text(text)
+            Text(displayed(text))
                 .font(.system(.callout, design: .monospaced))
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -122,10 +122,22 @@ struct HomebrewResultSheet: View {
         }
     }
 
+    private func displayed(_ text: String) -> String {
+        let limit = 100_000
+        return text.count > limit ? String(text.prefix(limit)) + "\n… UI 显示已截断" : text
+    }
+
     private func truncationNotice(_ stream: String) -> some View {
         Label("\(stream)超过保留上限，以上内容已截断。", systemImage: "scissors")
             .font(.caption)
             .foregroundStyle(.orange)
+    }
+
+    private var resultDetail: String {
+        if result.outcome == .partial, result.command.terminationStatus == 0 {
+            return "命令成功结束，但复查未确认所有目标；请检查下方输出和当前状态。"
+        }
+        return result.outcome.detail
     }
 }
 

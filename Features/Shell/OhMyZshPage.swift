@@ -5,35 +5,37 @@ struct OhMyZshPage: View {
 
     var body: some View {
         ShellPageContainer(model: model) { shell in
-            VStack {
+            VStack(alignment: .leading, spacing: 16) {
                 if shell.ohMyZshInstalled {
-                    ContentUnavailableView(
-                        "Oh My Zsh 已安装",
-                        systemImage: "checkmark.circle",
-                        description: Text(shell.ohMyZshPath)
-                    )
+                    StatusOverviewCard {
+                        StatusMetric(
+                            title: "Oh My Zsh",
+                            value: "已安装",
+                            detail: shell.ohMyZshPath,
+                            systemImage: "checkmark.circle.fill",
+                            tint: .green
+                        )
+                    }
+                    Text("插件和主题可以在“插件与主题”中管理。Cellar 不切换默认 Shell，也不删除 Oh My Zsh。")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 } else {
-                    ContentUnavailableView(
-                        "尚未安装 Oh My Zsh",
-                        systemImage: "bolt",
-                        description: Text("Cellar 使用 Oh My Zsh 官方固定版本安装脚本，不切换默认 Shell，也不自动打开新的终端。")
-                    )
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .toolbar {
-                if !shell.ohMyZshInstalled {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
+                    GroupBox("环境引导") {
+                        OperationRow(
+                            title: "安装 Oh My Zsh",
+                            detail: "使用官方固定版本脚本；不切换默认 Shell，不自动打开终端。",
+                            systemImage: "bolt.fill",
+                            tint: .purple,
+                            actionTitle: "生成安装计划",
+                            isEnabled: !model.isBusy
+                        ) {
                             Task { await model.prepareShellAction(.init(action: .installOhMyZsh)) }
-                        } label: {
-                            Label("安装 Oh My Zsh", systemImage: "square.and.arrow.down")
                         }
-                        .help("准备安装 Oh My Zsh")
-                        .disabled(model.isBusy)
                     }
                 }
+                Spacer()
             }
+            .padding(24)
         }
     }
 }

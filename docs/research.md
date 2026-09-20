@@ -45,7 +45,9 @@
 | `FileManager.copyItem(at:to:)` 在目标存在时失败，目录复制包含子内容 | Apple 官方 | [copyItem(at:to:)](https://developer.apple.com/documentation/foundation/filemanager/copyitem(at:to:)) |
 | Bundle Resources 保持只读，Manager 在 Application Support 的版本目录运行 | 项目推论 | 签名资源完整性和可写运行状态需要分离 |
 
-当前 `ProcessRunner` 使用明确 executable、参数、环境、空 stdin 和分离 pipe。Apple 文档也说明 `terminate()` 不是强制终止保证，因此 deadline、升级到强制终止和子进程组策略仍需要单独设计，不能用现有取消路径冒充完整超时支持。
+当前 `ProcessRunner` 使用明确 executable、参数、环境、空 stdin 和分离 pipe。Apple 文档说明 `terminate()` 只发送可能被忽略的 `SIGTERM`；因此实现通过 `posix_spawn` 为每个请求原子创建独立进程组，deadline 与取消先向整组发送 `SIGTERM`，宽限期后再对仍存活的组发送 `SIGKILL`，并在强制回收结束后才回收组长身份。
+
+进程组回收依赖受支持命令不主动调用 `setsid` 或 `setpgrp` 脱离 App 创建的组。Cellar 自带 Manager 和当前允许的 brew/npm/nvm/zsh 调用不以守护进程方式运行；未来接入会主动脱离会话的外部工具时，需要另行设计 helper 或服务生命周期，不能沿用当前命令协议。
 
 ## Homebrew 查询与写操作
 
@@ -98,6 +100,16 @@
 | `Table` 适合展示可滚动的多列集合 | Apple 官方 | [Table](https://developer.apple.com/documentation/swiftui/table) |
 | `ContentUnavailableView` 适合空数据和错误等无法展示内容的状态 | Apple 官方 | [ContentUnavailableView](https://developer.apple.com/documentation/swiftui/contentunavailableview) |
 | Node 包列表使用 `Table`，模块失败使用明确空态，不用空表伪装成功 | 项目推论 | 与 v1 状态契约一致 |
+
+## SwiftUI 性能与 macOS 26 界面
+
+| 结论 | 分类 | 依据 |
+|---|---|---|
+| SwiftUI Instrument 的 update groups 和 cause-and-effect graph 用于区分视图更新环、长 `body` 和非 SwiftUI CPU 成本；不应用延迟或动画掩盖状态重入 | Apple 官方 | [Understanding and improving SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance)、[WWDC25: Optimize SwiftUI performance with Instruments](https://developer.apple.com/videos/play/wwdc2025/306/) |
+| `List` 与 `Table` 适合稳定 ID 的高密度集合；过滤应在构建 row 之前完成，不在 row 构建时反向写 selection | Apple 官方与项目推论 | [WWDC23: Demystify SwiftUI performance](https://developer.apple.com/videos/play/wwdc2023/10160/)、[`Table`](https://developer.apple.com/documentation/swiftui/table) |
+| macOS Sidebar 应使用系统列表、可折叠 section 和稳定的行 selection；非 List row 的 utility 导航不与 `NSOutlineView` 共用 selection | Apple 官方与本机崩溃证据 | [HIG: Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)；macOS 26.7 崩溃栈为 `NSOutlineView → OutlineListCoordinator → AttributeGraph` |
+| Liquid Glass 是导航和交互控件层；标准 toolbar、sheet、button 和 segmented control 优先使用系统适配，内容卡、表格行和日志不铺满自定义玻璃 | Apple 官方 | [Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)、[HIG: Toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars) |
+| 进度只显示实际可证明的阶段或数量；无可靠百分比时使用不定 `ProgressView`，不使用常驻高帧率 shimmer | Apple 官方与项目推论 | [HIG: Progress indicators](https://developer.apple.com/design/human-interface-guidelines/progress-indicators)、[`ProgressView`](https://developer.apple.com/documentation/swiftui/progressview) |
 
 ## Sparkle 签名密钥
 

@@ -232,9 +232,17 @@ struct HomebrewActionResult: Sendable {
     }
 
     private func observedPartialChange(in snapshot: HomebrewSnapshot) -> Bool {
-        guard plan.action == .upgrade else { return false }
-        let outdated = Set(snapshot.outdatedPackages.map(\.identity))
-        let completedCount = plan.targets.filter { !outdated.contains($0) }.count
+        let completedCount: Int
+        switch plan.action {
+        case .install:
+            let installed = Set(snapshot.packages.filter(\.isInstalled).map(\.identity))
+            completedCount = plan.targets.filter(installed.contains).count
+        case .upgrade:
+            let outdated = Set(snapshot.outdatedPackages.map(\.identity))
+            completedCount = plan.targets.filter { !outdated.contains($0) }.count
+        default:
+            return false
+        }
         return completedCount > 0 && completedCount < plan.targets.count
     }
 }

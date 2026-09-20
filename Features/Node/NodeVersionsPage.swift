@@ -76,11 +76,38 @@ struct NodeVersionsPage: View {
     private func installedVersionsSection(_ node: NodeSnapshot) -> some View {
         GroupBox("已安装版本") {
             VStack(alignment: .leading, spacing: 12) {
-                Picker("版本", selection: $selection) {
-                    Text("选择一个版本").tag(String?.none)
-                    ForEach(node.installations) { installation in
-                        Text(versionLabel(installation)).tag(Optional(installation.version))
+                if node.installations.isEmpty {
+                    ContentUnavailableView(
+                        "尚未发现 nvm Node 版本",
+                        systemImage: "shippingbox",
+                        description: Text("可以从工具栏生成安装计划。")
+                    )
+                    .frame(minHeight: 160)
+                } else {
+                    Table(node.installations, selection: $selection) {
+                        TableColumn("版本") { installation in
+                            Text(installation.version)
+                                .font(.body.monospaced())
+                        }
+                        TableColumn("Cellar 会话") { installation in
+                            if installation.isActive {
+                                Label("使用中", systemImage: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                            } else {
+                                Text("—").foregroundStyle(.tertiary)
+                            }
+                        }
+                        TableColumn("默认") { installation in
+                            if installation.isDefault {
+                                Label("默认", systemImage: "star.fill")
+                                    .foregroundStyle(.orange)
+                            } else {
+                                Text("—").foregroundStyle(.tertiary)
+                            }
+                        }
                     }
+                    .alternatingRowBackgrounds(.disabled)
+                    .frame(minHeight: 180, idealHeight: 240)
                 }
                 Text("会话切换只改变 Cellar 后续读取使用的受控 PATH，不会改变已经打开的终端。设为默认会修改 ~/.nvm/alias/default。")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -108,13 +135,6 @@ struct NodeVersionsPage: View {
                     .font(.footnote).foregroundStyle(.secondary)
             }
         }
-    }
-
-    private func versionLabel(_ installation: NodeInstallation) -> String {
-        var labels = [installation.version]
-        if installation.isActive { labels.append("Cellar 会话") }
-        if installation.isDefault { labels.append("默认") }
-        return labels.joined(separator: " · ")
     }
 
     private func prepareVersionAction(_ action: NodeAction) {

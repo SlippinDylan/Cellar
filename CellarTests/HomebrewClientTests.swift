@@ -138,6 +138,88 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertTrue(removeResult.succeeded)
     }
 
+    func testBatchInstallUsesOneTypedCommandAndRereadsEveryTarget() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        let plan = try await fixture.client.planInstall([
+            HomebrewPackageIdentity(name: "newpkg", kind: .formula),
+            HomebrewPackageIdentity(name: "batchpkg", kind: .formula),
+        ])
+        let result = try await fixture.client.execute(plan)
+
+        XCTAssertEqual(plan.targets.map(\.name), ["newpkg", "batchpkg"])
+        XCTAssertEqual(result.command.arguments, ["install", "--formula", "newpkg", "batchpkg"])
+        XCTAssertEqual(result.outcome, .succeeded)
+        XCTAssertTrue(result.snapshot?.packages.contains { $0.identity.name == "newpkg" } == true)
+        XCTAssertTrue(result.snapshot?.packages.contains { $0.identity.name == "batchpkg" } == true)
+    }
+
+    func testBatchInstallRejectsMixedPackageKinds() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        do {
+            _ = try await fixture.client.planInstall([
+                HomebrewPackageIdentity(name: "newpkg", kind: .formula),
+                HomebrewPackageIdentity(name: "sample", kind: .cask),
+            ])
+            XCTFail("Expected mixed package kinds to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("不能混合 Formula 与 Cask"))
+        }
+    }
+
+    func testBatchInstallRejectsNamesWithTheSameCanonicalIdentity() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        do {
+            _ = try await fixture.client.planInstall([
+                HomebrewPackageIdentity(name: "aliaspkg", kind: .formula),
+                HomebrewPackageIdentity(name: "acme/tools/aliaspkg", kind: .formula),
+            ])
+            XCTFail("Expected canonical duplicates to be rejected")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("同一个软件包"))
+        }
+    }
+
+    func testBatchInstallReportsPartialWhenSuccessfulCommandDoesNotReachEveryTarget() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        try Data().write(to: fixture.directoryURL.appending(path: "partial-batch-install"))
+
+        let plan = try await fixture.client.planInstall([
+            HomebrewPackageIdentity(name: "newpkg", kind: .formula),
+            HomebrewPackageIdentity(name: "batchpkg", kind: .formula),
+        ])
+        let result = try await fixture.client.execute(plan)
+
+        XCTAssertEqual(result.command.terminationStatus, 0)
+        XCTAssertEqual(result.outcome, .partial)
+    }
+
+    func testBatchInstallRejectsExecutionWhenAnyTargetChangedAfterPlanning() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+
+        let plan = try await fixture.client.planInstall([
+            HomebrewPackageIdentity(name: "newpkg", kind: .formula),
+            HomebrewPackageIdentity(name: "batchpkg", kind: .formula),
+        ])
+        try Data().write(to: fixture.directoryURL.appending(path: "batch-installed"))
+
+        do {
+            _ = try await fixture.client.execute(plan)
+            XCTFail("Expected stale batch install plan rejection")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("状态已经变化"))
+        }
+        let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertFalse(log.contains("install --formula newpkg batchpkg"))
+    }
+
     func testTapRemovalIsBlockedWhenInstalledPackagesBelongToTap() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
@@ -258,12 +340,16 @@ private struct FakeBrewFixture {
             [ -f "$state_dir/cask-removed" ] && cask=''
             new_formula=''
             [ -f "$state_dir/new-installed" ] && new_formula='{"name":"newpkg","full_name":"newpkg","tap":"homebrew/core","desc":"New formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":[{"version":"1.0.0"}],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}'
+            batch_formula=''
+            [ -f "$state_dir/batch-installed" ] && batch_formula='{"name":"batchpkg","full_name":"batchpkg","tap":"homebrew/core","desc":"Batch formula","homepage":null,"versions":{"stable":"2.0.0","head":null},"installed":[{"version":"2.0.0"}],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}'
             formula_list="$formula"
-            if [ -n "$formula_list" ] && [ -n "$new_formula" ]; then
-              formula_list="$formula_list,$new_formula"
-            elif [ -n "$new_formula" ]; then
-              formula_list="$new_formula"
-            fi
+            for candidate in "$new_formula" "$batch_formula"; do
+              if [ -n "$formula_list" ] && [ -n "$candidate" ]; then
+                formula_list="$formula_list,$candidate"
+              elif [ -n "$candidate" ]; then
+                formula_list="$candidate"
+              fi
+            done
             printf '{"formulae":[%s],"casks":[%s],"future":true}\n' "$formula_list" "$cask"
             ;;
           "outdated --json=v2")
@@ -303,6 +389,14 @@ private struct FakeBrewFixture {
             [ -f "$state_dir/new-installed" ] && installed='[{"version":"1.0.0"}]'
             printf '{"formulae":[{"name":"newpkg","full_name":"newpkg","tap":"homebrew/core","desc":"New formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":%s,"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}\n' "$installed"
             ;;
+          "info --json=v2 --formula batchpkg")
+            installed='[]'
+            [ -f "$state_dir/batch-installed" ] && installed='[{"version":"2.0.0"}]'
+            printf '{"formulae":[{"name":"batchpkg","full_name":"batchpkg","tap":"homebrew/core","desc":"Batch formula","homepage":null,"versions":{"stable":"2.0.0","head":null},"installed":%s,"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}\n' "$installed"
+            ;;
+          "info --json=v2 --formula aliaspkg"|"info --json=v2 --formula acme/tools/aliaspkg")
+            printf '%s\n' '{"formulae":[{"name":"aliaspkg","full_name":"acme/tools/aliaspkg","tap":"acme/tools","desc":"Alias formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":[],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}'
+            ;;
           "uses --installed --formula acme/tools/demo") printf '%s\n' 'consumer' ;;
           "info --json=v2 --cask sample"|"info --json=v2 --cask acme/apps/sample")
             printf '%s\n' '{"formulae":[],"casks":[{"token":"sample","full_token":"acme/apps/sample","tap":"acme/apps","name":["Sample"],"desc":null,"homepage":null,"version":"3.0","installed":"3.0","outdated":false,"artifacts":[{"app":["Sample.app"]},{"zap":[{"trash":["~/Library/Preferences/com.acme.sample.plist"]}]}]}]}'
@@ -319,6 +413,11 @@ private struct FakeBrewFixture {
           "install --formula newpkg")
             touch "$state_dir/new-installed"
             printf '%s\n' 'installed'
+            ;;
+          "install --formula newpkg batchpkg")
+            touch "$state_dir/new-installed"
+            [ -f "$state_dir/partial-batch-install" ] || touch "$state_dir/batch-installed"
+            printf '%s\n' 'installed batch'
             ;;
           "upgrade --formula acme/tools/demo")
             touch "$state_dir/formula-upgraded"

@@ -14,7 +14,6 @@ struct SettingsView: View {
 
     var body: some View {
         selectedPane
-            .toolbar(removing: .title)
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     paneSelector

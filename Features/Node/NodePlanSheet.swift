@@ -132,7 +132,9 @@ struct NodeResultSheet: View {
             Divider()
             HStack {
                 Spacer()
-                Button("关闭") { model.dismissNodeFeedback() }.keyboardShortcut(.defaultAction)
+                Button("关闭") { model.dismissNodeFeedback() }
+                    .buttonStyle(.glassProminent)
+                    .keyboardShortcut(.defaultAction)
             }
             .padding(20)
         }

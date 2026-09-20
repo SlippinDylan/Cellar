@@ -12,7 +12,7 @@ struct HomebrewPlanSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    StatusOverviewCard(tint: plan.canExecute ? .orange : .red) {
+                    StatusOverviewCard {
                         Label {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(plan.canExecute ? "执行前确认" : "计划已被安全检查阻止")
@@ -155,7 +155,7 @@ struct HomebrewPlanSheet: View {
             } label: {
                 Text(plan.confirmationTitle)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.glassProminent)
             .tint(plan.isDestructive ? .red : .accentColor)
             .keyboardShortcut(.defaultAction)
             .disabled(!plan.canExecute || model.isBusy)

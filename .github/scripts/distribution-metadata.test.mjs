@@ -30,10 +30,12 @@ test('renders channel-specific Casks for immutable GitHub Release DMGs', () => {
 
 test('rejects malformed digests and Cask downgrades while retaining equal versions', () => {
   assert.throws(() => renderCask('1.0.0', 'not-a-digest'));
-  const current = 'cask "cellar@beta" do\n  version "0.2.0-beta.2"\nend\n';
-  assert.equal(validateCaskAdvance(current, '0.2.0-beta.2'), 'current');
+  const digest = 'd'.repeat(64);
+  const current = `cask "cellar@beta" do\n  version "0.2.0-beta.2"\n  sha256 "${digest}"\nend\n`;
+  assert.equal(validateCaskAdvance(current, '0.2.0-beta.2', digest), 'current');
   assert.equal(validateCaskAdvance(current, '0.2.0-beta.3'), 'advance');
   assert.throws(() => validateCaskAdvance(current, '0.2.0-beta.1'));
+  assert.throws(() => validateCaskAdvance(current, '0.2.0-beta.2', 'e'.repeat(64)));
 });
 
 test('allows only advancing appcast items for each channel and treats equal releases as idempotent', () => {

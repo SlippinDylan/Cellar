@@ -34,6 +34,7 @@ jobs:
       tag: ${{ steps.manifest.outputs.tag }}
       prerelease: ${{ steps.manifest.outputs.prerelease }}
       dmg_name: ${{ steps.manifest.outputs.dmg_name }}
+      reuse_draft: ${{ steps.existing.outputs.draft || 'false' }}
 
     steps:
       - name: Checkout tested commit
@@ -60,7 +61,7 @@ jobs:
             if [[ "$is_draft" == 'true' ]]; then
               echo 'exists=false' >> "$GITHUB_OUTPUT"
               echo 'draft=true' >> "$GITHUB_OUTPUT"
-              echo "Draft release $TAG exists; the run will rebuild and finish it."
+              echo "Draft release $TAG exists; the run will reuse its immutable asset and finish it."
             else
               echo 'exists=true' >> "$GITHUB_OUTPUT"
               echo 'draft=false' >> "$GITHUB_OUTPUT"
@@ -85,10 +86,10 @@ jobs:
           PUBLISHED_RELEASE_TAGS="$published_tags" \
             node .github/scripts/release-manifest.mjs plan
 
-  release:
-    name: Build and publish DMG
+  package:
+    name: Build signed draft release
     needs: plan
-    if: needs.plan.outputs.publish == 'true'
+    if: needs.plan.outputs.publish == 'true' && needs.plan.outputs.reuse_draft != 'true'
     runs-on: macos-26
     timeout-minutes: 30
     permissions:
@@ -207,6 +208,17 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           rm -f "$certificate_path"
 
+      - name: Verify Sparkle signing key pair
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          : "${SPARKLE_ED_PRIVATE_KEY:?Missing SPARKLE_ED_PRIVATE_KEY secret}"
+          : "${SPARKLE_PUBLIC_KEY:?Missing SPARKLE_PUBLIC_KEY secret}"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" \
+            | node .github/scripts/sparkle-key.mjs verify
+
       - name: Build signed arm64 app
         env:
           SIGNING_IDENTITY: ${{ steps.signing.outputs.identity }}
@@ -256,7 +268,12 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")" = 'https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml'
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")" = "$SPARKLE_PUBLIC_KEY"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CellarUpdaterEnabled' "$app/Contents/Info.plist")" = 'YES'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$app/Contents/Info.plist")" = 'true'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUVerifyUpdateBeforeExtraction' "$app/Contents/Info.plist")" = 'true'
           test -d "$app/Contents/Frameworks/Sparkle.framework"
+          managers="$app/Contents/Resources/Managers"
+          diff -qr Resources/Managers "$managers"
+          test -z "$(find "$managers" \( -name '.runtime' -o -name '*.log' -o -name '*.tmp' -o -name '.DS_Store' \) -print -quit)"
 
       - name: Re-sign Sparkle nested code in dependency order
         env:
@@ -354,9 +371,9 @@ jobs:
               echo "Published release $TAG was created while this run was queued." >&2
               exit 1
             fi
-            tag_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha')"
-            if [[ "$tag_sha" != "$TESTED_SHA" ]]; then
-              echo "Draft release $TAG targets $tag_sha instead of tested commit $TESTED_SHA." >&2
+            target_commit="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')"
+            if [[ "$target_commit" != "$TESTED_SHA" ]]; then
+              echo "Draft release $TAG targets $target_commit instead of tested commit $TESTED_SHA." >&2
               exit 1
             fi
             echo 'draft=true' >> "$GITHUB_OUTPUT"
@@ -386,21 +403,6 @@ jobs:
           arguments+=("$RUNNER_TEMP/$DMG_NAME#$DMG_NAME")
           gh "${arguments[@]}"
 
-      - name: Refresh existing draft GitHub Release
-        if: steps.availability.outputs.draft == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release upload "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber \
-            "$RUNNER_TEMP/$DMG_NAME#$DMG_NAME"
-          gh release edit "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$VERSION" \
-            --notes-file "$RUNNER_TEMP/release-notes.md" \
-            --prerelease="$PRERELEASE"
-
       - name: Verify draft GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -412,26 +414,92 @@ jobs:
             exit 1
           fi
 
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+      - name: Remove signing keychain
+        if: always()
+        run: |
+          signing_keychain_path="$RUNNER_TEMP/cellar-signing.keychain-db"
+          if [[ -f "$signing_keychain_path" ]]; then
+            security delete-keychain "$signing_keychain_path" || true
+          fi
+          rm -f "$RUNNER_TEMP/apple-development.p12"
 
-      - name: Dispatch distribution metadata update
+  draft-ready:
+    name: Verify draft release
+    needs:
+      - plan
+      - package
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.publish == 'true' &&
+      (needs.plan.outputs.reuse_draft == 'true' || needs.package.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      DMG_NAME: ${{ needs.plan.outputs.dmg_name }}
+      TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+
+    steps:
+      - name: Verify immutable draft input
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          jq -n \
-            --arg tag "$TAG" \
-            '{event_type: "distribution_metadata_requested", client_payload: {tag: $tag}}' \
-            | gh api --method POST "repos/${GITHUB_REPOSITORY}/dispatches" --input -
+          set -euo pipefail
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = 'true'
+          target_commit="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq '.targetCommitish')"
+          test "$target_commit" = "$TESTED_SHA"
+          asset_names="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          test "$asset_names" = "$DMG_NAME"
+
+  distribution-metadata:
+    name: Publish distribution metadata
+    needs:
+      - plan
+      - draft-ready
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-distribution-metadata.yml
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      source_ref: ${{ github.event.workflow_run.head_sha }}
+      allow_draft: true
+    secrets: inherit
+
+  publish:
+    name: Publish GitHub Release
+    needs:
+      - plan
+      - draft-ready
+      - distribution-metadata
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      DMG_NAME: ${{ needs.plan.outputs.dmg_name }}
+
+    steps:
+      - name: Publish verified GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = 'true'
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = 'false'
 
       - name: Dispatch release notification
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          changelog="$(node .github/scripts/release-manifest.mjs notes)"
+          changelog="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body')"
           jq -n \
             --arg version "$VERSION" \
             --argjson prerelease "$PRERELEASE" \
@@ -451,12 +519,3 @@ jobs:
               }
             }' \
             | gh api --method POST "repos/${GITHUB_REPOSITORY}/dispatches" --input -
-
-      - name: Remove signing keychain
-        if: always()
-        run: |
-          signing_keychain_path="$RUNNER_TEMP/cellar-signing.keychain-db"
-          if [[ -f "$signing_keychain_path" ]]; then
-            security delete-keychain "$signing_keychain_path" || true
-          fi
-          rm -f "$RUNNER_TEMP/apple-development.p12"

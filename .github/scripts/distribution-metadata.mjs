@@ -39,13 +39,22 @@ end
 `;
 }
 
-export function validateCaskAdvance(source, versionValue) {
+export function validateCaskAdvance(source, versionValue, expectedSHA256) {
   const match = /^\s*version\s+"([^"]+)"\s*$/m.exec(source);
   if (!match) throw new Error('Existing Cask must contain one literal version stanza.');
 
   const comparison = compareVersions(versionValue, match[1]);
   if (comparison < 0) {
     throw new Error(`Refusing to downgrade Cask from ${match[1]} to ${versionValue}.`);
+  }
+  if (comparison === 0 && expectedSHA256 !== undefined) {
+    if (!SHA256_PATTERN.test(expectedSHA256)) {
+      throw new Error('Expected Cask SHA-256 must be a lowercase digest.');
+    }
+    const digests = [...source.matchAll(/^\s*sha256\s+"([0-9a-f]+)"\s*$/gm)];
+    if (digests.length !== 1 || digests[0][1] !== expectedSHA256) {
+      throw new Error(`Existing Cask ${versionValue} does not match the draft DMG SHA-256.`);
+    }
   }
   return comparison === 0 ? 'current' : 'advance';
 }
@@ -115,15 +124,16 @@ async function main() {
   const version = process.env.VERSION ?? '';
 
   if (command === 'cask') {
+    const dmgSHA256 = process.env.DMG_SHA256 ?? '';
     const existingCaskPath = process.env.EXISTING_CASK_PATH;
     if (existingCaskPath) {
       const existingCask = await readFile(existingCaskPath, 'utf8');
-      if (validateCaskAdvance(existingCask, version) === 'current') {
+      if (validateCaskAdvance(existingCask, version, dmgSHA256) === 'current') {
         process.stdout.write(existingCask);
         return;
       }
     }
-    process.stdout.write(renderCask(version, process.env.DMG_SHA256 ?? ''));
+    process.stdout.write(renderCask(version, dmgSHA256));
     return;
   }
 

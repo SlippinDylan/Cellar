@@ -153,9 +153,11 @@ Node 快照遵循 `scripts/node-manager/app-bundle-manifest.txt`。Homebrew 快�
 
 CI 先在 Ubuntu 校验 release manifest、版本同步、DMG/Sparkle 脚本和 Node 自动化测试；非纯文档改动、手动运行或开启发布时，再在 `macos-26` 上执行完整 XCTest 与无签名 arm64 Release 构建。
 
-发布由成功的 main CI 触发，只有 `Config/Release/manifest.json` 的 `release` 为 `true` 且版本、CHANGELOG 和历史顺序合法时才构建。流水线使用 Apple Development 证书签名但不公证，生成并验证 DMG，发布 GitHub Release，然后使用 Sparkle 私钥生成签名 appcast 和 Homebrew Cask 并提交到 `SlippinDylan/homebrew-tap`。
+发布由成功的 main CI 触发，只有 `Config/Release/manifest.json` 的 `release` 为 `true` 且版本、CHANGELOG 和历史顺序合法时才构建。流水线使用 Apple Development 证书签名但不公证，并在构建前确认 Sparkle 公私钥属于同一 Ed25519 keypair。DMG 先上传到 draft GitHub Release，之后的重跑把该 asset 视为不可变输入，不重新打包或覆盖；签名 appcast 和 Homebrew Cask 成功提交到 `SlippinDylan/homebrew-tap`、Cask SHA-256 与 draft DMG 一致、GitHub Pages 已能读到对应版本后，流水线才公开 GitHub Release。元数据或 Pages 验证失败时 Release 保持 draft，不会对外发布指向缺失 feed 的 App。
 
-需要配置的 GitHub Secrets：`CERTIFICATES_P12`、`CERTIFICATES_PASSWORD`、`SPARKLE_PUBLIC_KEY`、`SPARKLE_ED_PRIVATE_KEY`、`HOMEBREW_TAP_TOKEN`；`DISCORD_WEBHOOK_URL` 可选。Secrets 值不得写入仓库、日志或 Memory。
+需要配置的 GitHub Secrets：`CERTIFICATES_P12`、`CERTIFICATES_PASSWORD`、`SPARKLE_PUBLIC_KEY`、`SPARKLE_ED_PRIVATE_KEY`、`HOMEBREW_TAP_TOKEN`；`DISCORD_WEBHOOK_URL` 可选。`SPARKLE_ED_PRIVATE_KEY` 必须是 Sparkle 2.10 `generate_keys -x` 导出的 canonical base64 32-byte seed，不接受 96-byte legacy 格式。Secrets 值不得写入仓库、日志或 Memory。
+
+`Publish Distribution Metadata` 同时是 Release 调用的 reusable workflow 和已公开 Release 的人工恢复入口。正常发布失败时优先在原 Release run 重跑失败 job，它会复用同一 draft。如 GitHub Release 已公开但 tap 元数据需要恢复，手动运行该 workflow 并传入已公开 tag；完成后确认 `docs/cellar/appcast.xml` 和对应 channel Cask 的版本、DMG URL 与签名验证均通过。该入口不公开 draft Release。
 
 `Config/Release/manifest.json` 是版本和发布开关的唯一人工编辑入口；修改后运行 `node .github/scripts/sync-version.mjs`。普通构建从 `Config/Generated/Version.xcconfig` 读取 marketing version 和更新通道。
 

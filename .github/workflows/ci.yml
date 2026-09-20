@@ -113,7 +113,12 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")" = 'https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml'
           test -z "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CellarUpdaterEnabled' "$app/Contents/Info.plist")" = 'NO'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$app/Contents/Info.plist")" = 'true'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUVerifyUpdateBeforeExtraction' "$app/Contents/Info.plist")" = 'true'
           test -d "$app/Contents/Frameworks/Sparkle.framework"
+          managers="$app/Contents/Resources/Managers"
+          diff -qr Resources/Managers "$managers"
+          test -z "$(find "$managers" \( -name '.runtime' -o -name '*.log' -o -name '*.tmp' -o -name '.DS_Store' \) -print -quit)"
 
   build-check:
     name: Build Check

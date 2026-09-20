@@ -1,9 +1,26 @@
 name: Publish Distribution Metadata
 
 on:
-  repository_dispatch:
-    types:
-      - distribution_metadata_requested
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      source_ref:
+        default: ''
+        required: false
+        type: string
+      allow_draft:
+        default: false
+        required: false
+        type: boolean
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+      SPARKLE_ED_PRIVATE_KEY:
+        required: true
+      SPARKLE_PUBLIC_KEY:
+        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -22,9 +39,11 @@ jobs:
   publish:
     name: Sign appcast and update Homebrew tap
     runs-on: macos-26
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
-      TAG: ${{ github.event.client_payload.tag || inputs.tag }}
+      ALLOW_DRAFT: ${{ inputs.allow_draft || false }}
+      SOURCE_REF: ${{ inputs.source_ref || inputs.tag }}
+      TAG: ${{ inputs.tag }}
       SPARKLE_VERSION: 2.10.0
       SPARKLE_ARCHIVE_SHA256: c2bf58aa8387266ac179357b1415d6f2635f044da8be41042af32425dae6da0c
 
@@ -35,19 +54,19 @@ jobs:
           ref: main
           persist-credentials: false
 
-      - name: Checkout published source
+      - name: Checkout release source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.TAG }}
-          path: published-source
+          ref: ${{ env.SOURCE_REF }}
+          path: release-source
           persist-credentials: false
 
-      - name: Read published release manifest
+      - name: Read release manifest
         id: manifest
-        working-directory: published-source
+        working-directory: release-source
         run: node ../.github/scripts/release-manifest.mjs validate
 
-      - name: Validate published release
+      - name: Validate release
         env:
           EXPECTED_TAG: ${{ steps.manifest.outputs.tag }}
           DMG_NAME: ${{ steps.manifest.outputs.dmg_name }}
@@ -56,7 +75,12 @@ jobs:
           set -euo pipefail
           test "$TAG" = "$EXPECTED_TAG"
           test "$(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq '.visibility')" = 'PUBLIC'
-          test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = 'false'
+          release_is_draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')"
+          if [[ "$ALLOW_DRAFT" == 'true' ]]; then
+            test "$release_is_draft" = 'true'
+          else
+            test "$release_is_draft" = 'false'
+          fi
           assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
           test "$assets" = "$DMG_NAME"
 
@@ -88,6 +112,17 @@ jobs:
           tar -xf "$archive" -C "$tools_dir"
           test -x "$tools_dir/bin/generate_appcast"
           test -x "$tools_dir/bin/sign_update"
+
+      - name: Verify Sparkle signing key pair
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          : "${SPARKLE_ED_PRIVATE_KEY:?Missing SPARKLE_ED_PRIVATE_KEY secret}"
+          : "${SPARKLE_PUBLIC_KEY:?Missing SPARKLE_PUBLIC_KEY secret}"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" \
+            | node .github/scripts/sparkle-key.mjs verify
 
       - name: Checkout current Homebrew tap metadata
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -220,3 +255,25 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Verify published appcast availability
+        env:
+          DMG_NAME: ${{ steps.manifest.outputs.dmg_name }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          published_appcast="$RUNNER_TEMP/published-appcast.xml"
+          for attempt in {1..60}; do
+            if curl --fail --location --silent --show-error \
+                -H 'Cache-Control: no-cache' \
+                "https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml?run=${GITHUB_RUN_ID}&attempt=${attempt}" \
+                --output "$published_appcast" \
+              && xmllint --noout "$published_appcast" \
+              && grep -Fq "<sparkle:shortVersionString>$VERSION</sparkle:shortVersionString>" "$published_appcast" \
+              && grep -Fq "$DMG_NAME" "$published_appcast"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Published appcast did not become available before the release deadline.' >&2
+          exit 1

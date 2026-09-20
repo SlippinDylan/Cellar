@@ -1,6 +1,6 @@
 # Cellar 研究依据
 
-更新日期：2026-09-20
+更新日期：2026-09-21
 
 本文保存会影响 Cellar 架构和产品承诺的外部依据。实现事实以代码和测试为准；本文件区分官方文档、源码证据和项目推论，避免把尚未人工验证的行为写成平台保证。
 
@@ -98,6 +98,13 @@
 | `Table` 适合展示可滚动的多列集合 | Apple 官方 | [Table](https://developer.apple.com/documentation/swiftui/table) |
 | `ContentUnavailableView` 适合空数据和错误等无法展示内容的状态 | Apple 官方 | [ContentUnavailableView](https://developer.apple.com/documentation/swiftui/contentunavailableview) |
 | Node 包列表使用 `Table`，模块失败使用明确空态，不用空表伪装成功 | 项目推论 | 与 v1 状态契约一致 |
+
+## Sparkle 签名密钥
+
+| 结论 | 分类 | 依据 |
+|---|---|---|
+| Sparkle 2.10.0 新格式私钥是 base64 编码的 32-byte Ed25519 seed，旧格式是 64-byte private key 与 32-byte public key 的拼接；Cellar 发布流水线只接受可独立推导公钥的当前 32-byte seed 格式 | Sparkle 官方源码与项目约束 | [`common_cli/Secret.swift`](https://github.com/sparkle-project/Sparkle/blob/2.10.0/common_cli/Secret.swift) |
+| `SUPublicEDKey` 必须是对应私钥的 Ed25519 公钥；仅分别验证两个 Secret 存在不能证明更新签名可被 App 接受 | Sparkle 官方源码与项目推论 | [`generate_keys/main.swift`](https://github.com/sparkle-project/Sparkle/blob/2.10.0/generate_keys/main.swift)、[`common_cli/Signing.swift`](https://github.com/sparkle-project/Sparkle/blob/2.10.0/common_cli/Signing.swift) |
 
 ## 仍需人工验证
 

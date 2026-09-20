@@ -62,6 +62,10 @@ actor SystemProbeService {
         try await requireHomebrewClient().planInstall(identity)
     }
 
+    func planHomebrewInstall(_ identities: [HomebrewPackageIdentity]) async throws -> HomebrewActionPlan {
+        try await requireHomebrewClient().planInstall(identities)
+    }
+
     func planHomebrewUpgrade(_ targets: [HomebrewPackageIdentity]) async throws -> HomebrewActionPlan {
         try await requireHomebrewClient().planUpgrade(targets)
     }

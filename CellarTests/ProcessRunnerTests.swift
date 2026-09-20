@@ -71,6 +71,7 @@ final class ProcessRunnerTests: XCTestCase {
         let script = try makeScript("#!/bin/sh\nsleep 10\n")
         defer { try? FileManager.default.removeItem(at: script) }
         let runner = ProcessRunner()
+        let start = ContinuousClock.now
         let task = Task {
             try await runner.run(ProcessRequest(
                 executableURL: script,
@@ -89,6 +90,100 @@ final class ProcessRunnerTests: XCTestCase {
         } catch is CancellationError {
             // Expected.
         }
+        XCTAssertLessThan(start.duration(to: ContinuousClock.now), .seconds(2))
+    }
+
+    func testCleansUpDescendantThatOutlivesNormallyExitedParent() async throws {
+        let script = try makeScript(
+            "#!/bin/sh\n/bin/sh -c 'trap \"\" TERM; while :; do /bin/sleep 1; done' &\nexit 0\n"
+        )
+        defer { try? FileManager.default.removeItem(at: script) }
+        let start = ContinuousClock.now
+
+        let result = try await ProcessRunner().run(ProcessRequest(
+            executableURL: script,
+            arguments: [],
+            environment: ["PATH": "/usr/bin:/bin"],
+            currentDirectoryURL: nil
+        ))
+
+        XCTAssertEqual(result.terminationStatus, 0)
+        XCTAssertLessThan(start.duration(to: ContinuousClock.now), .seconds(2))
+    }
+
+    func testTimeoutTerminatesDescendantThatIgnoresTermAndKeepsPipeOpen() async throws {
+        let script = try makeScript(
+            "#!/bin/sh\n/bin/sh -c 'trap \"\" TERM; while :; do /bin/sleep 1; done' &\nwait\n"
+        )
+        defer { try? FileManager.default.removeItem(at: script) }
+        let start = ContinuousClock.now
+
+        do {
+            _ = try await ProcessRunner().run(ProcessRequest(
+                executableURL: script,
+                arguments: [],
+                environment: [
+                    "PATH": "/usr/bin:/bin",
+                ],
+                currentDirectoryURL: nil,
+                timeout: .milliseconds(500)
+            ))
+            XCTFail("Expected the process tree to time out")
+        } catch let error as BridgeError {
+            guard case .processTimedOut = error else {
+                return XCTFail("Unexpected bridge error: \(error)")
+            }
+        }
+
+        XCTAssertLessThan(start.duration(to: ContinuousClock.now), .seconds(2))
+    }
+
+    func testTerminateAllStopsConcurrentProcessGroups() async throws {
+        let script = try makeScript("#!/bin/sh\nsleep 10\n")
+        defer { try? FileManager.default.removeItem(at: script) }
+        let runner = ProcessRunner()
+        let start = ContinuousClock.now
+        let tasks = (0..<3).map { _ in
+            Task {
+                try await runner.run(ProcessRequest(
+                    executableURL: script,
+                    arguments: [],
+                    environment: ["PATH": "/usr/bin:/bin"],
+                    currentDirectoryURL: nil
+                ))
+            }
+        }
+
+        try await Task.sleep(for: .milliseconds(100))
+        await runner.terminateAll()
+        var results: [ProcessResult] = []
+        for task in tasks {
+            results.append(try await task.value)
+        }
+
+        XCTAssertTrue(results.allSatisfy { $0.terminationStatus != 0 })
+        XCTAssertLessThan(start.duration(to: ContinuousClock.now), .seconds(2))
+    }
+
+    func testSpawnFailureDoesNotLeakPipeDescriptors() async throws {
+        let runner = ProcessRunner()
+        let descriptorCountBefore = try openDescriptorCount()
+
+        for _ in 0..<20 {
+            do {
+                _ = try await runner.run(ProcessRequest(
+                    executableURL: URL(filePath: "/path/that/does/not/exist"),
+                    arguments: [],
+                    environment: [:],
+                    currentDirectoryURL: nil
+                ))
+                XCTFail("Expected spawn to fail")
+            } catch {
+                // Expected.
+            }
+        }
+
+        XCTAssertEqual(try openDescriptorCount(), descriptorCountBefore)
     }
 
     private func makeScript(_ contents: String) throws -> URL {
@@ -97,5 +192,9 @@ final class ProcessRunnerTests: XCTestCase {
         try Data(contents.utf8).write(to: script)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         return script
+    }
+
+    private func openDescriptorCount() throws -> Int {
+        try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
     }
 }

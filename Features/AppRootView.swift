@@ -9,35 +9,37 @@ struct AppRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $model.selectedDestination) {
-                Label("概览", systemImage: "square.grid.2x2")
-                    .tag(AppDestination.overview)
+            VStack(spacing: 0) {
+                List(selection: sidebarSelection) {
+                    Label("概览", systemImage: "square.grid.2x2")
+                        .tag(AppDestination.overview)
 
-                sidebarGroup(
-                    "Homebrew",
-                    systemImage: "mug",
-                    isExpanded: $homebrewExpanded,
-                    pages: HomebrewPage.allCases,
-                    destination: AppDestination.homebrew
-                )
-                sidebarGroup(
-                    "Node",
-                    systemImage: "shippingbox",
-                    isExpanded: $nodeExpanded,
-                    pages: NodePage.allCases,
-                    destination: AppDestination.node
-                )
-                sidebarGroup(
-                    "Shell",
-                    systemImage: "terminal",
-                    isExpanded: $shellExpanded,
-                    pages: ShellPage.allCases,
-                    destination: AppDestination.shell
-                )
-            }
-            .listStyle(.sidebar)
-            .scrollIndicators(.hidden)
-            .safeAreaBar(edge: .bottom, alignment: .leading, spacing: 0) {
+                    sidebarGroup(
+                        "Homebrew",
+                        systemImage: "mug",
+                        isExpanded: $homebrewExpanded,
+                        pages: HomebrewPage.allCases,
+                        destination: AppDestination.homebrew
+                    )
+                    sidebarGroup(
+                        "Node",
+                        systemImage: "shippingbox",
+                        isExpanded: $nodeExpanded,
+                        pages: NodePage.allCases,
+                        destination: AppDestination.node
+                    )
+                    sidebarGroup(
+                        "Shell",
+                        systemImage: "terminal",
+                        isExpanded: $shellExpanded,
+                        pages: ShellPage.allCases,
+                        destination: AppDestination.shell
+                    )
+                }
+                .listStyle(.sidebar)
+
+                Divider()
+
                 VStack(spacing: 2) {
                     utilityRow(.activity, title: "操作记录", systemImage: "clock.arrow.circlepath")
                     utilityRow(.settings, title: "设置", systemImage: "gearshape")
@@ -57,18 +59,27 @@ struct AppRootView: View {
             .toolbar {
                 if model.selectedDestination != .settings {
                     ToolbarItem(placement: .primaryAction) {
-                        if model.isBusy {
-                            ProgressView()
-                                .controlSize(.small)
-                                .help("正在执行任务")
-                        } else {
+                        Button {
+                            Task { await model.refresh() }
+                        } label: {
+                            Label("刷新", systemImage: "arrow.clockwise")
+                        }
+                        .keyboardShortcut("r", modifiers: .command)
+                        .help("刷新本机环境（⌘R）")
+                        .disabled(model.isBusy)
+                    }
+                    if let operation = model.activeOperationLabel {
+                        ToolbarItem(placement: .status) {
                             Button {
-                                Task { await model.refresh() }
+                                model.selectedDestination = .activity
                             } label: {
-                                Label("刷新", systemImage: "arrow.clockwise")
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text(operation)
+                                }
                             }
-                            .keyboardShortcut("r", modifiers: .command)
-                            .help("刷新本机环境（⌘R）")
+                            .help("查看当前操作")
                         }
                     }
                 }
@@ -80,6 +91,30 @@ struct AppRootView: View {
                 await model.refresh()
             }
         }
+    }
+
+    private var sidebarSelection: Binding<AppDestination?> {
+        Binding(
+            get: {
+                switch model.selectedDestination {
+                case .overview:
+                    .overview
+                case .homebrew where homebrewExpanded:
+                    model.selectedDestination
+                case .node where nodeExpanded:
+                    model.selectedDestination
+                case .shell where shellExpanded:
+                    model.selectedDestination
+                case .homebrew, .node, .shell, .activity, .settings:
+                    nil
+                }
+            },
+            set: { destination in
+                if let destination {
+                    model.selectedDestination = destination
+                }
+            }
+        )
     }
 
     private var navigationSubtitle: String {
@@ -130,12 +165,12 @@ struct AppRootView: View {
         pages: [Page],
         destination: @escaping (Page) -> AppDestination
     ) -> some View where Page.ID == Page {
-        DisclosureGroup(isExpanded: isExpanded) {
+        Section(isExpanded: isExpanded) {
             ForEach(pages) { page in
                 Label(page.title, systemImage: page.systemImage)
                     .tag(destination(page))
             }
-        } label: {
+        } header: {
             Label(title, systemImage: systemImage)
         }
     }

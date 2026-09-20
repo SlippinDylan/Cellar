@@ -106,8 +106,9 @@ jobs:
           while IFS= read -r -d '' candidate; do
             if file "$candidate" | grep -q 'Mach-O'; then
               test "$(lipo -archs "$candidate")" = 'arm64'
+              test "$(vtool -show-build "$candidate" | awk '$1 == "minos" { print $2; exit }')" = '26.0'
             fi
-          done < <(find "$app" -type f -perm -111 -print0)
+          done < <(find "$app" -type f -print0)
           test "$(vtool -show-build "$binary" | grep -c 'minos 26.0')" -eq 1
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = '26.0'
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")" = 'https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml'

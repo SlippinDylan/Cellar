@@ -35,8 +35,20 @@ for binary in "${binaries[@]}"; do
     mv "$temporary" "$binary"
     chmod "$mode" "$binary"
   fi
+
+  minimum_version="$(vtool -show-build "$binary" | awk '$1 == "minos" { print $2; exit }')"
+  if [[ "$minimum_version" != '26.0' ]]; then
+    sdk_version="$(vtool -show-build "$binary" | awk '$1 == "sdk" { print $2; exit }')"
+    test -n "$sdk_version"
+    mode="$(stat -f '%Lp' "$binary")"
+    temporary="$(mktemp "$temporary_directory/cellar-sparkle.XXXXXX")"
+    vtool -set-build-version macos 26.0 "$sdk_version" -replace -output "$temporary" "$binary"
+    mv "$temporary" "$binary"
+    chmod "$mode" "$binary"
+  fi
 done
 
 for binary in "${binaries[@]}"; do
   test "$(lipo -archs "$binary")" = 'arm64'
+  test "$(vtool -show-build "$binary" | awk '$1 == "minos" { print $2; exit }')" = '26.0'
 done

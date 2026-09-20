@@ -14,7 +14,7 @@
 
 | 模块 | v1 能力 |
 |---|---|
-| App Shell | 普通前台窗口、两栏导航、五个一级页面 |
+| App Shell | 普通前台窗口、两栏导航、模块导航及底部操作记录/设置入口 |
 | 概览 | 聚合 Homebrew、Node、Shell 和 Manager 状态 |
 | Homebrew | 概览、已安装、可升级、发现、诊断、配置与 Tap；安装、update、选择升级、单目标卸载和 Tap 变更 |
 | Node | 读取 summary、全局包、npm 配置、可更新版本、已安装 Node 和 Manager 状态；管理 npm 全局包、nvm/Node、Registry、维护及项目 `.nvmrc` |
@@ -38,7 +38,7 @@ Homebrew 写操作统一先计划和确认，执行后 post-refresh。Formula/Ca
 - Intel、Universal Binary、Rosetta、macOS 15 或更早系统。
 - 自定义 NVM_DIR、asdf、fnm 和 Volta。
 - 持久操作历史、任务队列、进度百分比或用户取消入口。
-- CI、签名发布、DMG、自动更新和 Homebrew Cask。
+- Apple 公证、Developer ID 分发、Mac App Store 和独立自动更新服务端。
 
 ## 自动验收
 

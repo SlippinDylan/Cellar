@@ -35,7 +35,7 @@ Homebrew、Node 与 Shell 模块提供写操作。Homebrew 通过 Bridge 受控�
 
 ## 导航与窗口
 
-Cellar 使用两栏 `NavigationSplitView`。侧边栏固定包含：概览、Homebrew、Node、Shell 和操作记录。启动时默认选择概览。
+Cellar 使用两栏 `NavigationSplitView`。侧边栏主列表包含概览、Homebrew、Node 和 Shell；底部 `safeAreaBar` 固定放置操作记录与设置。启动时默认选择概览。
 
 | ID | 行为 |
 |---|---|
@@ -49,6 +49,8 @@ Cellar 使用两栏 `NavigationSplitView`。侧边栏固定包含：概览、Hom
 | UI-08 | 页面内容使用一致的水平边距；概览采用两列状态卡片，模块页的状态总览卡占满内容宽度 |
 | UI-09 | Homebrew、Node 和 Shell 在左侧 Sidebar 中作为可折叠一级分类，所有二级页面提供对应真实功能 |
 | UI-10 | 左侧 Sidebar 保留垂直滚动，但不显示滚动条 |
+| UI-11 | Sidebar 使用系统 `List(.sidebar)` 选择样式；设置页使用 macOS 26 系统工具栏和克制的 Liquid Glass pane selector |
+| UI-12 | About 展示 Bundle 版本并提供 Sparkle 检查更新入口；普通本地构建禁用 updater |
 
 ## 启动与刷新
 
@@ -260,7 +262,7 @@ Cellar 只在用户确认对应计划后修改包管理和 Shell 状态。Shell 
 
 | ID | 需求 | 阶段 |
 |---|---|---|
-| FR-01 | 提供五个固定一级页面和侧边栏导航 | v1 |
+| FR-01 | 提供模块 Sidebar、底部操作记录/设置入口及统一 titlebar | v1 |
 | FR-02 | 启动后自动刷新真实环境状态 | v1 |
 | FR-03 | Homebrew 六个页面提供概览、已安装、可升级、发现、诊断、配置与 Tap | Homebrew 阶段 |
 | FR-04 | Node 页面显示 summary、全局包、配置和可更新版本 | v1 |
@@ -275,6 +277,7 @@ Cellar 只在用户确认对应计划后修改包管理和 Shell 状态。Shell 
 | FR-13 | Cask standard/zap 作为两个明确模式执行，App 不自行删除 artifact | Homebrew 阶段 |
 | FR-14 | Tap 添加与安全移除经过关联安装项检查和用户确认 | Homebrew 阶段 |
 | FR-15 | Homebrew 部分完成、stdout、stderr 和退出状态进入当前会话操作记录 | Homebrew 阶段 |
+| FR-16 | About 提供 Sparkle 更新入口，发布构建按 manifest 通道读取签名 appcast | 发布阶段 |
 
 ## 非功能需求
 

@@ -11,12 +11,13 @@
 - [ ] 窗口可以使用系统控件调整大小。
 - [ ] Dock 显示 Cellar，菜单栏没有 Cellar 常驻图标。
 - [ ] 侧边栏包含概览、Homebrew、Node、Shell 和操作记录，默认选择概览。
+- [ ] 操作记录和设置固定在 Sidebar 底部，设置中的 About 显示正确版本且布局使用系统工具栏样式。
 - [ ] 每个一级页面的 titlebar 同时显示标题和用途说明，下面有连续分割线。
 - [ ] 页面内容与头部左侧视觉起点一致；概览每行两张等宽卡片，模块页状态总览卡占满内容宽度。
 - [ ] Homebrew、Node 和 Shell 在左侧显示为可展开、收起的一级分类，具体功能缩进显示在分类下方。
 - [ ] 侧边栏内容可以通过滚轮或触控板滚动，但不显示垂直滚动条。
 - [ ] 选择二级页面时对应行保持高亮；分类标题只负责展开收起，不与页面选择产生歧义。
-- [ ] Homebrew 六个和 Node 五个二级页面均显示对应真实功能；Shell 未实现的二级页面显示居中空态且不会启动外部命令。
+- [ ] Homebrew 六个、Node 五个和 Shell 四个二级页面均显示对应真实功能。
 - [ ] 关闭最后一个窗口后 App 退出。
 
 ## 启动刷新
@@ -151,6 +152,9 @@
 - [ ] Bundle identifier 为 `com.dylanwang.Cellar`。
 - [ ] 不存在 `LSUIElement`，也没有 `MenuBarExtra` 场景。
 - [ ] Manager Bundle 快照与仓库 `Resources/Managers/` 一致。
+- [ ] App 内主程序及 Sparkle framework、Updater、Autoupdate 和 XPC 服务的每个 Mach-O 都只有 arm64。
+- [ ] 普通本地构建的 updater 为关闭状态；发布构建注入正确 Sparkle 公钥并启用更新。
+- [ ] About 的“检查更新”读取 `cellar/appcast.xml`，stable/beta/alpha 构建只接收允许的通道。
 
 ## 记录结果
 

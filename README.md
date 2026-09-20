@@ -42,6 +42,8 @@ Manager 以只读资源随 App 打包，首次运行时复制到：
 
 Cellar 不包含账户、遥测或自己的服务端。`npm outdated`、包安装和更新会访问当前配置的 npm registry；Node/nvm 写操作可能修改 `~/.npmrc`、`~/.nvm`、npm cache，以及用户明确选择项目中的 `.nvmrc`。Homebrew 查询和操作可能访问 Homebrew 或第三方 Tap 的服务。Oh My Zsh 和插件安装会访问固定官方脚本或用户确认的 GitHub 地址；Shell 配置操作会备份并更新 `.zshrc` 的受管理 block。Cellar 不修改 `.zprofile` 正文，也不调用 `chsh`。
 
+Release 构建使用 Sparkle 检查 `https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml`。Debug 和普通本地构建默认关闭 updater；配置发布密钥并通过发布流水线构建后才启用自动检查。
+
 ## 系统要求
 
 - macOS 26.0 或更高版本

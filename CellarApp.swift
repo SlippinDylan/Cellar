@@ -5,10 +5,11 @@ import SwiftUI
 struct CellarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel.live()
+    private let updateController = ApplicationUpdateController()
 
     var body: some Scene {
         WindowGroup {
-            AppRootView(model: model)
+            AppRootView(model: model, updateController: updateController)
         }
         .defaultSize(width: 1080, height: 720)
     }

@@ -6,6 +6,7 @@ enum AppDestination: Hashable {
     case node(NodePage)
     case shell(ShellPage)
     case activity
+    case settings
 
     var navigationTitle: String {
         switch self {
@@ -14,6 +15,7 @@ enum AppDestination: Hashable {
         case .node(let page): page == .overview ? "Node" : "Node · \(page.title)"
         case .shell(let page): page == .overview ? "Shell" : "Shell · \(page.title)"
         case .activity: "操作记录"
+        case .settings: "设置"
         }
     }
 
@@ -24,6 +26,7 @@ enum AppDestination: Hashable {
         case .node(let page): page.subtitle
         case .shell(let page): page.subtitle
         case .activity: "查看本次 App 会话中的刷新结果和错误"
+        case .settings: "管理更新并查看 Cellar 版本信息"
         }
     }
 }

@@ -5,14 +5,10 @@ struct StatusOverviewCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        content()
-            .padding(16)
-            .background(tint.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(tint.opacity(0.1), lineWidth: 1)
-            }
+        GroupBox {
+            content()
+                .padding(.vertical, 4)
+        }
     }
 }
 
@@ -83,19 +79,5 @@ struct PageLoadingView: View {
     var body: some View {
         ProgressView(message)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-}
-
-struct FeaturePlaceholderView: View {
-    let title: String
-    let systemImage: String
-
-    var body: some View {
-        ContentUnavailableView(
-            title,
-            systemImage: systemImage,
-            description: Text("功能入口已预留，当前版本尚未实现")
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

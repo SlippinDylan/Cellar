@@ -212,6 +212,14 @@ Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 
 操作记录、页面状态和刷新时间不持久化。App 没有自己的账户、遥测或服务端。`npm outdated` 会访问用户当前配置的 npm registry，并使用 npm 自身的 cache 行为。Homebrew 的搜索、详情、过期检查、Tap、update、安装和升级可能访问 Homebrew 服务或第三方 Tap，并写入 Homebrew 自己管理的 API、下载 cache 和安装状态。
 
+## 设置、About 与更新
+
+操作记录和设置位于 Sidebar 底部 `safeAreaBar`。设置页使用 macOS 26 工具栏与 Liquid Glass selector，在 About 中展示 Bundle 版本并触发 `ApplicationUpdateController`。
+
+更新使用固定 Sparkle 2.10.0。Debug 和普通本地 Release 默认 `CellarUpdaterEnabled=NO`，公钥为空；发布流水线必须从 `SPARKLE_PUBLIC_KEY` Secret 注入公钥并显式启用 updater。Feed 固定为 Homebrew tap GitHub Pages 下的 `cellar/appcast.xml`，stable/beta/alpha 通道由发布 manifest 注入。
+
+Sparkle XCFramework 原始 macOS slice 是 universal。Cellar build phase 只处理当前 `TARGET_BUILD_DIR` 中嵌入的已知 Sparkle Mach-O，裁剪为 arm64；发布流水线随后按嵌套依赖顺序重新签名。Package cache 和源 XCFramework 不修改。
+
 ## 测试边界
 
 `CellarTests` 覆盖：
@@ -234,7 +242,7 @@ Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 
 工程包含 `Cellar` App Target 和 `CellarTests` Target。两者最低部署版本为 macOS 26.0，显式排除 `x86_64`，发布产物只允许 arm64。App Sandbox 关闭。
 
-当前仓库没有 CI、签名发布、DMG、Sparkle 或 Homebrew Cask。发布模型尚未确定，不能把本地无签名构建描述为正式版本。
+仓库包含 CI、签名 Release、DMG、Discord 通知以及 Sparkle/Homebrew tap 分发自动化。`Config/Release/manifest.json` 默认关闭发布；缺少 GitHub Secrets 或未执行真实流水线时不能把本地无签名构建描述为正式版本。
 
 ## 稳定不变量
 

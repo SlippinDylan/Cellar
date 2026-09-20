@@ -2,106 +2,76 @@ import SwiftUI
 
 struct AppRootView: View {
     @ObservedObject var model: AppModel
+    let updateController: ApplicationUpdateController
     @State private var homebrewExpanded = true
     @State private var nodeExpanded = true
     @State private var shellExpanded = true
 
     var body: some View {
         NavigationSplitView {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    SidebarDestinationRow(
-                        destination: .overview,
-                        title: "概览",
-                        systemImage: "square.grid.2x2",
-                        selection: $model.selectedDestination
-                    )
+            List(selection: $model.selectedDestination) {
+                Label("概览", systemImage: "square.grid.2x2")
+                    .tag(AppDestination.overview)
 
-                    SidebarGroup(
-                        title: "Homebrew",
-                        systemImage: "mug",
-                        isExpanded: $homebrewExpanded
-                    ) {
-                        ForEach(HomebrewPage.allCases) { page in
-                            SidebarDestinationRow(
-                                destination: .homebrew(page),
-                                title: page.title,
-                                systemImage: page.systemImage,
-                                selection: $model.selectedDestination
-                            )
-                        }
-                    }
-
-                    SidebarGroup(
-                        title: "Node",
-                        systemImage: "shippingbox",
-                        isExpanded: $nodeExpanded
-                    ) {
-                        ForEach(NodePage.allCases) { page in
-                            SidebarDestinationRow(
-                                destination: .node(page),
-                                title: page.title,
-                                systemImage: page.systemImage,
-                                selection: $model.selectedDestination
-                            )
-                        }
-                    }
-
-                    SidebarGroup(
-                        title: "Shell",
-                        systemImage: "terminal",
-                        isExpanded: $shellExpanded
-                    ) {
-                        ForEach(ShellPage.allCases) { page in
-                            SidebarDestinationRow(
-                                destination: .shell(page),
-                                title: page.title,
-                                systemImage: page.systemImage,
-                                selection: $model.selectedDestination
-                            )
-                        }
-                    }
-
-                    Divider()
-                        .padding(.vertical, 6)
-
-                    SidebarDestinationRow(
-                        destination: .activity,
-                        title: "操作记录",
-                        systemImage: "clock.arrow.circlepath",
-                        selection: $model.selectedDestination
-                    )
+                sidebarGroup(
+                    "Homebrew",
+                    systemImage: "mug",
+                    isExpanded: $homebrewExpanded,
+                    pages: HomebrewPage.allCases,
+                    destination: AppDestination.homebrew
+                )
+                sidebarGroup(
+                    "Node",
+                    systemImage: "shippingbox",
+                    isExpanded: $nodeExpanded,
+                    pages: NodePage.allCases,
+                    destination: AppDestination.node
+                )
+                sidebarGroup(
+                    "Shell",
+                    systemImage: "terminal",
+                    isExpanded: $shellExpanded,
+                    pages: ShellPage.allCases,
+                    destination: AppDestination.shell
+                )
+            }
+            .listStyle(.sidebar)
+            .scrollIndicators(.hidden)
+            .safeAreaBar(edge: .bottom, alignment: .leading, spacing: 0) {
+                VStack(spacing: 2) {
+                    utilityRow(.activity, title: "操作记录", systemImage: "clock.arrow.circlepath")
+                    utilityRow(.settings, title: "设置", systemImage: "gearshape")
                 }
                 .padding(8)
+                .frame(maxWidth: .infinity)
             }
-            .scrollIndicators(.hidden)
             .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 300)
         } detail: {
             selectedPage
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .navigationTitle(model.selectedDestination.navigationTitle)
                 .navigationSubtitle(navigationSubtitle)
-                .overlay(alignment: .top) {
-                    Divider()
-                }
                 .toolbar {
-                    ToolbarItem {
-                        if model.isRefreshing || model.isHomebrewWorking || model.isNodeWorking || model.isShellWorking {
-                            ProgressView()
-                                .controlSize(.small)
-                                .help("正在执行任务")
-                        } else {
-                            Button {
-                                Task { await model.refresh() }
-                            } label: {
-                                Label("刷新", systemImage: "arrow.clockwise")
+                    if model.selectedDestination != .settings {
+                        ToolbarItem(placement: .primaryAction) {
+                            if isWorking {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .help("正在执行任务")
+                            } else {
+                                Button {
+                                    Task { await model.refresh() }
+                                } label: {
+                                    Label("刷新", systemImage: "arrow.clockwise")
+                                }
+                                .keyboardShortcut("r", modifiers: .command)
+                                .help("刷新本机环境（⌘R）")
                             }
-                            .keyboardShortcut("r", modifiers: .command)
-                            .help("刷新本机环境（⌘R）")
                         }
                     }
                 }
         }
+        .navigationSplitViewStyle(.prominentDetail)
         .task {
             if model.refreshedAt == nil && !AppRuntime.isRunningTests {
                 await model.refresh()
@@ -109,79 +79,76 @@ struct AppRootView: View {
         }
     }
 
+    private var isWorking: Bool {
+        model.isRefreshing || model.isHomebrewWorking || model.isNodeWorking || model.isShellWorking
+    }
+
     private var navigationSubtitle: String {
         guard model.selectedDestination == .overview, let refreshedAt = model.refreshedAt else {
             return model.selectedDestination.subtitle
         }
-        let time = refreshedAt.formatted(date: .omitted, time: .standard)
-        return "\(model.selectedDestination.subtitle)（最后刷新：\(time)）"
+        return "\(model.selectedDestination.subtitle)（最后刷新：\(refreshedAt.formatted(date: .omitted, time: .standard))）"
     }
 
     @ViewBuilder
     private var selectedPage: some View {
         switch model.selectedDestination {
-        case .overview:
-            OverviewView(model: model)
-        case .homebrew(let page):
-            HomebrewView(model: model, page: page)
-        case .node(let page):
-            NodeView(model: model, page: page)
-        case .shell(let page):
-            ShellView(model: model, page: page)
-        case .activity:
-            ActivityView(model: model)
+        case .overview: OverviewView(model: model)
+        case .homebrew(let page): HomebrewView(model: model, page: page)
+        case .node(let page): NodeView(model: model, page: page)
+        case .shell(let page): ShellView(model: model, page: page)
+        case .activity: ActivityView(model: model)
+        case .settings: SettingsView(updateController: updateController)
         }
     }
-}
 
-private struct SidebarDestinationRow: View {
-    let destination: AppDestination
-    let title: String
-    let systemImage: String
-    @Binding var selection: AppDestination
-
-    private var isSelected: Bool {
-        selection == destination
-    }
-
-    var body: some View {
-        Button {
-            selection = destination
+    private func utilityRow(
+        _ destination: AppDestination,
+        title: String,
+        systemImage: String
+    ) -> some View {
+        let selected = model.selectedDestination == destination
+        return Button {
+            model.selectedDestination = destination
         } label: {
             Label(title, systemImage: systemImage)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .foregroundStyle(isSelected ? Color.white : Color.primary)
-        .background(isSelected ? Color.accentColor : Color.clear)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .foregroundStyle(selected ? Color.white : Color.primary)
+        .background(selected ? Color.accentColor : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
-}
 
-private struct SidebarGroup<Content: View>: View {
-    let title: String
-    let systemImage: String
-    @Binding var isExpanded: Bool
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 2) {
-                content()
+    private func sidebarGroup<Page: SidebarPage>(
+        _ title: String,
+        systemImage: String,
+        isExpanded: Binding<Bool>,
+        pages: [Page],
+        destination: @escaping (Page) -> AppDestination
+    ) -> some View where Page.ID == Page {
+        DisclosureGroup(isExpanded: isExpanded) {
+            ForEach(pages) { page in
+                Label(page.title, systemImage: page.systemImage)
+                    .tag(destination(page))
             }
-            .padding(.leading, 22)
-            .padding(.top, 2)
         } label: {
             Label(title, systemImage: systemImage)
-                .font(.headline)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
     }
 }
+
+private protocol SidebarPage: Identifiable, Hashable where ID == Self {
+    var title: String { get }
+    var systemImage: String { get }
+}
+
+extension HomebrewPage: SidebarPage {}
+extension NodePage: SidebarPage {}
+extension ShellPage: SidebarPage {}
 
 enum AppRuntime {
     static var isRunningTests: Bool {

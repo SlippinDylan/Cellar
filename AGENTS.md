@@ -25,6 +25,8 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - `Bridge/`：`Process`、受控环境、Manager 快照安装和 JSON 解码。
 - `Resources/Managers/`：从冻结脚本复制的只读生产快照。
 - `CellarTests/`：契约、环境解析、进程、生命周期和快照测试。
+- `Config/Release/`、`Config/Generated/`：发布请求与生成的 Xcode 版本配置。
+- `.github/`、`tools/`：CI、Release、Discord、DMG、Sparkle 和分发元数据自动化。
 - `scripts/`：既有 CLI Manager；App 开发期间冻结。
 - `docs/`：产品、架构、开发、研究和人工验收文档。
 
@@ -83,13 +85,14 @@ git diff --check
 git diff -- scripts
 ```
 
-仓库没有 Makefile、SwiftLint、SwiftFormat、开发服务器或 watch 流程，不要声称运行过不存在的检查。
+仓库没有 Makefile、SwiftLint、SwiftFormat、开发服务器或 watch 流程。自动化检查入口还包括 `node .github/scripts/release-manifest.mjs validate`、`node .github/scripts/sync-version.mjs --check` 和 `node --test .github/scripts/*.test.mjs`。
 
 ## 验证与完成标准
 
 - 先运行覆盖改动的最小检查，再根据失败或风险扩大范围。
 - Models、Bridge、Services 或生命周期变化应补直接回归测试；应用级修改至少完成相关测试和一次 macOS 构建。
 - Release 验收检查 App 内每个 Mach-O，确认最低系统版本为 macOS 26.0 且只有 `arm64`。
+- 发布开关只来自 `Config/Release/manifest.json`；未经明确发版请求不得改为 `true`、推送、创建 Release 或更新 tap/appcast。
 - 真实 Homebrew、Node/nvm、网络、窗口尺寸和退出行为按 [人工验收清单](docs/manual-smoke-checklist.md) 验证；未经用户要求不主动运行 App。
 - 完成前检查 diff、引用、临时输出和 `scripts/` 状态。无法执行的验证要说明原因和剩余风险。
 

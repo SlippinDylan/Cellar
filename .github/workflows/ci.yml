@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lightweight-check:
+    name: Lightweight Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run_macos: ${{ steps.changes.outputs.run_macos }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/ci-change-classifier.mjs
+
+      - name: Validate automation
+        run: |
+          bash -n tools/create-dmg.sh
+          bash -n tools/thin-sparkle.sh
+          tools/create-dmg.sh --help >/dev/null
+          node .github/scripts/release-manifest.mjs validate
+          node .github/scripts/sync-version.mjs --check
+          node --test .github/scripts/*.test.mjs
+
+  macos-check:
+    name: Test and build Cellar
+    needs: lightweight-check
+    if: needs.lightweight-check.outputs.run_macos == 'true'
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode 26.6
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+
+      - name: Report toolchain
+        run: |
+          xcodebuild -version
+          node --version
+
+      - name: Test Cellar
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Cellar.xcodeproj \
+            -scheme Cellar \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath build/DerivedData-Tests \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Build unsigned arm64 app
+        run: |
+          set -o pipefail
+          xcodebuild build \
+            -project Cellar.xcodeproj \
+            -scheme Cellar \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath build/DerivedData-Release \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Verify artifact contract
+        run: |
+          app='build/DerivedData-Release/Build/Products/Release/Cellar.app'
+          binary="$app/Contents/MacOS/Cellar"
+          test -x "$binary"
+          while IFS= read -r -d '' candidate; do
+            if file "$candidate" | grep -q 'Mach-O'; then
+              test "$(lipo -archs "$candidate")" = 'arm64'
+            fi
+          done < <(find "$app" -type f -perm -111 -print0)
+          test "$(vtool -show-build "$binary" | grep -c 'minos 26.0')" -eq 1
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = '26.0'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")" = 'https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml'
+          test -z "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$app/Contents/Info.plist")"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CellarUpdaterEnabled' "$app/Contents/Info.plist")" = 'NO'
+          test -d "$app/Contents/Frameworks/Sparkle.framework"
+
+  build-check:
+    name: Build Check
+    needs:
+      - lightweight-check
+      - macos-check
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Verify CI result
+        env:
+          LIGHTWEIGHT_RESULT: ${{ needs.lightweight-check.result }}
+          MACOS_RESULT: ${{ needs.macos-check.result }}
+        run: |
+          test "$LIGHTWEIGHT_RESULT" = 'success'
+          [[ "$MACOS_RESULT" == 'success' || "$MACOS_RESULT" == 'skipped' ]]

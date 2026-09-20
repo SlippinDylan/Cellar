@@ -13,7 +13,7 @@
 - Bundle identifier：`com.dylanwang.Cellar`。
 - App Sandbox：关闭。
 
-App 没有第三方 Swift Package、Makefile、SwiftLint 或 SwiftFormat。Homebrew、Node.js 和 npm 是运行时读取或管理的用户工具，不是构建 Cellar 的依赖。
+App 使用固定的 Sparkle 2.10.0 Swift Package。仓库没有 Makefile、SwiftLint 或 SwiftFormat。Homebrew、Node.js 和 npm 是运行时读取或管理的用户工具，不是构建 Cellar 的依赖。
 
 Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用前先读取 session defaults，再设置工程、scheme、平台、架构和仓库内 DerivedData 路径。
 
@@ -151,15 +151,13 @@ Node 快照遵循 `scripts/node-manager/app-bundle-manifest.txt`。Homebrew 快�
 
 ## CI 与发布现状
 
-仓库当前没有项目级 CI、发布清单、签名流水线、DMG、Sparkle 或 Homebrew Cask。不要把本地无签名构建描述为可发布版本，也不要从其他项目复制尚未采用的发布流程。
+CI 先在 Ubuntu 校验 release manifest、版本同步、DMG/Sparkle 脚本和 Node 自动化测试；非纯文档改动、手动运行或开启发布时，再在 `macos-26` 上执行完整 XCTest 与无签名 arm64 Release 构建。
 
-引入发布能力前需要单独确定：
+发布由成功的 main CI 触发，只有 `Config/Release/manifest.json` 的 `release` 为 `true` 且版本、CHANGELOG 和历史顺序合法时才构建。流水线使用 Apple Development 证书签名但不公证，生成并验证 DMG，发布 GitHub Release，然后使用 Sparkle 私钥生成签名 appcast 和 Homebrew Cask 并提交到 `SlippinDylan/homebrew-tap`。
 
-- 版本和发布开关的唯一配置入口。
-- 签名身份、是否公证及失败策略。
-- DMG 结构和产物验证。
-- 更新渠道与 Homebrew 分发。
-- README 中的真实下载和安装说明。
+需要配置的 GitHub Secrets：`CERTIFICATES_P12`、`CERTIFICATES_PASSWORD`、`SPARKLE_PUBLIC_KEY`、`SPARKLE_ED_PRIVATE_KEY`、`HOMEBREW_TAP_TOKEN`；`DISCORD_WEBHOOK_URL` 可选。Secrets 值不得写入仓库、日志或 Memory。
+
+`Config/Release/manifest.json` 是版本和发布开关的唯一人工编辑入口；修改后运行 `node .github/scripts/sync-version.mjs`。普通构建从 `Config/Generated/Version.xcconfig` 读取 marketing version 和更新通道。
 
 ## 开发产物与安全清理
 

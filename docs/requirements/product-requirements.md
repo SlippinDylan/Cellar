@@ -8,7 +8,7 @@
 
 Cellar 是一个原生 macOS 开发环境工具。它在一个窗口中汇总 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 的本机状态，并显示本次会话的操作记录。
 
-当前只有 Homebrew 模块提供写操作；Node 与 Shell 保持只读。Homebrew 能力通过 Bridge 受控调用已发现的绝对 `brew` 路径，不驱动现有 Homebrew Manager 的交互菜单。每项写操作先展示计划并要求确认，执行后重新读取真实状态。
+Homebrew 与 Node 模块提供写操作；Shell 当前保持只读。Homebrew 能力通过 Bridge 受控调用已发现的绝对 `brew` 路径，Node 通过 Manager schema v1 的机器协议执行；App 不驱动交互菜单。每项写操作先展示计划并要求确认，执行后重新读取真实状态。
 
 ## 目标
 
@@ -18,16 +18,13 @@ Cellar 是一个原生 macOS 开发环境工具。它在一个窗口中汇总 Ho
 | G-02 | 在同一界面展示 Homebrew、Node/npm 和 Shell 的真实状态，并完成受控的 Homebrew 常用操作 |
 | G-03 | 保持外部命令参数、环境、输出和错误边界明确 |
 | G-04 | 单项读取失败时保留其他已经成功取得的状态 |
-| G-05 | Homebrew 写操作保持范围明确；Node、npm、nvm 和 Shell 不产生状态变更 |
+| G-05 | Homebrew 与 Node 写操作保持范围明确；Shell 不产生状态变更 |
 
 ## v1 非目标
 
 | ID | 非目标 | 原因 |
 |---|---|---|
 | NG-01 | 安装 Command Line Tools 或 Homebrew、修改 `.zprofile` | 环境引导与系统配置不属于本轮范围 |
-| NG-02 | 安装、更新、卸载 npm 全局包 | 写操作需要独立的计划、确认、执行和结果设计 |
-| NG-03 | 修改 npm registry 或 scope registry | v1 只展示配置 |
-| NG-04 | 安装、切换、设为默认或卸载 Node 版本 | App 当前只解析默认 nvm 环境 |
 | NG-05 | 修改 Zsh 或 Oh My Zsh | Zsh Manager 目前是交互式脚本 |
 | NG-06 | root 操作、Privileged Helper 或 `sudo` | v1 能力不需要提权 |
 | NG-07 | 后台驻留或菜单栏入口 | Cellar 是普通前台窗口应用 |
@@ -50,7 +47,7 @@ Cellar 使用两栏 `NavigationSplitView`。侧边栏固定包含：概览、Hom
 | UI-06 | 工具栏刷新按钮在刷新期间禁用，重复刷新请求不启动第二轮任务 |
 | UI-07 | 每个一级页面在系统 titlebar 显示标题和一句用途说明，详情区顶部使用统一分割线 |
 | UI-08 | 页面内容使用一致的水平边距；概览采用两列状态卡片，模块页的状态总览卡占满内容宽度 |
-| UI-09 | Homebrew、Node 和 Shell 在左侧 Sidebar 中作为可折叠一级分类，具体功能作为第二级选择项；Homebrew 使用六个功能页，Node 与 Shell 当前只有“概览”提供真实功能 |
+| UI-09 | Homebrew、Node 和 Shell 在左侧 Sidebar 中作为可折叠一级分类，具体功能作为第二级选择项；Homebrew 与 Node 页面提供真实功能，Shell 当前只有“概览”接入真实数据 |
 | UI-10 | 左侧 Sidebar 保留垂直滚动，但不显示滚动条 |
 
 ## 启动与刷新
@@ -160,9 +157,9 @@ Homebrew 使用现有六个二级页面。安装入口位于“发现”，卸�
 
 ### Node
 
-Node 页面使用 Node Manager schema v1 的只读 JSON 命令。
+Node 页面使用 Node Manager schema v1。查询环境固定关闭 JSON execute；只有确认后的单次写操作才在对应子进程环境中设置 `NODE_MANAGER_ALLOW_JSON_EXECUTE=1`，项目 `.nvmrc` 还必须设置独立的 project-write 开关。
 
-左侧 Node 分类预留概览、全局包、Node 版本、Registry 和维护。当前真实数据仍集中在概览；其他页面不启动命令。
+左侧 Node 分类包含概览、全局包、Node 版本、Registry 和维护。每个页面只承载对应职责。
 
 | ID | 命令 | 用途 |
 |---|---|---|
@@ -174,6 +171,15 @@ Node 页面使用 Node Manager schema v1 的只读 JSON 命令。
 `summary`、`packages` 和 `config` 是页面核心数据，按顺序读取。`outdated` 最后执行；它访问当前配置的 npm registry，失败时页面仍显示核心数据，并单独显示更新检查错误。
 
 包表按本地化名称顺序排列，列出包名、当前版本、wanted 和 latest。没有更新数据时使用占位符，不把网络失败解释为“全部已是最新”。
+
+#### Node 写操作
+
+- 全局包安装接受 Manager 校验过的安全 package spec；更新和卸载只作用于当前受控 Node 环境中的明确包名。
+- Node 版本支持安装、用于本次 Cellar 会话、设置 nvm default 和安全卸载。“会话使用”不修改用户终端；default 是独立持久操作。
+- Registry 支持设置或删除用户默认 Registry，以及设置或删除明确 scope 的 Registry。
+- 维护操作限定为 Manager 声明的 npm cache 校验/清理、node-gyp cache、孤立 bin、无用户包旧 Node 和 Manager 日志；候选删除使用 plan token 并在执行前复验。
+- 项目 `.nvmrc` 只允许写入用户通过系统目录选择器明确选择的目录；符号链接或计划后状态变化必须拒绝执行。
+- 所有 mutation 经过 plan、确认、execute 和 post-refresh；计划五分钟过期，同一 App 状态下不并发执行第二项 Node 操作。
 
 ### Shell
 
@@ -234,12 +240,12 @@ App 启动后可能产生以下外部行为：
 
 - 把 Bundle 中的 Manager 快照复制到 `~/Library/Application Support/Cellar/Managers/<version>/`。
 - 运行 Homebrew 查询命令和 `/bin/zsh --version`。
-- 通过 Node Manager 运行 npm 只读命令。
+- 通过 Node Manager 运行 npm/nvm 查询，以及用户确认的受控写操作。
 - `npm outdated` 访问用户当前配置的 npm registry，并遵守 npm 自身的网络和 cache 行为。
 - Homebrew 的搜索、详情、过期检查、Tap、`update`、安装和升级可能访问 Homebrew 服务或第三方 Tap，并写入 Homebrew 自己管理的 API cache、下载 cache 和安装目录。
 - 用户确认的 Homebrew 安装、更新、升级、卸载与 Tap 变更会修改 Homebrew 管理的本机状态；命令不是事务，失败时可能已经部分完成。
 
-Cellar 不写入 `~/.npmrc`、`~/.zshrc`、`~/.nvm` 或 `.zprofile`，不改变 npm 全局包、Node 版本或 Shell 状态，不调用 `sudo`。拒绝网络请求会影响 npm 更新检查以及依赖网络的 Homebrew 查询或操作；本机已有状态应尽量继续展示。
+Cellar 只在用户确认对应计划后修改 npm 全局包、`~/.npmrc`、`~/.nvm`、npm/node-gyp cache 或用户选择项目的 `.nvmrc`。它不写入 `.zshrc` 或 `.zprofile`，不改变 Shell 状态，不调用 `sudo`。拒绝网络请求会影响 npm 更新检查、Node/nvm 安装以及依赖网络的 Homebrew 查询或操作；本机已有状态应尽量继续展示。
 
 ## 功能需求
 
@@ -273,7 +279,7 @@ Cellar 不写入 `~/.npmrc`、`~/.zshrc`、`~/.nvm` 或 `.zprofile`，不改变 
 | NFR-06 | `scripts/` 在 App 开发期间保持冻结 |
 | NFR-07 | View 不直接执行外部命令，Models 不执行 IO |
 | NFR-08 | Homebrew Bridge 只调用已发现的绝对 `brew` URL，参数按数组传递，stdin 为空 |
-| NFR-09 | 同一时间最多执行一个 Homebrew 写操作；写操作期间拒绝重复提交和 App 退出 |
+| NFR-09 | 同一时间最多执行一个包管理写操作；写操作期间拒绝重复提交和 App 退出 |
 
 ## 验收边界
 
@@ -283,4 +289,4 @@ Cellar 不写入 `~/.npmrc`、`~/.zshrc`、`~/.nvm` 或 `.zprofile`，不改变 
 
 ## 后续阶段
 
-以下能力不随本轮 Homebrew 功能实现：安装 Command Line Tools 或 Homebrew、修改 `.zprofile`、cleanup、自动孤儿依赖删除、App 自行清理 Cask 残留、`sudo`、Privileged Helper，以及 Node/Shell 写操作。未来增加这些能力时必须重新定义权限、删除范围、恢复与测试契约，不能从当前 Homebrew 操作权限中推导授权。
+当前仍不包含安装 Command Line Tools 或 Homebrew、修改 `.zprofile`、Homebrew cleanup、自动孤儿依赖删除、App 自行清理 Cask 残留、`sudo`、Privileged Helper 和 Shell 写操作。未来增加这些能力时必须重新定义权限、删除范围、恢复与测试契约，不能从当前包管理权限中推导授权。

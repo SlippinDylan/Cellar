@@ -86,7 +86,7 @@ struct AppRootView: View {
                 }
                 .toolbar {
                     ToolbarItem {
-                        if model.isRefreshing || model.isHomebrewWorking {
+                        if model.isRefreshing || model.isHomebrewWorking || model.isNodeWorking {
                             ProgressView()
                                 .controlSize(.small)
                                 .help("正在执行任务")

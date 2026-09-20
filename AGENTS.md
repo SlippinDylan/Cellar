@@ -6,7 +6,7 @@
 
 Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit，读取 Homebrew、Node/npm/nvm 与 Shell 的本机状态，并为 Homebrew 提供受控的常用管理操作。现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
 
-当前版本只有 Homebrew 模块包含写操作；Node 和 Shell 仍然只读，不修改 registry、Node 版本或 Shell 配置。产品行为见 [产品需求](docs/requirements/product-requirements.md)，当前实现见 [架构文档](docs/architecture/macos-app-architecture.md)，构建和验证见 [开发指南](docs/development.md)。
+当前版本的 Homebrew 和 Node 模块包含经过计划与确认的写操作；Shell 仍然只读。产品行为见 [产品需求](docs/requirements/product-requirements.md)，当前实现见 [架构文档](docs/architecture/macos-app-architecture.md)，构建和验证见 [开发指南](docs/development.md)。
 
 ## 开始工作
 
@@ -39,8 +39,8 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup，不自动删除孤儿依赖，不调用 `sudo` 或 Helper，也不由 App 自行 `rm` Cask 残留。
 - Formula/Cask 卸载必须显式禁止 Homebrew 自动更新和 autoremove。Cask artifact 只用于卸载前展示和执行后报告，不由 App 单独删除。
 - Homebrew 与 Zsh Manager 没有稳定 App JSON 契约；App 不通过管道输入驱动交互菜单，也不解析其菜单文本。Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。
-- Node 只调用 Manager 的 `summary`、`packages`、`config` 和 `outdated` JSON 命令。
-- Node 和 Shell 保持只读；不得接入 npm/nvm/Zsh 写操作或 registry、Shell 配置变更。
+- Node 通过 Manager schema v1 读取状态，并仅在 App 已展示计划且用户确认后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`。
+- Shell 当前保持只读；不得驱动 Zsh Manager 交互菜单或修改 Shell 配置。
 
 ### Node 环境
 

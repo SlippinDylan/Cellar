@@ -109,13 +109,41 @@ actor SystemProbeService {
         )
     }
 
-    func loadNode(snapshot: SnapshotStatus) async throws -> NodeSnapshot {
+    func loadNode(
+        snapshot: SnapshotStatus,
+        preferredNodeVersion: String? = nil
+    ) async throws -> NodeSnapshot {
         guard snapshot.nodeAvailable else {
             throw BridgeError.executableNotFound("node-manager/main.sh")
         }
-        let directory = URL(filePath: snapshot.location, directoryHint: .isDirectory)
-            .appending(path: "node-manager", directoryHint: .isDirectory)
-        return try await nodeClient.loadSnapshot(managerDirectory: directory)
+        return try await nodeClient.loadSnapshot(
+            managerDirectory: nodeManagerDirectory(snapshot),
+            preferredNodeVersion: preferredNodeVersion
+        )
+    }
+
+    func planNode(
+        _ request: NodeActionRequest,
+        snapshot: SnapshotStatus,
+        preferredNodeVersion: String?
+    ) async throws -> NodeActionPlan {
+        try await nodeClient.plan(
+            request,
+            managerDirectory: nodeManagerDirectory(snapshot),
+            preferredNodeVersion: preferredNodeVersion
+        )
+    }
+
+    func executeNode(
+        _ plan: NodeActionPlan,
+        snapshot: SnapshotStatus,
+        preferredNodeVersion: String?
+    ) async throws -> NodeOperationResult {
+        try await nodeClient.execute(
+            plan,
+            managerDirectory: nodeManagerDirectory(snapshot),
+            preferredNodeVersion: preferredNodeVersion
+        )
     }
 
     func terminateAllProcesses() async {
@@ -133,5 +161,10 @@ actor SystemProbeService {
         let client = HomebrewClient(brewURL: executable, runner: runner)
         homebrewClient = client
         return client
+    }
+
+    private func nodeManagerDirectory(_ snapshot: SnapshotStatus) -> URL {
+        URL(filePath: snapshot.location, directoryHint: .isDirectory)
+            .appending(path: "node-manager", directoryHint: .isDirectory)
     }
 }

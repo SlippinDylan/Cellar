@@ -25,6 +25,7 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 - Homebrew Bridge 测试注入假 brew executable，覆盖查询 JSON、搜索文本、计划、精确参数、环境、退出码、部分完成和 post-refresh；测试不得访问网络、Homebrew cache 或真实安装目录。
 - Homebrew mutation 测试必须断言未确认时不启动进程，Formula/Cask 卸载禁止自动更新和 autoremove，Cask artifact 不触发 App 文件删除，Tap 有关联安装项时不能执行移除。
 - Node Bridge 测试在临时目录创建假 `main.sh`，只验证参数、JSON、错误和部分失败。
+- Node mutation 测试必须使用临时 HOME 和假 Manager，断言查询关闭 execute、确认执行才打开单次 write gate、项目写入使用独立 gate，且不访问真实 npm registry、cache、`~/.nvm` 或用户项目。
 - Manager 安装测试注入临时 Application Support 根目录。
 - 进程测试只执行测试自己创建的临时脚本。
 - Hosted tests 通过 `XCTestConfigurationFilePath` 识别测试进程，禁止根视图自动刷新。

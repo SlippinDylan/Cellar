@@ -7,7 +7,7 @@ struct NodeEnvironmentResolver: Sendable {
         self.homeDirectory = homeDirectory
     }
 
-    func environment() -> [String: String] {
+    func environment(preferredNodeVersion: String? = nil) -> [String: String] {
         let nvmDirectory = homeDirectory.appending(path: ".nvm", directoryHint: .isDirectory)
         var searchPaths = [
             "/opt/homebrew/bin",
@@ -19,7 +19,7 @@ struct NodeEnvironmentResolver: Sendable {
             "/sbin"
         ]
 
-        if let nodeBin = resolvedDefaultNodeBin(in: nvmDirectory) {
+        if let nodeBin = resolvedNodeBin(preferredVersion: preferredNodeVersion, in: nvmDirectory) {
             searchPaths.insert(nodeBin.path, at: 0)
         }
 
@@ -40,28 +40,53 @@ struct NodeEnvironmentResolver: Sendable {
         return values
     }
 
-    func resolvedDefaultNodeBin(in nvmDirectory: URL) -> URL? {
-        let versionsDirectory = nvmDirectory.appending(path: "versions/node", directoryHint: .isDirectory)
-        guard let versions = try? FileManager.default.contentsOfDirectory(
-            at: versionsDirectory,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else { return nil }
+    func installations(preferredNodeVersion: String? = nil) -> [NodeInstallation] {
+        let nvmDirectory = homeDirectory.appending(path: ".nvm", directoryHint: .isDirectory)
+        let defaultDirectory = resolvedDefaultNodeBin(in: nvmDirectory)?.deletingLastPathComponent()
+        return installedNodes(in: nvmDirectory).map { item in
+            NodeInstallation(
+                version: item.name,
+                directory: item.url.path,
+                isActive: item.name == preferredNodeVersion
+                    || (preferredNodeVersion == nil && item.url == defaultDirectory),
+                isDefault: item.url == defaultDirectory
+            )
+        }
+    }
 
-        let installed = versions.compactMap { url -> (version: SemanticVersion, url: URL)? in
-            guard let version = SemanticVersion(url.lastPathComponent) else { return nil }
-            let node = url.appending(path: "bin/node")
-            guard FileManager.default.isExecutableFile(atPath: node.path) else { return nil }
-            return (version, url)
-        }.sorted { $0.version > $1.version }
+    func resolvedDefaultNodeBin(in nvmDirectory: URL) -> URL? {
+        let installed = installedNodes(in: nvmDirectory)
 
         guard !installed.isEmpty else { return nil }
         let aliasRoot = nvmDirectory.appending(path: "alias", directoryHint: .isDirectory)
         guard let alias = resolveAlias("default", aliasRoot: aliasRoot) else { return nil }
         let match = installed.first { candidate in
-            return candidate.version.matches(alias)
+            candidate.version.matches(alias)
         }
         return match?.url.appending(path: "bin", directoryHint: .isDirectory)
+    }
+
+    private func resolvedNodeBin(preferredVersion: String?, in nvmDirectory: URL) -> URL? {
+        if let preferredVersion,
+           let match = installedNodes(in: nvmDirectory).first(where: { $0.name == preferredVersion }) {
+            return match.url.appending(path: "bin", directoryHint: .isDirectory)
+        }
+        return resolvedDefaultNodeBin(in: nvmDirectory)
+    }
+
+    private func installedNodes(in nvmDirectory: URL) -> [(name: String, version: SemanticVersion, url: URL)] {
+        let versionsDirectory = nvmDirectory.appending(path: "versions/node", directoryHint: .isDirectory)
+        guard let versions = try? FileManager.default.contentsOfDirectory(
+            at: versionsDirectory,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        return versions.compactMap { url in
+            guard let version = SemanticVersion(url.lastPathComponent),
+                  FileManager.default.isExecutableFile(atPath: url.appending(path: "bin/node").path)
+            else { return nil }
+            return (url.lastPathComponent, version, url)
+        }.sorted { $0.version > $1.version }
     }
 
     private func resolveAlias(_ name: String, aliasRoot: URL, visited: Set<String> = []) -> String? {

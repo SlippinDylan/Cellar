@@ -10,7 +10,7 @@
 
 Cellar 是单进程、非沙盒的原生 macOS 前台应用。它读取 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 状态，并提供受控的 Homebrew 管理操作。它不包含后台守护进程、菜单栏入口或 Privileged Helper。
 
-App 使用 SwiftUI 构建窗口和页面，Foundation 负责文件与进程边界，AppKit delegate 处理退出请求。Node 的结构化数据来自随 App 打包的 Manager 快照；Homebrew 由 Bridge 直接调用绝对 `brew` 并解析其机器可读输出；Shell 使用 Swift 组织只读探测。
+App 使用 SwiftUI 构建窗口和页面，Foundation 负责文件与进程边界，AppKit delegate 处理退出请求。Node 的结构化查询和写操作来自随 App 打包的 Manager 快照；Homebrew 由 Bridge 直接调用绝对 `brew` 并解析其机器可读输出；Shell 使用 Swift 组织只读探测。
 
 ## 仓库与组件
 
@@ -54,7 +54,7 @@ Features → Services → Bridge → Manager / 系统 CLI
 
 首次读取期间，各页面复用 `PageLoadingView` 占满详情区域并将 `ProgressView` 水平、垂直居中。失败空态同样占满详情区域，不依赖固定高度模拟居中。
 
-左侧 Sidebar 使用 `DisclosureGroup` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。Homebrew 的概览、已安装、可升级、发现、诊断和配置承载对应功能；Node 与 Shell 尚未实现的二级页面继续复用 `FeaturePlaceholderView`，不创建命令入口。
+左侧 Sidebar 使用 `DisclosureGroup` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。Homebrew 与 Node 的二级页面承载对应功能；Shell 尚未实现的二级页面继续使用空态，不创建命令入口。
 
 左侧导航不使用会自行管理 AppKit scroller 的 SwiftUI `List`。它由 `ScrollView`、`LazyVStack`、`DisclosureGroup` 和自定义选择行组成，并通过 `scrollIndicators(.hidden)` 隐藏直接 ScrollView 的 indicator。滚轮和触控板滚动、分类展开、缩进与选择高亮仍然可用。
 
@@ -109,7 +109,7 @@ Homebrew 写操作与全局刷新共享活动任务登记；同一时间只允�
 
 安装过程先验证三套入口文件，再复制到同级随机 staging 目录，最后移动到版本目录。已有完整版本直接复用；缺少入口文件的版本目录会被删除并重新安装。安装后再次验证入口可读性。
 
-Bundle Resources 不产生运行时写入。Node Manager 的 `.runtime` 位于 Application Support 工作副本内；v1 调用的只读命令不会执行 JSON write actions。
+Bundle Resources 不产生运行时写入。Node Manager 的 `.runtime` 位于 Application Support 工作副本内；查询环境关闭 JSON execute，确认后的 mutation 只在单次执行环境中打开对应开关。
 
 当前完整性检查验证入口文件存在和可读，不在运行时计算整套快照的哈希。仓库和发布验收通过逐文件比较保证来源一致。
 
@@ -126,11 +126,11 @@ Bundle Resources 不产生运行时写入。Node Manager 的 `.runtime` 位于 A
 
 stdout 与 stderr 在独立任务中读取，进程结束后返回 `ProcessResult` 和退出码。两路输出默认分别最多保留 8 MiB，超过上限后继续 drain pipe 并在结果中标记截断。请求可以设置 deadline；超时或调用任务取消时向对应进程发送 terminate。App 代码不使用 `bash -c`，Node Manager 通过固定 `/bin/bash` 加脚本路径和参数数组启动。
 
-Homebrew 查询使用 5 分钟 deadline，写操作使用 30 分钟 deadline。当前 terminate 仍没有强制终止升级或独立进程组保证；子进程忽略终止信号时仍可能延迟收尾。Node 与 Shell 请求尚未配置 deadline，界面也没有用户取消入口。
+Homebrew 与 Node 查询使用 5 分钟 deadline，写操作使用 30 分钟 deadline。当前 terminate 仍没有强制终止升级或独立进程组保证；子进程忽略终止信号时仍可能延迟收尾。Shell 请求尚未配置 deadline，界面也没有用户取消入口。
 
 ## 受控环境与 Node 选择
 
-`NodeEnvironmentResolver` 不继承用户完整 Shell 环境。它构造包含 HOME、PATH、TMPDIR、locale、NVM_DIR、USER 和 LOGNAME 的明确环境，并把 `NODE_MANAGER_ALLOW_JSON_EXECUTE` 固定为 `0`。
+`NodeEnvironmentResolver` 不继承用户完整 Shell 环境。它构造包含 HOME、PATH、TMPDIR、locale、NVM_DIR、USER 和 LOGNAME 的明确环境。查询固定关闭 JSON execute；确认执行时由 `NodeManagerClient` 为单次子进程打开，项目写入使用额外独立开关。
 
 PATH 顺序：
 
@@ -161,7 +161,9 @@ main.sh --json outdated
 - `schemaVersion == 1`；
 - `ok == true` 且 `data` 存在。
 
-前三项核心命令失败会终止 Node 页面加载。`outdated` 单独捕获错误；失败时保留核心数据，并把错误写入 `NodeSnapshot.outdatedError`。
+前三项核心命令失败会终止 Node 页面加载。`outdated`、Manager status 和 logs 分别捕获错误；失败时保留核心数据并显示独立错误。
+
+Mutation 使用 Manager 已有的 `plan` 与 `execute` 协议。App 保存结构化计划、五分钟有效期和当前会话选择的 Node 版本；确认后执行，结束后重新读取 summary、packages、config、outdated、已安装版本和维护状态。`node-use` 的进程内结果只作为校验，App 通过受控 PATH 保存本次会话选择，不把它描述成终端状态修改。
 
 Node Manager 入口会加载自己的模块，但 App 不直接调用 `lib/*.sh`，也不驱动交互菜单。
 
@@ -236,7 +238,7 @@ Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 
 ## 稳定不变量
 
-- 只有用户确认的 Homebrew 操作可以修改包和 Tap；Node、registry、Node 版本与 Shell 配置保持只读。
+- 只有用户确认的 Homebrew 或 Node 操作可以修改对应包管理状态；Shell 配置保持只读。
 - 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup、自动孤儿清理、`sudo` 或 App 自行残留删除。
 - Homebrew mutation 必须计划、确认、单操作锁定、执行并 post-refresh；卸载禁止隐式 update 与 autoremove。
 - 不把某个 Node 的 npm 全局包描述为整台机器唯一集合。
@@ -249,7 +251,7 @@ Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 
 ## 当前已知限制
 
-- Homebrew 已配置 deadline 和输出上限；Node 与 Shell 尚未配置 deadline。
+- Homebrew 与 Node 已配置 deadline 和输出上限；Shell 尚未配置 deadline。
 - 界面没有用户取消入口；活动任务期间退出被拒绝。
 - 自定义 nvm 目录和其他 Node 版本管理器未支持。
 - Homebrew 长命令的取消、deadline、强制终止和子进程组策略仍受通用 `ProcessRunner` 限制。

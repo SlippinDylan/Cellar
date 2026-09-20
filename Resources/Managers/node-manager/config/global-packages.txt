@@ -1,0 +1,5 @@
+# One npm global package spec per line.
+# Supported examples:
+# eslint
+# @scope/package
+# package@1.2.3

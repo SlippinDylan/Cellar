@@ -4,9 +4,9 @@
 
 ## 项目概述
 
-Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境查看工具。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit，读取 Homebrew、Node/npm/nvm 与 Shell 的本机状态。现有 Shell Manager 以只读快照随 App 打包。
+Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit，读取 Homebrew、Node/npm/nvm 与 Shell 的本机状态，并为 Homebrew 提供受控的常用管理操作。现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
 
-v1 是只读版本，不安装、更新、卸载包，也不修改 registry、Shell 配置或 Homebrew 状态。产品行为见 [产品需求](docs/requirements/product-requirements.md)，当前实现见 [架构文档](docs/architecture/macos-app-architecture.md)，构建和验证见 [开发指南](docs/development.md)。
+当前版本只有 Homebrew 模块包含写操作；Node 和 Shell 仍然只读，不修改 registry、Node 版本或 Shell 配置。产品行为见 [产品需求](docs/requirements/product-requirements.md)，当前实现见 [架构文档](docs/architecture/macos-app-architecture.md)，构建和验证见 [开发指南](docs/development.md)。
 
 ## 开始工作
 
@@ -32,11 +32,15 @@ v1 是只读版本，不安装、更新、卸载包，也不修改 registry、Sh
 
 ## 不可破坏的边界
 
-### 只读 v1
+### 能力边界
 
-- App 当前只读取状态。不得在 UI 中接入 install、update、uninstall、cleanup、registry 写入或 nvm 状态变更。
-- Homebrew 与 Zsh Manager 没有稳定 App JSON 契约；不要通过管道输入驱动交互菜单，也不要解析人类可读菜单文本。
+- Homebrew 可以查询概览、已安装项、可升级项、搜索、诊断、配置和 Tap；可以安装 Formula/Cask、执行 `brew update`、选择升级、卸载单个 Formula、以 standard 或 zap 模式卸载单个 Cask，以及添加或安全移除 Tap。
+- Homebrew 写操作必须先生成明确计划并由用户确认，执行结束后重新读取真实状态。写操作不是事务，界面和操作记录必须保留部分完成结果。
+- 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup，不自动删除孤儿依赖，不调用 `sudo` 或 Helper，也不由 App 自行 `rm` Cask 残留。
+- Formula/Cask 卸载必须显式禁止 Homebrew 自动更新和 autoremove。Cask artifact 只用于卸载前展示和执行后报告，不由 App 单独删除。
+- Homebrew 与 Zsh Manager 没有稳定 App JSON 契约；App 不通过管道输入驱动交互菜单，也不解析其菜单文本。Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。
 - Node 只调用 Manager 的 `summary`、`packages`、`config` 和 `outdated` JSON 命令。
+- Node 和 Shell 保持只读；不得接入 npm/nvm/Zsh 写操作或 registry、Shell 配置变更。
 
 ### Node 环境
 
@@ -92,10 +96,9 @@ git diff -- scripts
 ## 文档与清理
 
 - README 只记录用户可见能力、限制、数据位置、网络行为和源码构建入口。
-- 架构文档描述当前实现和已知风险；产品需求描述稳定行为；开发指南描述命令、测试、构建和清理；研究文档保存外部依据。
-- 仓库内 `build/`、`DerivedData/`、`.build/` 和 `.xcresult` 只有在用户明确要求时才能清理。先确认归属并统计空间。
-- `~/Library/Application Support/Cellar/` 是 App 运行数据，不是普通构建缓存。不得在开发清理中删除。
-- 不删除源码、Git 数据、Xcode 工程、Manager 源文件、快照、用户配置或用途不明的系统文件。
+- 架构文档描述当前实现和已知风险；产品需求描述稳定行为；开发指南描述命令、测试和构建；研究文档保存外部依据。
+- 只有用户明确要求时才执行清理；执行前必须读取并遵循 [开发产物清理规则](docs/development-cleanup.md)。
+- 不删除源码、Git 数据、工程配置、Manager 源文件和快照、用户环境、Agent 对话和状态，或用途不明的文件。
 
 ## 文档导航与权威顺序
 
@@ -103,7 +106,8 @@ git diff -- scripts
 - [v1 MVP 范围](docs/requirements/v1-mvp.md)：当前阶段范围与非目标。
 - [总体架构](docs/architecture/macos-app-architecture.md)：当前组件、数据流、快照与进程边界。
 - [平台支持](docs/requirements/platform-support.md)：macOS、arm64 和构建门禁。
-- [开发指南](docs/development.md)：环境、测试、构建、产物检查和安全清理。
+- [开发指南](docs/development.md)：环境、测试、构建和产物检查。
+- [开发产物清理规则](docs/development-cleanup.md)：清理语义、范围、安全边界与结果报告。
 - [研究依据](docs/research.md)：Apple、npm 与项目推论。
 - [人工验收清单](docs/manual-smoke-checklist.md)：真实机器和 UI 检查。
 

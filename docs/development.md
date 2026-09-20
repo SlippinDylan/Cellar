@@ -13,7 +13,7 @@
 - Bundle identifier：`com.dylanwang.Cellar`。
 - App Sandbox：关闭。
 
-App 没有第三方 Swift Package、Makefile、SwiftLint 或 SwiftFormat。Node.js 和 npm 是被探测的用户工具，不是构建 Cellar 的依赖。
+App 没有第三方 Swift Package、Makefile、SwiftLint 或 SwiftFormat。Homebrew、Node.js 和 npm 是运行时读取或管理的用户工具，不是构建 Cellar 的依赖。
 
 Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用前先读取 session defaults，再设置工程、scheme、平台、架构和仓库内 DerivedData 路径。
 
@@ -22,6 +22,8 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 自动测试不能读取或修改用户真实的开发环境：
 
 - 不运行用户安装的 brew、node、npm、nvm 或 Zsh Manager。
+- Homebrew Bridge 测试注入假 brew executable，覆盖查询 JSON、搜索文本、计划、精确参数、环境、退出码、部分完成和 post-refresh；测试不得访问网络、Homebrew cache 或真实安装目录。
+- Homebrew mutation 测试必须断言未确认时不启动进程，Formula/Cask 卸载禁止自动更新和 autoremove，Cask artifact 不触发 App 文件删除，Tap 有关联安装项时不能执行移除。
 - Node Bridge 测试在临时目录创建假 `main.sh`，只验证参数、JSON、错误和部分失败。
 - Manager 安装测试注入临时 Application Support 根目录。
 - 进程测试只执行测试自己创建的临时脚本。
@@ -107,10 +109,11 @@ xcodebuild build \
 | Models 或纯解析规则 | 相关测试 suite |
 | Bridge、环境解析、Process 或 Manager 契约 | 相关测试；跨边界时运行完整测试 |
 | Services、生命周期或 Features | 相关测试和 Debug 构建 |
+| Homebrew 查询、计划或写操作 | Homebrew 相关测试、完整测试和 Debug 构建；真实操作仅进入人工验收 |
 | Xcode 工程、资源或平台设置 | 完整测试、Debug 与 Release 构建、产物检查 |
 | 真实 Homebrew、Node/nvm、窗口和退出行为 | 自动验证后执行相关人工清单 |
 
-UI 改动不主动启动 App 或截图。完成编译和相关测试后交给用户视觉验收；用户明确要求运行或提供截图时再检查实际界面。
+UI 改动不主动启动 App 或截图。完成编译和相关测试后交给用户视觉验收；用户明确要求运行或提供截图时再检查实际界面。普通自动验证不得为“顺便验收”而调用真实 Homebrew 写操作。
 
 ## Release 产物检查
 
@@ -140,7 +143,7 @@ Node 快照遵循 `scripts/node-manager/app-bundle-manifest.txt`。Homebrew 快�
 2. 记录来源 Git commit。
 3. 按白名单复制，不带 `.DS_Store`、`.runtime`、测试、日志或临时文件。
 4. 逐文件比较来源和副本。
-5. 运行 Manager 安装与 Node JSON 契约测试。
+5. 运行 Manager 安装与 Node JSON 契约测试；Homebrew App 功能不依赖交互式 Manager 快照。
 
 快照业务逻辑有问题时修复来源并重新生成，不能只修补 `Resources/Managers/`。
 
@@ -158,30 +161,9 @@ Node 快照遵循 `scripts/node-manager/app-bundle-manifest.txt`。Homebrew 快�
 
 ## 开发产物与安全清理
 
-使用本文命令时，仓库内会生成：
+清理请求语义、仓库内外范围、Cellar 归属判定、用户开发环境保护、Agent 对话保护和空间报告要求统一见 [Cellar 开发产物清理规则](development-cleanup.md)。
 
-```text
-build/DerivedData-Tests/
-build/DerivedData-Debug/
-build/DerivedData-Release/
-```
-
-其他可再生产物包括根目录 `DerivedData/`、`.build/`、`.swiftpm/`、`*.xcresult`、`*.app`、`*.dSYM` 和 `*.xcarchive`。只有用户明确要求清理时才删除。
-
-清理步骤：
-
-1. 解析目标的绝对路径，确认属于 Cellar 或本次构建。
-2. 用 `du` 统计各目标及总占用。
-3. 只删除可重新生成的构建或测试产物。
-4. 删除后重新扫描并报告实际结果。
-
-以下内容不是开发缓存：
-
-- `Cellar.xcodeproj/`、源码、测试、文档和 `.git/`。
-- `scripts/` 和 `Resources/Managers/`。
-- `~/Library/Application Support/Cellar/` 中的 Manager 运行副本和未来用户状态。
-- 用户的 `~/.nvm`、npm cache、npm 配置、Homebrew 安装和 Shell 配置。
-- 无法可靠归属于 Cellar 的 `/tmp`、`/private/var/folders` 或 Xcode 全局 DerivedData。
+本文构建命令生成 `build/DerivedData-Tests/`、`build/DerivedData-Debug/` 和 `build/DerivedData-Release/`；实际输出仍以执行的命令和脚本参数为准。
 
 ## 完成检查
 

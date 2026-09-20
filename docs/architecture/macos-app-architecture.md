@@ -2,15 +2,15 @@
 
 状态：当前实现
 
-更新日期：2026-09-19
+更新日期：2026-09-20
 
 本文描述 Cellar v1 的组件、数据流和长期边界。页面行为见[产品需求](../requirements/product-requirements.md)，构建和测试见[开发指南](../development.md)，平台依据见[研究文档](../research.md)。
 
 ## 系统定位
 
-Cellar 是单进程、非沙盒的原生 macOS 前台应用。它读取 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 状态，不包含后台守护进程、菜单栏入口或 Privileged Helper。
+Cellar 是单进程、非沙盒的原生 macOS 前台应用。它读取 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 状态，并提供受控的 Homebrew 管理操作。它不包含后台守护进程、菜单栏入口或 Privileged Helper。
 
-App 使用 SwiftUI 构建窗口和页面，Foundation 负责文件与进程边界，AppKit delegate 处理退出请求。Node 的结构化数据来自随 App 打包的 Manager 快照；Homebrew 与 Shell 使用 Swift 组织只读探测。
+App 使用 SwiftUI 构建窗口和页面，Foundation 负责文件与进程边界，AppKit delegate 处理退出请求。Node 的结构化数据来自随 App 打包的 Manager 快照；Homebrew 由 Bridge 直接调用绝对 `brew` 并解析其机器可读输出；Shell 使用 Swift 组织只读探测。
 
 ## 仓库与组件
 
@@ -50,6 +50,14 @@ Features → Services → Bridge → Manager / 系统 CLI
 
 `CellarApp` 使用 `WindowGroup` 创建普通前台窗口，并通过 `defaultSize(width:height:)` 设置 1080 × 720 点的首次默认尺寸。App 不设置 `LSUIElement`，也不声明 `MenuBarExtra`。
 
+`AppRootView` 统一为当前一级页面设置 `navigationTitle` 和 `navigationSubtitle`，并在 titlebar 下方绘制水平分割线。概览的最后刷新时间附在副标题后。各页面不再重复绘制内容区大标题，内容使用统一的 24pt 边距；概览使用两列状态卡片，模块页的横向状态总览卡占满内容宽度。
+
+首次读取期间，各页面复用 `PageLoadingView` 占满详情区域并将 `ProgressView` 水平、垂直居中。失败空态同样占满详情区域，不依赖固定高度模拟居中。
+
+左侧 Sidebar 使用 `DisclosureGroup` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。Homebrew 的概览、已安装、可升级、发现、诊断和配置承载对应功能；Node 与 Shell 尚未实现的二级页面继续复用 `FeaturePlaceholderView`，不创建命令入口。
+
+左侧导航不使用会自行管理 AppKit scroller 的 SwiftUI `List`。它由 `ScrollView`、`LazyVStack`、`DisclosureGroup` 和自定义选择行组成，并通过 `scrollIndicators(.hidden)` 隐藏直接 ScrollView 的 indicator。滚轮和触控板滚动、分类展开、缩进与选择高亮仍然可用。
+
 `AppDelegate` 通过 `NSApplicationDelegateAdaptor` 接入 AppKit：
 
 - 关闭最后一个窗口会请求终止应用。
@@ -60,7 +68,7 @@ Features → Services → Bridge → Manager / 系统 CLI
 
 ## App 状态与刷新
 
-`AppModel` 是 `@MainActor` 的页面状态所有者。它持有当前页面、各模块状态、错误、刷新时间、操作记录和刷新标志。
+`AppModel` 是 `@MainActor` 的页面状态所有者。它持有当前页面、各模块状态、错误、刷新时间、操作记录、刷新标志和 Homebrew 操作状态。
 
 正常启动时 `AppRootView.task` 发起一次刷新。刷新流程：
 
@@ -80,7 +88,9 @@ OperationStore.end
 
 `isRefreshing` 保证同一 `AppModel` 不会同时运行两次刷新。Hosted XCTest 通过 `XCTestConfigurationFilePath` 跳过启动自动刷新，避免测试访问真实开发环境。
 
-当前操作记录只在内存中存在。没有持久化、独立任务队列、进度百分比或用户取消入口。
+Homebrew 写操作与全局刷新共享活动任务登记；同一时间只允许一个 Homebrew mutation，执行期间禁用重复提交并应用既有退出保护。操作开始前由 Bridge 生成计划，View 只负责展示计划和发送确认/取消意图。执行结束后无论成功或失败都 post-refresh 受影响状态。
+
+当前操作记录只在内存中存在。没有持久化、独立任务队列或进度百分比。Homebrew 命令不是事务；执行结果记录退出码、stdout、stderr 和 post-refresh 错误，状态层不能把非零退出简单解释成“什么都没发生”。
 
 ## Manager 快照
 
@@ -114,9 +124,9 @@ Bundle Resources 不产生运行时写入。Node Manager 的 `.runtime` 位于 A
 - 空 stdin；
 - 分离的 stdout 和 stderr pipe。
 
-stdout 与 stderr 在独立任务中读取，进程结束后返回 `ProcessResult` 和退出码。调用任务取消时向对应进程发送 terminate。App 代码不使用 `bash -c`，Node Manager 通过固定 `/bin/bash` 加脚本路径和参数数组启动。
+stdout 与 stderr 在独立任务中读取，进程结束后返回 `ProcessResult` 和退出码。两路输出默认分别最多保留 8 MiB，超过上限后继续 drain pipe 并在结果中标记截断。请求可以设置 deadline；超时或调用任务取消时向对应进程发送 terminate。App 代码不使用 `bash -c`，Node Manager 通过固定 `/bin/bash` 加脚本路径和参数数组启动。
 
-当前 runner 没有 deadline、强制终止升级或输出大小上限。长时间无响应的外部命令可能让刷新持续较久，并在此期间阻止退出。这是当前已知风险。
+Homebrew 查询使用 5 分钟 deadline，写操作使用 30 分钟 deadline。当前 terminate 仍没有强制终止升级或独立进程组保证；子进程忽略终止信号时仍可能延迟收尾。Node 与 Shell 请求尚未配置 deadline，界面也没有用户取消入口。
 
 ## 受控环境与 Node 选择
 
@@ -155,25 +165,50 @@ main.sh --json outdated
 
 Node Manager 入口会加载自己的模块，但 App 不直接调用 `lib/*.sh`，也不驱动交互菜单。
 
-## Homebrew 与 Shell
+## Homebrew Bridge
 
-Homebrew 探测在受控 PATH 中寻找可执行的 `brew`。找不到时返回“未安装”；找到后执行 `brew --version` 并读取首行。v1 不调用 Homebrew Manager 的交互入口。
+Homebrew 探测在受控 PATH 中寻找可执行的 `brew`。找不到时返回“未安装”；找到后固定绝对 executable URL，同一轮查询和操作不再次依赖 PATH 查找。`HomebrewClient` 使用参数数组、受控环境、空 stdin 与分离的 stdout/stderr 调用 Homebrew，不调用 Homebrew Manager 的交互入口。
+
+查询按页面职责拆分：
+
+- 概览读取版本、路径、prefix、repository、cache、Cellar 和计数。
+- 已安装与详情优先解析 `brew info --json=v2` 的结构化 Formula/Cask 数据。
+- 可升级解析 Homebrew 的 JSON 输出，并保持 Formula/Cask 身份类型。
+- 发现分别运行 Formula/Cask 搜索，再按需加载单项 JSON 详情。
+- 诊断由用户主动运行；保留诊断退出状态与输出。
+- 配置读取 Homebrew 配置与 Tap，Tap 身份保持完整名称。
+
+Homebrew mutation 使用 `HomebrewActionPlan` 表达动作、目标、包类型、Cask 卸载模式、预计命令语义、artifact 和 Tap 关联阻塞项。通用状态流为：
+
+```text
+query → plan → confirm → execute → result → post-refresh
+```
+
+- 安装与升级始终携带 Formula/Cask 类型，避免同名项目歧义。
+- `brew update` 是独立计划，不作为其他动作的隐式前置步骤。
+- Formula 卸载只接受一个目标，并显式禁止自动更新和 autoremove。
+- Cask standard 与 zap 是两个独立计划；artifact 在确认前展示。Bridge 只检查 Homebrew 明确声明且不含 glob 的绝对路径、`~/` 路径和明确 App bundle，统计现存路径的占用空间；执行后复查并报告仍存在的路径，App 不调用 `rm` 补删文件，也不做 bundle-id 或名称模糊扫描。
+- 移除 Tap 前复验该 Tap 关联的已安装 Formula/Cask；存在关联项时拒绝生成可执行计划。
+
+计划确认不是事务边界。Homebrew 可能在非零退出前已经修改依赖、安装目录或 cache，因此结果模型同时保存命令输出和 post-refresh 快照。取消确认会丢弃计划，再次操作时重新生成。
+
+## Shell
 
 Shell 探测固定执行 `/bin/zsh --version`，再通过 `FileManager` 检查 `~/.oh-my-zsh` 是否是目录。它不读取 `.zshrc`，也不调用 Zsh Manager。
 
-两页仍显示相应 Manager 快照是否存在，用于说明 App Bundle 和运行副本的准备状态，不代表该交互 Manager 已接入 UI。
+Homebrew 与 Shell 页面仍可显示相应 Manager 快照是否存在，用于说明 App Bundle 和运行副本的准备状态，不代表交互 Manager 已接入 UI。
 
 ## 数据、网络与权限
 
-Cellar 不使用 App Sandbox。v1 不要求管理员权限，不调用 `sudo`，也没有 Helper 或 XPC。
+Cellar 不使用 App Sandbox。Homebrew 功能不调用 `sudo`，也没有 Helper 或 XPC；权限不足时报告错误，不扩大为 App 自行删除或提权操作。
 
-持久写入只有版本化 Manager 运行副本：
+Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 
 ```text
 ~/Library/Application Support/Cellar/Managers/<version>/
 ```
 
-操作记录、页面状态和刷新时间不持久化。App 没有自己的账户、遥测或服务端。`npm outdated` 会访问用户当前配置的 npm registry，并使用 npm 自身的 cache 行为；其他当前探测是本机读取。
+操作记录、页面状态和刷新时间不持久化。App 没有自己的账户、遥测或服务端。`npm outdated` 会访问用户当前配置的 npm registry，并使用 npm 自身的 cache 行为。Homebrew 的搜索、详情、过期检查、Tap、update、安装和升级可能访问 Homebrew 服务或第三方 Tap，并写入 Homebrew 自己管理的 API、下载 cache 和安装状态。
 
 ## 测试边界
 
@@ -186,6 +221,10 @@ Cellar 不使用 App Sandbox。v1 不要求管理员权限，不调用 `sudo`，
 - Node 部分失败；
 - 快照安装到临时 Application Support；
 - 活动任务对应的退出策略。
+- Homebrew JSON 解码、搜索分型和查询部分失败；
+- Homebrew 计划验证、确认边界、精确参数和受控环境；
+- 卸载禁止自动更新/autoremove、Tap 关联阻塞和 mutation 后刷新；
+- 使用假 brew 模拟成功、失败和部分完成，不访问用户真实 Homebrew 或网络。
 
 测试通过依赖注入、临时目录和假 Manager 隔离副作用，不读取用户真实包管理状态。真实 Finder 启动环境、brew/npm/nvm 组合、registry 网络和窗口交互由人工清单验证。
 
@@ -197,7 +236,9 @@ Cellar 不使用 App Sandbox。v1 不要求管理员权限，不调用 `sudo`，
 
 ## 稳定不变量
 
-- v1 不修改包、registry、Node 版本、Shell 配置或 Homebrew 状态。
+- 只有用户确认的 Homebrew 操作可以修改包和 Tap；Node、registry、Node 版本与 Shell 配置保持只读。
+- 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup、自动孤儿清理、`sudo` 或 App 自行残留删除。
+- Homebrew mutation 必须计划、确认、单操作锁定、执行并 post-refresh；卸载禁止隐式 update 与 autoremove。
 - 不把某个 Node 的 npm 全局包描述为整台机器唯一集合。
 - 不因更新检查失败丢弃已经读取的 Node 数据。
 - 不加载用户 `.zshrc`，不猜测无法解析的 nvm 默认版本。
@@ -208,10 +249,12 @@ Cellar 不使用 App Sandbox。v1 不要求管理员权限，不调用 `sudo`，
 
 ## 当前已知限制
 
-- 外部进程没有 timeout 和输出上限。
-- 刷新没有用户取消入口；活动任务期间退出被拒绝。
+- Homebrew 已配置 deadline 和输出上限；Node 与 Shell 尚未配置 deadline。
+- 界面没有用户取消入口；活动任务期间退出被拒绝。
 - 自定义 nvm 目录和其他 Node 版本管理器未支持。
-- Homebrew 与 Shell 只有只读探测，交互 Manager 尚未接入。
+- Homebrew 长命令的取消、deadline、强制终止和子进程组策略仍受通用 `ProcessRunner` 限制。
+- Homebrew 写操作不是事务，部分完成只能通过命令结果与 post-refresh 准确呈现，不能自动回滚。
+- Homebrew 与 Zsh 交互 Manager 均未接入 App；Homebrew 功能由原生 Bridge 直接调用 brew。
 - 快照运行时验证入口完整性，不验证全部文件摘要。
 - UI 文本当前直接写在 Swift 源码中，没有 String Catalog 和多语言支持。
 - 普通 `WindowGroup`、最后窗口关闭和任务期间退出的组合仍需真实窗口验收。

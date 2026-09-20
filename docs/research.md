@@ -1,6 +1,6 @@
 # Cellar 研究依据
 
-更新日期：2026-09-19
+更新日期：2026-09-20
 
 本文保存会影响 Cellar 架构和产品承诺的外部依据。实现事实以代码和测试为准；本文件区分官方文档、源码证据和项目推论，避免把尚未人工验证的行为写成平台保证。
 
@@ -10,6 +10,7 @@
 |---|---|
 | Apple 官方 | Apple Developer Documentation、技术说明或系统发布说明直接描述 |
 | npm 官方 | npm CLI 官方文档或 npm/cli 源码直接描述 |
+| Homebrew 官方 | Homebrew 官方文档、manpage 或 brew 源码直接描述 |
 | 本机验证 | 在当前 Xcode、SDK 或工具版本上读取和执行过 |
 | 项目推论 | 根据官方 API 与当前实现得出的设计结论，仍可能需要真实系统验证 |
 
@@ -22,6 +23,13 @@
 | `applicationShouldTerminate(_:)` 可以允许、取消或延迟退出 | Apple 官方 | [applicationShouldTerminate(_:)](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/applicationshouldterminate(_:)) |
 | 关闭最后一个窗口后返回 `true` 会继续进入终止确认 | Apple 官方 | [applicationShouldTerminateAfterLastWindowClosed(_:)](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/applicationshouldterminateafterlastwindowclosed(_:)) |
 | `NavigationSplitView` 适合作为两栏根导航，前导选择控制详情页 | Apple 官方 | [NavigationSplitView](https://developer.apple.com/documentation/swiftui/navigationsplitview) |
+| macOS 会把 `navigationSubtitle` 与导航标题一起显示在 titlebar | Apple 官方 | [navigationSubtitle(_:)](https://developer.apple.com/documentation/swiftui/view/navigationsubtitle(_:)-262n7) |
+| `Divider` 在非 Stack 环境中水平延伸，可分隔 titlebar 与详情内容 | Apple 官方 | [Divider](https://developer.apple.com/documentation/swiftui/divider) |
+| `GroupBox` 用于视觉上归组相关内容，弹性 frame 可以采用父级提供的完整宽度 | Apple 官方 | [GroupBox](https://developer.apple.com/documentation/swiftui/groupbox)、[frame](https://developer.apple.com/documentation/swiftui/view/frame(minwidth:idealwidth:maxwidth:minheight:idealheight:maxheight:alignment:)) |
+| 内容较多时可以用 disclosure control 组织 Sidebar 层级；Sidebar 通常不应超过两级 | Apple 官方 | [Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)、[DisclosureGroup](https://developer.apple.com/documentation/swiftui/disclosuregroup) |
+| `scrollIndicators(.hidden)` 可以隐藏直接 `ScrollView` 的滚动指示器，同时保留滚动行为 | Apple 官方 | [scrollIndicators(_:axes:)](https://developer.apple.com/documentation/swiftui/view/scrollindicators(_:axes:)) |
+| `searchable` 为集合界面提供平台一致的搜索入口；搜索词仍应由 App 在边界校验后交给数据层 | Apple 官方与项目推论 | [Adding a search interface to your app](https://developer.apple.com/documentation/swiftui/adding-a-search-interface-to-your-app) |
+| `confirmationDialog` 用于呈现与当前动作相关的一组选择；不可逆 Homebrew 动作仍需在内容中明确目标和影响 | Apple 官方与项目推论 | [confirmationDialog(_:isPresented:titleVisibility:actions:message:)](https://developer.apple.com/documentation/swiftui/view/confirmationdialog(_:ispresented:titlevisibility:actions:message:)) |
 | Cellar 使用 1080 × 720 默认尺寸，同时允许系统窗口调整和恢复 | 项目推论 | 基于 `defaultSize` 语义和已确认产品要求 |
 | 活动任务期间取消退出可以阻止 `Command-Q`，但窗口关闭与无窗口持续任务的真实组合仍需人工检查 | 项目推论 | AppKit 回调顺序与当前 `WindowGroup` 实现 |
 
@@ -38,6 +46,25 @@
 | Bundle Resources 保持只读，Manager 在 Application Support 的版本目录运行 | 项目推论 | 签名资源完整性和可写运行状态需要分离 |
 
 当前 `ProcessRunner` 使用明确 executable、参数、环境、空 stdin 和分离 pipe。Apple 文档也说明 `terminate()` 不是强制终止保证，因此 deadline、升级到强制终止和子进程组策略仍需要单独设计，不能用现有取消路径冒充完整超时支持。
+
+## Homebrew 查询与写操作
+
+本轮以 Homebrew 官方 manpage 和环境变量文档为命令契约来源。App 不把既有交互式 Homebrew Manager 的菜单输出视为 API。
+
+| 结论 | 分类 | 依据 |
+|---|---|---|
+| `brew info --json=v2` 提供 Formula/Cask 的机器可读信息，`--installed` 可限制为已安装项 | Homebrew 官方 | [brew info](https://docs.brew.sh/Manpage#info-options-formulacask-) |
+| `brew outdated --json=v2` 提供可升级 Formula/Cask 的 JSON 数据，适合保持两种包类型与版本信息 | Homebrew 官方 | [brew outdated](https://docs.brew.sh/Manpage#outdated-options-formulacask-) |
+| `brew search --formula` 与 `--cask` 可以显式限定搜索类型；查询可以按子字符串或正则解释，因此 App 必须把用户输入作为单个参数传递 | Homebrew 官方 | [brew search](https://docs.brew.sh/Manpage#search-s-options-textregex-) |
+| `brew config`、`--prefix`、`--repository`、`--cache` 分别暴露 Homebrew 配置和关键路径 | Homebrew 官方 | [brew config 与全局命令](https://docs.brew.sh/Manpage) |
+| `brew doctor` 用于检查潜在系统问题；非零或警告输出是诊断结果，不应被 UI 当作空数据或无问题 | Homebrew 官方 | [brew doctor](https://docs.brew.sh/Manpage#doctor-options-diagnostic_check-) |
+| `brew install`、`upgrade` 与 `uninstall` 支持 `--formula`/`--cask` 消除同名歧义；Cask `uninstall --zap` 还会移除其关联文件 | Homebrew 官方 | [brew install](https://docs.brew.sh/Manpage#install-options-formulacask-), [brew upgrade](https://docs.brew.sh/Manpage#upgrade-options-outdated_formulacask-), [brew uninstall](https://docs.brew.sh/Manpage#uninstall-remove-rm-options-installed_formulacask-) |
+| `brew update` 更新 Homebrew 与 Tap 元数据，应作为用户明确触发的独立 mutation，而不是查看或卸载的隐式步骤 | Homebrew 官方与项目决策 | [brew update](https://docs.brew.sh/Manpage#update-up-options) |
+| `brew tap` 添加仓库，`brew untap` 移除 Tap；Cellar 在 untap 前额外检查关联安装项并拒绝危险移除 | Homebrew 官方与项目决策 | [brew tap/untap](https://docs.brew.sh/Manpage#tap-options-userrepo-url) |
+| `HOMEBREW_NO_AUTO_UPDATE` 禁止 install/upgrade/tap 等命令前自动更新，`HOMEBREW_NO_AUTOREMOVE` 禁止 cleanup/uninstall 自动移除未使用的依赖 Formula | Homebrew 官方 | [Homebrew environment variables](https://docs.brew.sh/Manpage#environment) |
+| Homebrew 默认使用 API 安装时会读取并缓存远端 JSON；搜索、详情、过期检查和 mutation 不能承诺完全离线或零 cache 写入 | Homebrew 官方 | [API installation and JSON API](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap#installing) |
+
+由上述语义得到的项目边界：查询与写操作都可能联网并更新 Homebrew 自己的 cache；写命令不是事务。Cellar 在确认前展示计划，在命令结束后重新查询真实状态。Formula/Cask 卸载显式设置禁止自动更新和 autoremove；Cask artifact 仅用于 standard/zap 影响说明和 postflight 报告，App 不自行删除文件。
 
 ## 平台和架构
 

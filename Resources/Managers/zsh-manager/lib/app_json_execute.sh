@@ -1,0 +1,120 @@
+# shellcheck shell=bash
+
+install_omz_once() {
+    local installer=""
+    installer="$(mktemp "${TMPDIR:-/tmp}/cellar-omz-install.XXXXXX")" || return 1
+    if ! /usr/bin/curl -fsSL "$OMZ_INSTALL_URL" -o "$installer"; then
+        rm -f "$installer"
+        return 1
+    fi
+    RUNZSH=no CHSH=no KEEP_ZSHRC=yes /bin/sh "$installer"
+    local result=$?
+    rm -f "$installer"
+    return "$result"
+}
+
+install_plugin_once() {
+    local url="$1"
+    local name=""
+    local destination=""
+    name="$(derive_plugin_name_from_url "$url")" || return 1
+    destination="$CUSTOM_PLUGINS_DIR/$name"
+    mkdir -p "$CUSTOM_PLUGINS_DIR" || return 1
+    /usr/bin/git clone --depth=1 "$url" "$destination" || {
+        safe_remove_plugin_destination "$destination"
+        return 1
+    }
+    sync_plugins_config "$name"
+}
+
+set_plugin_selection() {
+    local csv="$1"
+    local old_ifs="$IFS"
+    local names=()
+    local name=""
+    local plugin_line=""
+    IFS=','
+    # Intentional splitting of the validated comma-separated selection.
+    for name in $csv; do
+        if ! array_contains_exact "$name" "${names[@]+"${names[@]}"}"; then
+            append_to_array names "$name"
+        fi
+    done
+    IFS="$old_ifs"
+    if ! array_contains_exact git "${names[@]+"${names[@]}"}"; then
+        append_to_array names git
+    fi
+    plugin_line="plugins=($(join_array_with_separator " " "${names[@]+"${names[@]}"}"))"
+    write_managed_block plugins "$plugin_line" || return 1
+    reload_zshrc
+}
+
+validate_shell_execute_request() {
+    local action="$1"
+    local subject="$2"
+    case "$action" in
+        install-omz)
+            [ -n "$OMZ_INSTALL_URL" ] && [ ! -e "$OMZ_DIR" ]
+            ;;
+        install-plugin)
+            validate_plugin_url "$subject" || return 1
+            local plugin_name=""
+            plugin_name="$(derive_plugin_name_from_url "$subject")" || return 1
+            [ -d "$OMZ_DIR" ] && [ ! -e "$CUSTOM_PLUGINS_DIR/$plugin_name" ]
+            ;;
+        set-plugins)
+            validate_plugin_list "$subject"
+            ;;
+        switch-theme)
+            validate_simple_name "$subject" && [ -f "$OMZ_DIR/themes/$subject.zsh-theme" ]
+            ;;
+        tidy)
+            [ "$subject" = "zsh-files" ]
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+execute_shell_action_json() {
+    local action="${1:-}"
+    local subject="${2:-}"
+    local token="${3:-}"
+    local log_file=""
+    local exit_code=0
+
+    [ "${SHELL_MANAGER_ALLOW_JSON_EXECUTE:-0}" = "1" ] || {
+        printf '{"code":"json-execute-disabled"}'
+        return 1
+    }
+    validate_shell_execute_request "$action" "$subject" || {
+        printf '{"code":"execute-preflight-failed"}'
+        return 1
+    }
+    require_fresh_plan "$token" "$action" "$subject" || {
+        printf '{"code":"plan-stale"}'
+        return 1
+    }
+    log_file="$(create_shell_log "$action")" || {
+        printf '{"code":"log-create-failed"}'
+        return 1
+    }
+
+    case "$action" in
+        install-omz) install_omz_once >>"$log_file" 2>&1 || exit_code=$? ;;
+        install-plugin) install_plugin_once "$subject" >>"$log_file" 2>&1 || exit_code=$? ;;
+        set-plugins) set_plugin_selection "$subject" >>"$log_file" 2>&1 || exit_code=$? ;;
+        switch-theme) switch_theme "$subject" >>"$log_file" 2>&1 || exit_code=$? ;;
+        tidy) run_zsh_tidy_flow >>"$log_file" 2>&1 || exit_code=$? ;;
+        *)
+            printf '{"code":"unsupported-action"}'
+            return 1
+            ;;
+    esac
+
+    if [ "$exit_code" -eq 0 ]; then
+        operation_result_json "$action" "$subject" ok 0 "$log_file"
+        return 0
+    fi
+    operation_error_json "$action" "$subject" "$exit_code" "$log_file"
+    return 1
+}

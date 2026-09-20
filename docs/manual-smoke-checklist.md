@@ -109,10 +109,15 @@
 
 ## Shell
 
-- [ ] Shell 页面显示与 `/bin/zsh --version` 一致的结果。
+- [ ] Shell 页面显示与 `/bin/zsh --version` 一致的结果，并读取当前主题、启用插件和已安装自定义插件。
 - [ ] `~/.oh-my-zsh` 是目录时显示已安装，不存在时显示未安装。
-- [ ] 刷新不会读取、修改或生成 `.zshrc`。
-- [ ] Zsh Manager 快照显示可用，但页面不驱动交互菜单。
+- [ ] 只读刷新不会修改或生成 `.zshrc`。
+- [ ] Oh My Zsh 安装计划不运行 `chsh`、不启动新 Shell，并保留现有 `.zshrc`。
+- [ ] 插件只接受 GitHub HTTPS 地址；安装失败不会扩大删除到 custom plugin 目标之外。
+- [ ] 应用插件和主题时先备份 `.zshrc`，只写入带 marker 的 managed block，并通过 `zsh -n` 校验。
+- [ ] `.zshrc` 为符号链接、目录或其他非普通文件时计划不可执行。
+- [ ] 整理只移动计划声明的 zcompdump 和备份文件到 `~/.zsh`，不删除用户 Shell 数据。
+- [ ] Zsh Manager 原交互脚本未被 App 驱动，App 只调用 schema v1 adapter。
 
 ## 退出与子进程
 
@@ -125,7 +130,7 @@
 
 ## Application Support
 
-- [ ] 首次正常启动后存在 `~/Library/Application Support/Cellar/Managers/1c9d71b/`。
+- [ ] 首次正常启动后存在 `~/Library/Application Support/Cellar/Managers/1c9d71b-app2/`。
 - [ ] 目录包含 node-manager、homebrew-manager 和 zsh-manager。
 - [ ] 重启 App 会复用完整快照，不重复创建随机 staging 目录。
 - [ ] App Bundle 内 `Contents/Resources/Managers/` 没有 `.runtime`、日志或临时文件。

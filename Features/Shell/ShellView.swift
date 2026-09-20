@@ -5,62 +5,44 @@ struct ShellView: View {
     let page: ShellPage
 
     var body: some View {
-        switch page {
-        case .overview:
-            overview
-        case .ohMyZsh, .extensions, .maintenance:
-            FeaturePlaceholderView(title: page.title, systemImage: page.systemImage)
-        }
+        pageContent
+            .sheet(item: planBinding) { plan in
+                ShellPlanSheet(model: model, plan: plan)
+            }
+            .sheet(isPresented: resultBinding) {
+                if let result = model.shellActionResult {
+                    ShellResultSheet(model: model, result: result)
+                }
+            }
+            .alert("Shell 操作失败", isPresented: errorBinding) {
+                Button("好", role: .cancel) { model.dismissShellFeedback() }
+            } message: {
+                Text(model.shellOperationError ?? "操作未完成")
+            }
     }
 
     @ViewBuilder
-    private var overview: some View {
-        if let shell = model.shell {
-            ScrollView {
-                StatusOverviewCard(tint: .purple) {
-                    HStack(spacing: 0) {
-                        StatusMetric(
-                            title: "Zsh",
-                            value: shell.zshVersion ?? "—",
-                            systemImage: "terminal.fill",
-                            tint: .blue
-                        )
-                        StatusMetricDivider()
-                        StatusMetric(
-                            title: "Oh My Zsh",
-                            value: shell.ohMyZshInstalled ? "已安装" : "未安装",
-                            systemImage: "bolt.fill",
-                            tint: shell.ohMyZshInstalled ? .purple : .secondary
-                        )
-                        StatusMetricDivider()
-                        StatusMetric(
-                            title: "Oh My Zsh 路径",
-                            value: shell.ohMyZshPath,
-                            systemImage: "folder.fill",
-                            tint: .orange
-                        )
-                        StatusMetricDivider()
-                        StatusMetric(
-                            title: "Manager 快照",
-                            value: shell.managerAvailable ? "可用" : "缺失",
-                            systemImage: "externaldrive.fill",
-                            tint: shell.managerAvailable ? .green : .orange
-                        )
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(24)
-            }
-        } else if model.isRefreshing {
-            PageLoadingView(message: "正在读取 Shell 状态…")
-        } else {
-            ContentUnavailableView(
-                "无法读取 Shell",
-                systemImage: "terminal",
-                description: Text(model.errorMessages.first(where: { $0.hasPrefix("Shell") }) ?? "请刷新后重试")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private var pageContent: some View {
+        switch page {
+        case .overview: ShellOverviewPage(model: model)
+        case .ohMyZsh: OhMyZshPage(model: model)
+        case .extensions: ShellExtensionsPage(model: model)
+        case .maintenance: ShellMaintenancePage(model: model)
         }
+    }
+
+    private var planBinding: Binding<ShellActionPlan?> {
+        Binding(get: { model.shellPlan }, set: { if $0 == nil { model.dismissShellPlan() } })
+    }
+
+    private var resultBinding: Binding<Bool> {
+        Binding(get: { model.shellActionResult != nil }, set: { if !$0 { model.dismissShellFeedback() } })
+    }
+
+    private var errorBinding: Binding<Bool> {
+        Binding(
+            get: { model.shellOperationError != nil && model.shellActionResult == nil },
+            set: { if !$0 { model.dismissShellFeedback() } }
+        )
     }
 }

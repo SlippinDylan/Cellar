@@ -1,7 +1,7 @@
 import Foundation
 
 actor ManagerSnapshotInstaller {
-    static let snapshotVersion = "1c9d71b"
+    static let snapshotVersion = "1c9d71b-app2"
 
     private let fileManager: FileManager
     private let bundle: Bundle
@@ -80,6 +80,7 @@ actor ManagerSnapshotInstaller {
                 || fileManager.isReadableFile(atPath: root.appending(path: "node-manager/main.sh").path),
             homebrewAvailable: fileManager.isReadableFile(atPath: root.appending(path: "homebrew-manager/main.sh").path),
             shellAvailable: fileManager.isReadableFile(atPath: root.appending(path: "zsh-manager/omz-manager.sh").path)
+                && fileManager.isExecutableFile(atPath: root.appending(path: "zsh-manager/app-json.sh").path)
         )
     }
 }

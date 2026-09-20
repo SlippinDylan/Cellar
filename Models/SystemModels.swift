@@ -13,6 +13,14 @@ struct ShellStatus: Sendable {
     let zshVersion: String?
     let ohMyZshPath: String
     let ohMyZshInstalled: Bool
+    let zshrcPath: String
+    let zshrcExists: Bool
+    let currentTheme: String
+    let activePlugins: [String]
+    let installedCustomPlugins: [String]
+    let availableThemes: [String]
+    let defaultPluginNames: [String]
+    let runtimeDirectory: String
     let managerAvailable: Bool
 }
 

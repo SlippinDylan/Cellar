@@ -29,6 +29,7 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 - Manager 安装测试注入临时 Application Support 根目录。
 - 进程测试只执行测试自己创建的临时脚本。
 - Hosted tests 通过 `XCTestConfigurationFilePath` 识别测试进程，禁止根视图自动刷新。
+- Shell adapter 测试复制 Bundle Manager 到临时目录并注入临时 HOME，只允许修改测试 `.zshrc`、Oh My Zsh fixture 和 adapter runtime；不得访问用户真实 Shell 配置或网络。
 - 测试结束后不得留下 `~/Library/Application Support/Cellar/`、npm cache 变更或全局包变更。
 
 需要验证真实环境时，使用[人工验收清单](manual-smoke-checklist.md)，并先向用户说明会读取的工具、网络和目录。真实环境检查不属于普通单元测试。
@@ -138,7 +139,7 @@ build/DerivedData-Release/Build/Products/Release/Cellar.app
 
 ## Manager 快照检查
 
-Node 快照遵循 `scripts/node-manager/app-bundle-manifest.txt`。Homebrew 快照由 `main.sh` 和生产 `lib/*.sh` 组成；Zsh 快照是 `scripts/zsh/omz-manager.sh`。生成或更新快照时：
+Node 快照遵循 `scripts/node-manager/app-bundle-manifest.txt`。Homebrew 快照由 `main.sh` 和生产 `lib/*.sh` 组成；Zsh 的 `omz-manager.sh` 来自冻结脚本，相邻 `app-json.sh` 与模块是 Cellar-owned adapter。生成或更新快照时：
 
 1. 用户必须先解除对应 `scripts/` 冻结或明确授权刷新快照。
 2. 记录来源 Git commit。

@@ -4,6 +4,7 @@ actor SystemProbeService {
     private let runner: ProcessRunner
     private let installer: ManagerSnapshotInstaller
     private let nodeClient: NodeManagerClient
+    private let shellClient: ShellManagerClient
     private let environmentResolver: NodeEnvironmentResolver
     private let locator: ExecutableLocator
     private var homebrewClient: HomebrewClient?
@@ -12,12 +13,14 @@ actor SystemProbeService {
         runner: ProcessRunner,
         installer: ManagerSnapshotInstaller,
         nodeClient: NodeManagerClient,
+        shellClient: ShellManagerClient,
         environmentResolver: NodeEnvironmentResolver = NodeEnvironmentResolver(),
         locator: ExecutableLocator = ExecutableLocator()
     ) {
         self.runner = runner
         self.installer = installer
         self.nodeClient = nodeClient
+        self.shellClient = shellClient
         self.environmentResolver = environmentResolver
         self.locator = locator
     }
@@ -88,25 +91,18 @@ actor SystemProbeService {
     }
 
     func loadShell(snapshot: SnapshotStatus) async throws -> ShellStatus {
-        let environment = environmentResolver.environment()
-        let result = try await runner.run(ProcessRequest(
-            executableURL: URL(filePath: "/bin/zsh"),
-            arguments: ["--version"],
-            environment: environment,
-            currentDirectoryURL: nil
-        ))
-        guard result.terminationStatus == 0 else {
-            throw BridgeError.managerFailure(code: "zsh-version-failed", detail: result.errorText)
-        }
-        let ohMyZsh = URL.homeDirectory.appending(path: ".oh-my-zsh", directoryHint: .isDirectory)
-        var isDirectory: ObjCBool = false
-        let exists = FileManager.default.fileExists(atPath: ohMyZsh.path, isDirectory: &isDirectory)
-        return ShellStatus(
-            zshVersion: result.outputText.trimmingCharacters(in: .whitespacesAndNewlines),
-            ohMyZshPath: ohMyZsh.path,
-            ohMyZshInstalled: exists && isDirectory.boolValue,
+        try await shellClient.loadSnapshot(
+            managerDirectory: shellManagerDirectory(snapshot),
             managerAvailable: snapshot.shellAvailable
         )
+    }
+
+    func planShell(_ request: ShellActionRequest, snapshot: SnapshotStatus) async throws -> ShellActionPlan {
+        try await shellClient.plan(request, managerDirectory: shellManagerDirectory(snapshot))
+    }
+
+    func executeShell(_ plan: ShellActionPlan, snapshot: SnapshotStatus) async throws -> ShellOperationResult {
+        try await shellClient.execute(plan, managerDirectory: shellManagerDirectory(snapshot))
     }
 
     func loadNode(
@@ -166,5 +162,10 @@ actor SystemProbeService {
     private func nodeManagerDirectory(_ snapshot: SnapshotStatus) -> URL {
         URL(filePath: snapshot.location, directoryHint: .isDirectory)
             .appending(path: "node-manager", directoryHint: .isDirectory)
+    }
+
+    private func shellManagerDirectory(_ snapshot: SnapshotStatus) -> URL {
+        URL(filePath: snapshot.location, directoryHint: .isDirectory)
+            .appending(path: "zsh-manager", directoryHint: .isDirectory)
     }
 }

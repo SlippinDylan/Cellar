@@ -8,7 +8,7 @@
 
 ## 目标
 
-交付一个可构建的原生 macOS App，通过真实数据验证 SwiftUI 页面、Swift 服务、受控进程和冻结 Manager 快照之间的链路，并为 Homebrew 与 Node 提供经过计划与确认的常用管理操作。Shell 当前仍保持只读。
+交付一个可构建的原生 macOS App，通过真实数据验证 SwiftUI 页面、Swift 服务、受控进程和 Manager 快照之间的链路，并为 Homebrew、Node 和 Shell 提供经过计划与确认的常用管理操作。
 
 ## 当前范围
 
@@ -18,7 +18,7 @@
 | 概览 | 聚合 Homebrew、Node、Shell 和 Manager 状态 |
 | Homebrew | 概览、已安装、可升级、发现、诊断、配置与 Tap；安装、update、选择升级、单目标卸载和 Tap 变更 |
 | Node | 读取 summary、全局包、npm 配置、可更新版本、已安装 Node 和 Manager 状态；管理 npm 全局包、nvm/Node、Registry、维护及项目 `.nvmrc` |
-| Shell | 读取 Zsh 版本和 Oh My Zsh 目录状态 |
+| Shell | 读取 Zsh/Oh My Zsh/插件/主题状态；安装 Oh My Zsh 和插件、管理插件/主题配置并整理受限 Zsh 文件 |
 | 操作记录 | 保存当前 App 会话中的刷新结果 |
 | Bridge | 受控环境、参数数组、stdout/stderr、退出码和 JSON schema |
 | Manager 快照 | 从 Bundle 安装到版本化 Application Support 目录 |
@@ -31,7 +31,7 @@ Homebrew 写操作统一先计划和确认，执行后 post-refresh。Formula/Ca
 - 安装 Command Line Tools 或 Homebrew，修改 `.zprofile`。
 - Homebrew cleanup、自动孤儿依赖删除、批量卸载或 App 自行删除 Cask 残留。
 - `sudo`、Privileged Helper 或其他 root 操作。
-- Zsh 的写操作。
+- 切换默认登录 Shell、删除 Oh My Zsh、任意 Git 仓库插件或协议外 Shell 命令。
 - 解析或自动驾驶 Homebrew/Zsh 交互菜单。
 - 后台常驻、菜单栏图标或退出后继续运行。
 - App Sandbox 或 Mac App Store。
@@ -49,7 +49,7 @@ Homebrew 写操作统一先计划和确认，执行后 post-refresh。Formula/Ca
 - Homebrew 查询解析、计划生成、确认边界、受控命令、操作锁、部分完成和 post-refresh 有直接测试。
 - 自动测试使用假 brew 和临时目录，不调用用户真实 Homebrew 或访问网络。
 - Hosted tests 不自动刷新真实环境，不访问用户 Application Support 或 npm registry。
-- App Swift 代码不使用 `bash -c`，不读取 `.zshrc`。
+- App Swift 代码不使用 `bash -c`；`.zshrc` 只通过 Shell adapter 的受控 query/plan/execute 协议读取和修改。
 - `Resources/Managers` 与来源生产文件一致，不包含 runtime cache。
 - `scripts/` 保持冻结。
 

@@ -10,7 +10,7 @@
 
 Cellar 是单进程、非沙盒的原生 macOS 前台应用。它读取 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 状态，并提供受控的 Homebrew 管理操作。它不包含后台守护进程、菜单栏入口或 Privileged Helper。
 
-App 使用 SwiftUI 构建窗口和页面，Foundation 负责文件与进程边界，AppKit delegate 处理退出请求。Node 的结构化查询和写操作来自随 App 打包的 Manager 快照；Homebrew 由 Bridge 直接调用绝对 `brew` 并解析其机器可读输出；Shell 使用 Swift 组织只读探测。
+App 使用 SwiftUI 构建窗口和页面，Foundation 负责文件与进程边界，AppKit delegate 处理退出请求。Node 使用随 App 打包的 Manager 机器协议，Homebrew 由 Bridge 直接调用绝对 `brew`，Shell 使用 App 专用 adapter 复用冻结 Manager 的配置函数。
 
 ## 仓库与组件
 
@@ -54,7 +54,7 @@ Features → Services → Bridge → Manager / 系统 CLI
 
 首次读取期间，各页面复用 `PageLoadingView` 占满详情区域并将 `ProgressView` 水平、垂直居中。失败空态同样占满详情区域，不依赖固定高度模拟居中。
 
-左侧 Sidebar 使用 `DisclosureGroup` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。Homebrew 与 Node 的二级页面承载对应功能；Shell 尚未实现的二级页面继续使用空态，不创建命令入口。
+左侧 Sidebar 使用 `DisclosureGroup` 表达两级导航。Homebrew、Node 和 Shell 是只负责展开收起的一级分类；具体页面是可选择的第二级项目，每个分类都以“概览”为首项。展开状态由 `AppRootView` 的本地 `@State` 持有，当前页面由 `AppModel.selectedDestination` 统一保存。三个模块的二级页面均承载对应真实功能。
 
 左侧导航不使用会自行管理 AppKit scroller 的 SwiftUI `List`。它由 `ScrollView`、`LazyVStack`、`DisclosureGroup` 和自定义选择行组成，并通过 `scrollIndicators(.hidden)` 隐藏直接 ScrollView 的 indicator。滚轮和触控板滚动、分类展开、缩进与选择高亮仍然可用。
 
@@ -194,11 +194,11 @@ query → plan → confirm → execute → result → post-refresh
 
 计划确认不是事务边界。Homebrew 可能在非零退出前已经修改依赖、安装目录或 cache，因此结果模型同时保存命令输出和 post-refresh 快照。取消确认会丢弃计划，再次操作时重新生成。
 
-## Shell
+## Shell Manager 协议
 
-Shell 探测固定执行 `/bin/zsh --version`，再通过 `FileManager` 检查 `~/.oh-my-zsh` 是否是目录。它不读取 `.zshrc`，也不调用 Zsh Manager。
+冻结的 `omz-manager.sh` 保持与 `scripts/zsh/omz-manager.sh` 逐字节一致。相邻的 Cellar-owned `app-json.sh` 和 `lib/app_json_*.sh` 作为 schema v1 adapter，source 冻结脚本以复用其解析、managed block、备份和整理函数，但不调用交互菜单。
 
-Homebrew 与 Shell 页面仍可显示相应 Manager 快照是否存在，用于说明 App Bundle 和运行副本的准备状态，不代表交互 Manager 已接入 UI。
+adapter 提供 `snapshot`、`plan` 和 `execute`。查询环境关闭 execute；确认后单次环境打开。计划 token 覆盖 `.zshrc` 摘要和目标状态，防止确认期间配置漂移。所有运行日志写入 Application Support 工作副本的 `.runtime`，Bundle 内资源保持只读。
 
 ## 数据、网络与权限
 
@@ -238,7 +238,7 @@ Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 
 ## 稳定不变量
 
-- 只有用户确认的 Homebrew 或 Node 操作可以修改对应包管理状态；Shell 配置保持只读。
+- 只有用户确认的 Homebrew、Node 或 Shell 操作可以修改对应状态。
 - 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup、自动孤儿清理、`sudo` 或 App 自行残留删除。
 - Homebrew mutation 必须计划、确认、单操作锁定、执行并 post-refresh；卸载禁止隐式 update 与 autoremove。
 - 不把某个 Node 的 npm 全局包描述为整台机器唯一集合。
@@ -256,7 +256,7 @@ Cellar 自己管理的持久目录是版本化 Manager 运行副本：
 - 自定义 nvm 目录和其他 Node 版本管理器未支持。
 - Homebrew 长命令的取消、deadline、强制终止和子进程组策略仍受通用 `ProcessRunner` 限制。
 - Homebrew 写操作不是事务，部分完成只能通过命令结果与 post-refresh 准确呈现，不能自动回滚。
-- Homebrew 与 Zsh 交互 Manager 均未接入 App；Homebrew 功能由原生 Bridge 直接调用 brew。
+- Homebrew 交互 Manager 未接入 App；Zsh 交互菜单也未接入，App 只调用独立 JSON adapter。
 - 快照运行时验证入口完整性，不验证全部文件摘要。
 - UI 文本当前直接写在 Swift 源码中，没有 String Catalog 和多语言支持。
 - 普通 `WindowGroup`、最后窗口关闭和任务期间退出的组合仍需真实窗口验收。

@@ -8,7 +8,7 @@
 
 Cellar 是一个原生 macOS 开发环境工具。它在一个窗口中汇总 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 的本机状态，并显示本次会话的操作记录。
 
-Homebrew 与 Node 模块提供写操作；Shell 当前保持只读。Homebrew 能力通过 Bridge 受控调用已发现的绝对 `brew` 路径，Node 通过 Manager schema v1 的机器协议执行；App 不驱动交互菜单。每项写操作先展示计划并要求确认，执行后重新读取真实状态。
+Homebrew、Node 与 Shell 模块提供写操作。Homebrew 通过 Bridge 受控调用绝对 `brew`，Node 使用 Manager schema v1，Shell 使用叠加在冻结交互 Manager 上的 App 专用 schema v1 adapter；App 不驱动任何交互菜单。每项写操作先展示计划并要求确认，执行后重新读取真实状态。
 
 ## 目标
 
@@ -18,14 +18,14 @@ Homebrew 与 Node 模块提供写操作；Shell 当前保持只读。Homebrew �
 | G-02 | 在同一界面展示 Homebrew、Node/npm 和 Shell 的真实状态，并完成受控的 Homebrew 常用操作 |
 | G-03 | 保持外部命令参数、环境、输出和错误边界明确 |
 | G-04 | 单项读取失败时保留其他已经成功取得的状态 |
-| G-05 | Homebrew 与 Node 写操作保持范围明确；Shell 不产生状态变更 |
+| G-05 | Homebrew、Node 与 Shell 写操作保持范围明确，不执行协议外状态变更 |
 
 ## v1 非目标
 
 | ID | 非目标 | 原因 |
 |---|---|---|
 | NG-01 | 安装 Command Line Tools 或 Homebrew、修改 `.zprofile` | 环境引导与系统配置不属于本轮范围 |
-| NG-05 | 修改 Zsh 或 Oh My Zsh | Zsh Manager 目前是交互式脚本 |
+| NG-05 | 切换登录 Shell、删除 Oh My Zsh 或执行任意 Shell 命令 | 当前协议只覆盖明确的用户级配置操作 |
 | NG-06 | root 操作、Privileged Helper 或 `sudo` | v1 能力不需要提权 |
 | NG-07 | 后台驻留或菜单栏入口 | Cellar 是普通前台窗口应用 |
 | NG-08 | Intel、Universal Binary、Rosetta 或 macOS 15 | 平台只支持 macOS 26+、arm64 |
@@ -47,7 +47,7 @@ Cellar 使用两栏 `NavigationSplitView`。侧边栏固定包含：概览、Hom
 | UI-06 | 工具栏刷新按钮在刷新期间禁用，重复刷新请求不启动第二轮任务 |
 | UI-07 | 每个一级页面在系统 titlebar 显示标题和一句用途说明，详情区顶部使用统一分割线 |
 | UI-08 | 页面内容使用一致的水平边距；概览采用两列状态卡片，模块页的状态总览卡占满内容宽度 |
-| UI-09 | Homebrew、Node 和 Shell 在左侧 Sidebar 中作为可折叠一级分类，具体功能作为第二级选择项；Homebrew 与 Node 页面提供真实功能，Shell 当前只有“概览”接入真实数据 |
+| UI-09 | Homebrew、Node 和 Shell 在左侧 Sidebar 中作为可折叠一级分类，所有二级页面提供对应真实功能 |
 | UI-10 | 左侧 Sidebar 保留垂直滚动，但不显示滚动条 |
 
 ## 启动与刷新
@@ -183,7 +183,7 @@ Node 页面使用 Node Manager schema v1。查询环境固定关闭 JSON execute
 
 ### Shell
 
-左侧 Shell 分类预留概览、Oh My Zsh、插件与主题和维护。当前只有概览接入真实数据；其他页面不启动命令。
+左侧 Shell 分类包含概览、Oh My Zsh、插件与主题和维护。
 
 | ID | 展示内容 |
 |---|---|
@@ -192,7 +192,16 @@ Node 页面使用 Node Manager schema v1。查询环境固定关闭 JSON execute
 | SH-03 | Oh My Zsh 检查路径 |
 | SH-04 | Zsh Manager 快照是否存在 |
 
-v1 不读取、解析或修改 `.zshrc`。
+Shell query 读取 `.zshrc` 中最后生效的主题和插件列表。写操作只维护带明确 marker 的插件、主题和 compdump block；修改前备份现有普通文件，并使用 `zsh -n` 校验。`.zshrc` 是符号链接或非普通文件时拒绝写入。
+
+#### Shell 写操作
+
+- Oh My Zsh 安装使用冻结 Manager 中固定 commit 的官方 HTTPS 安装脚本，并设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
+- 插件安装只接受 `https://github.com/<owner>/<repository>` 形式，clone 到 Oh My Zsh custom plugins 目录后通过 managed block 启用。
+- 插件选择只能包含已安装自定义插件、Oh My Zsh 内置插件和强制保留的 `git`。
+- 主题只能从已安装的 `.zsh-theme` 列表选择。
+- 整理仅移动 home 顶层已声明的 zcompdump、Zsh 备份和 `.zprofile.bak`，并写入受管理的 compdump 位置；不删除文件。
+- plan token 覆盖 `.zshrc` 和操作目标状态；确认后状态变化时拒绝执行。
 
 ### 操作记录
 
@@ -245,7 +254,7 @@ App 启动后可能产生以下外部行为：
 - Homebrew 的搜索、详情、过期检查、Tap、`update`、安装和升级可能访问 Homebrew 服务或第三方 Tap，并写入 Homebrew 自己管理的 API cache、下载 cache 和安装目录。
 - 用户确认的 Homebrew 安装、更新、升级、卸载与 Tap 变更会修改 Homebrew 管理的本机状态；命令不是事务，失败时可能已经部分完成。
 
-Cellar 只在用户确认对应计划后修改 npm 全局包、`~/.npmrc`、`~/.nvm`、npm/node-gyp cache 或用户选择项目的 `.nvmrc`。它不写入 `.zshrc` 或 `.zprofile`，不改变 Shell 状态，不调用 `sudo`。拒绝网络请求会影响 npm 更新检查、Node/nvm 安装以及依赖网络的 Homebrew 查询或操作；本机已有状态应尽量继续展示。
+Cellar 只在用户确认对应计划后修改包管理和 Shell 状态。Shell 写入限定为 `.zshrc` managed block、`.zshrc` 备份、`~/.zsh` 整理目录、Oh My Zsh 和用户确认插件；不修改 `.zprofile` 正文，不切换登录 Shell，不调用 `sudo`。拒绝网络请求会影响 npm、Node/nvm、Homebrew、Oh My Zsh 和插件安装；本机已有状态应尽量继续展示。
 
 ## 功能需求
 
@@ -289,4 +298,4 @@ Cellar 只在用户确认对应计划后修改 npm 全局包、`~/.npmrc`、`~/.
 
 ## 后续阶段
 
-当前仍不包含安装 Command Line Tools 或 Homebrew、修改 `.zprofile`、Homebrew cleanup、自动孤儿依赖删除、App 自行清理 Cask 残留、`sudo`、Privileged Helper 和 Shell 写操作。未来增加这些能力时必须重新定义权限、删除范围、恢复与测试契约，不能从当前包管理权限中推导授权。
+当前仍不包含安装 Command Line Tools 或 Homebrew、修改 `.zprofile` 正文、Homebrew cleanup、自动孤儿依赖删除、App 自行清理 Cask 残留、`sudo`、Privileged Helper、切换登录 Shell 或删除 Oh My Zsh。未来增加这些能力时必须重新定义权限、删除范围、恢复与测试契约。

@@ -5,10 +5,10 @@ import Foundation
 final class AppModel: ObservableObject {
     @Published var selectedDestination: AppDestination = .overview
     @Published private(set) var homebrew: HomebrewStatus?
-    @Published private(set) var node: NodeSnapshot?
-    @Published private(set) var shell: ShellStatus?
+    @Published var node: NodeSnapshot?
+    @Published var shell: ShellStatus?
     @Published private(set) var managers: SnapshotStatus?
-    @Published private(set) var refreshedAt: Date?
+    @Published var refreshedAt: Date?
     @Published private(set) var errorMessages: [String] = []
     @Published private(set) var activities: [ActivityEntry] = []
     @Published private(set) var isRefreshing = false
@@ -19,14 +19,18 @@ final class AppModel: ObservableObject {
     @Published private(set) var homebrewActionResult: HomebrewActionResult?
     @Published private(set) var homebrewOperationError: String?
     @Published private(set) var isHomebrewWorking = false
-    @Published private(set) var preferredNodeVersion: String?
-    @Published private(set) var nodePlan: NodeActionPlan?
-    @Published private(set) var nodeActionResult: NodeActionResult?
-    @Published private(set) var nodeOperationError: String?
-    @Published private(set) var isNodeWorking = false
+    @Published var preferredNodeVersion: String?
+    @Published var nodePlan: NodeActionPlan?
+    @Published var nodeActionResult: NodeActionResult?
+    @Published var nodeOperationError: String?
+    @Published var isNodeWorking = false
+    @Published var shellPlan: ShellActionPlan?
+    @Published var shellActionResult: ShellActionResult?
+    @Published var shellOperationError: String?
+    @Published var isShellWorking = false
 
-    private let service: SystemProbeService
-    private let operationStore: OperationStore
+    let service: SystemProbeService
+    let operationStore: OperationStore
 
     init(
         service: SystemProbeService,
@@ -40,10 +44,12 @@ final class AppModel: ObservableObject {
         let runner = ProcessRunner()
         let installer = ManagerSnapshotInstaller()
         let client = NodeManagerClient(runner: runner)
+        let shellClient = ShellManagerClient(runner: runner)
         return AppModel(service: SystemProbeService(
             runner: runner,
             installer: installer,
-            nodeClient: client
+            nodeClient: client,
+            shellClient: shellClient
         ))
     }
 
@@ -59,7 +65,7 @@ final class AppModel: ObservableObject {
     }
 
     func refresh() async {
-        guard !isRefreshing, !isHomebrewWorking, !isNodeWorking else { return }
+        guard !isRefreshing, !isHomebrewWorking, !isNodeWorking, !isShellWorking else { return }
         isRefreshing = true
         errorMessages = []
         let operationID = operationStore.begin()
@@ -271,106 +277,6 @@ final class AppModel: ObservableObject {
         homebrewOperationError = nil
     }
 
-    func prepareNodeAction(_ request: NodeActionRequest) async {
-        guard !isRefreshing, !isHomebrewWorking, !isNodeWorking, let managers else { return }
-        isNodeWorking = true
-        nodeOperationError = nil
-        nodeActionResult = nil
-        let operationID = operationStore.begin()
-        defer {
-            isNodeWorking = false
-            operationStore.end(operationID)
-        }
-        do {
-            nodePlan = try await service.planNode(
-                request,
-                snapshot: managers,
-                preferredNodeVersion: preferredNodeVersion
-            )
-        } catch {
-            nodeOperationError = error.localizedDescription
-        }
-    }
-
-    func executeNodePlan() async {
-        guard let plan = nodePlan, plan.canExecute, !isNodeWorking, let managers else { return }
-        nodePlan = nil
-        isNodeWorking = true
-        nodeOperationError = nil
-        nodeActionResult = nil
-        let operationID = operationStore.begin()
-        let activityID = beginActivity(title: plan.activityTitle, detail: "正在执行 Node 操作")
-        defer {
-            isNodeWorking = false
-            operationStore.end(operationID)
-        }
-
-        do {
-            let operation = try await service.executeNode(
-                plan,
-                snapshot: managers,
-                preferredNodeVersion: preferredNodeVersion
-            )
-            updatePreferredNodeVersion(after: plan)
-            let refreshedSnapshot: NodeSnapshot?
-            let postflightError: String?
-            do {
-                refreshedSnapshot = try await service.loadNode(
-                    snapshot: managers,
-                    preferredNodeVersion: preferredNodeVersion
-                )
-                postflightError = nil
-            } catch {
-                refreshedSnapshot = nil
-                postflightError = error.localizedDescription
-            }
-            if let refreshedSnapshot {
-                node = refreshedSnapshot
-                refreshedAt = Date()
-            }
-            let result = NodeActionResult(
-                plan: plan,
-                operation: operation,
-                snapshot: refreshedSnapshot,
-                postflightError: postflightError
-            )
-            nodeActionResult = result
-            if let postflightError {
-                nodeOperationError = "操作已结束，但无法复查 Node 状态：\(postflightError)"
-            }
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded,
-                detail: result.activityDetail
-            )
-        } catch {
-            nodeOperationError = error.localizedDescription
-            if let refreshedNode = try? await service.loadNode(
-                snapshot: managers,
-                preferredNodeVersion: preferredNodeVersion
-            ) {
-                node = refreshedNode
-                refreshedAt = Date()
-            }
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: .failed,
-                detail: error.localizedDescription
-            )
-        }
-    }
-
-    func dismissNodePlan() {
-        nodePlan = nil
-    }
-
-    func dismissNodeFeedback() {
-        nodeActionResult = nil
-        nodeOperationError = nil
-    }
-
     private func prepareHomebrewPlan(
         operation: @escaping @Sendable () async throws -> HomebrewActionPlan
     ) async {
@@ -390,7 +296,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func beginActivity(title: String, detail: String) -> UUID {
+    func beginActivity(title: String, detail: String) -> UUID {
         let id = UUID()
         activities.insert(ActivityEntry(
             id: id,
@@ -402,7 +308,7 @@ final class AppModel: ObservableObject {
         return id
     }
 
-    private func finishActivity(
+    func finishActivity(
         _ id: UUID,
         title: String,
         outcome: ActivityEntry.Outcome,
@@ -430,51 +336,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func updatePreferredNodeVersion(after plan: NodeActionPlan) {
-        switch plan.request.action {
-        case .useNode:
-            preferredNodeVersion = plan.payload.normalizedVersion ?? plan.request.subject
-        case .setDefaultNode:
-            preferredNodeVersion = nil
-        case .uninstallNode where preferredNodeVersion == plan.payload.normalizedVersion:
-            preferredNodeVersion = nil
-        default:
-            break
-        }
-    }
-}
-
-private extension NodeActionPlan {
-    var activityTitle: String {
-        switch request.action {
-        case .installPackage: "安装 npm 全局包"
-        case .uninstallPackage: "卸载 npm 全局包"
-        case .updatePackage: "更新 npm 全局包"
-        case .setRegistry, .deleteRegistry, .setScopeRegistry, .deleteScopeRegistry: "修改 npm Registry"
-        case .installNVM: "安装 nvm"
-        case .installNode: "安装 Node 版本"
-        case .useNode: "切换 Cellar Node 会话"
-        case .setDefaultNode: "设置默认 Node 版本"
-        case .uninstallNode: "卸载 Node 版本"
-        case .cleanup: "维护 Node 环境"
-        case .writeProjectNVMRC: "写入项目 .nvmrc"
-        }
-    }
-}
-
-private extension NodeActionResult {
-    var activityDetail: String {
-        var parts = ["状态 \(operation.status)", "退出状态 \(operation.exitCode)"]
-        if let detail = operation.detail?.nilIfBlank {
-            parts.append(detail)
-        }
-        if let postflightError {
-            parts.append("复查失败：\(postflightError)")
-        } else {
-            parts.append("已重新读取 Node 状态")
-        }
-        return parts.joined(separator: "；")
-    }
 }
 
 private extension HomebrewActionPlan {

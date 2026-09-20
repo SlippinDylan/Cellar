@@ -6,7 +6,7 @@
 
 Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit，读取 Homebrew、Node/npm/nvm 与 Shell 的本机状态，并为 Homebrew 提供受控的常用管理操作。现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
 
-当前版本的 Homebrew 和 Node 模块包含经过计划与确认的写操作；Shell 仍然只读。产品行为见 [产品需求](docs/requirements/product-requirements.md)，当前实现见 [架构文档](docs/architecture/macos-app-architecture.md)，构建和验证见 [开发指南](docs/development.md)。
+当前版本的 Homebrew、Node 和 Shell 模块均包含经过计划与确认的受控写操作。产品行为见 [产品需求](docs/requirements/product-requirements.md)，当前实现见 [架构文档](docs/architecture/macos-app-architecture.md)，构建和验证见 [开发指南](docs/development.md)。
 
 ## 开始工作
 
@@ -38,9 +38,9 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - Homebrew 写操作必须先生成明确计划并由用户确认，执行结束后重新读取真实状态。写操作不是事务，界面和操作记录必须保留部分完成结果。
 - 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup，不自动删除孤儿依赖，不调用 `sudo` 或 Helper，也不由 App 自行 `rm` Cask 残留。
 - Formula/Cask 卸载必须显式禁止 Homebrew 自动更新和 autoremove。Cask artifact 只用于卸载前展示和执行后报告，不由 App 单独删除。
-- Homebrew 与 Zsh Manager 没有稳定 App JSON 契约；App 不通过管道输入驱动交互菜单，也不解析其菜单文本。Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。
+- Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。
 - Node 通过 Manager schema v1 读取状态，并仅在 App 已展示计划且用户确认后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`。
-- Shell 当前保持只读；不得驱动 Zsh Manager 交互菜单或修改 Shell 配置。
+- Shell 通过 App 专用 schema v1 adapter 查询和修改 Oh My Zsh、插件、主题及受限 Zsh 文件布局；不得驱动交互菜单或执行协议外的 Shell 命令。
 
 ### Node 环境
 
@@ -52,8 +52,8 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 ### Manager 快照
 
 - 未经用户再次明确授权，不修改 `scripts/` 下的代码、配置、测试或文档。
-- `Resources/Managers/` 必须来自生产白名单或明确的生产文件集合，并记录来源 commit。
-- 不在快照副本中手工修补业务逻辑；App 专属适配写在 `Bridge/`。
+- `Resources/Managers/` 必须来自生产白名单或明确的生产文件集合，并记录来源 commit。冻结 Manager 原文件保持逐字节一致。
+- App 专属 adapter 必须与冻结来源分文件维护并记录性质；不得直接修补复制的交互 Manager。
 - App Bundle Resources 只读。运行副本位于 `~/Library/Application Support/Cellar/Managers/<version>/`。
 
 ### 进程与生命周期

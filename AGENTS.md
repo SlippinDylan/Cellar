@@ -4,9 +4,9 @@
 
 ## 项目概述
 
-Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit，读取 Homebrew、Node/npm/nvm 与 Shell 的本机状态，并为 Homebrew 提供受控的常用管理操作。现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
+Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 采用任务导向的 Home、Library、Discover、Updates、Tools 和 Activity，统一组织 Homebrew Formula/Cask、npm 全局包、Node/nvm 与终端配置，同时保留 provider 身份和安全边界。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit；现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
 
-当前版本的 Homebrew、Node 和 Shell 模块均包含经过计划与确认的受控写操作。产品行为见 [产品需求](docs/requirements/product-requirements.md)，当前实现见 [架构文档](docs/architecture/macos-app-architecture.md)，构建和验证见 [开发指南](docs/development.md)。
+[产品需求](docs/requirements/product-requirements.md)是 1.0 用户行为和安全边界的唯一权威来源；尚未完成的条目是实现要求，不是当前已交付声明。[架构文档](docs/architecture/macos-app-architecture.md)分别标注当前基线与 1.0 目标，构建和验证见[开发指南](docs/development.md)。
 
 ## 开始工作
 
@@ -19,7 +19,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 ## 仓库地图
 
 - `CellarApp.swift`：SwiftUI Scene、AppKit delegate 和退出策略。
-- `Features/`：概览、Homebrew、Node、Shell、操作记录及主导航。
+- `Features/`：当前技术模块页面；按产品契约逐步迁移到 Home、Library、Discover、Updates、Tools、Activity 与 Settings。
 - `Services/`：App 状态、刷新编排、任务登记和系统探测。
 - `Models/`：页面状态、Manager JSON DTO、操作计划与结果模型。
 - `Bridge/`：`Process`、受控环境、Manager 快照安装和 JSON 解码。
@@ -36,13 +36,18 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 
 ### 能力边界
 
-- Homebrew 可以查询概览、已安装项、可升级项、搜索、诊断、配置和 Tap；可以安装 Formula/Cask、执行 `brew update`、选择升级、卸载单个 Formula、以 standard 或 zap 模式卸载单个 Cask，以及添加或安全移除 Tap。
-- Homebrew 写操作必须先生成明确计划并由用户确认，执行结束后重新读取真实状态。写操作不是事务，界面和操作记录必须保留部分完成结果。
-- 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`，不执行 cleanup，不自动删除孤儿依赖，不调用 `sudo` 或 Helper，也不由 App 自行 `rm` Cask 残留。
+- Homebrew 可以查询、搜索和管理 Formula/Cask、诊断、配置和 Tap；支持 typed batch install/update/uninstall。批量一次只处理一个 provider/type，顺序执行并保留逐项结果。
+- 单项安装/更新从卡片直接开始；批量、卸载、zap、清理和配置修改按产品矩阵进行一次任务专用确认。内部计划、状态指纹和 post-refresh 继续作为安全边界。写操作不是事务，界面和 Activity 必须保留部分完成结果。
+- Command Line Tools 只请求 macOS 系统安装流程。Homebrew 只使用官方 Apple Silicon `.pkg`，验证来源和系统信任后交给系统 Installer；Cellar 不执行远端安装脚本、不收集密码、不调用自己的 `sudo` 或 Helper。
+- 不修改 `.zprofile`，不执行 Homebrew cleanup，不自动删除孤儿依赖，也不由 App 自行 `rm` Cask 残留。
 - Formula/Cask 卸载必须显式禁止 Homebrew 自动更新和 autoremove。Cask artifact 只用于卸载前展示和执行后报告，不由 App 单独删除。
 - Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。
-- Node 通过 Manager schema v1 读取状态，并仅在 App 已展示计划且用户确认后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`。
+- Node 通过 Manager schema v1 读取状态，并仅在产品确认规则满足后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`；npm 搜索与操作始终绑定明确 Node 环境。
 - Shell 通过 App 专用 schema v1 adapter 查询和修改 Oh My Zsh、插件、主题及受限 Zsh 文件布局；不得驱动交互菜单或执行协议外的 Shell 命令。
+- 主导航固定为 Home、Library、Discover、Updates、Tools，Activity 固定在侧边栏底部；Settings 使用标准 SwiftUI scene，包含 General、Sources、Terminal、About。
+- 卡片本体不导航，只显示关键信息、一个主动作和系统浏览器网站链接。普通 UI 不显示原始命令或内部计划术语。
+- Activity 最多持久化 100 条去敏结构化摘要；原始输出只保留在当前会话诊断或既有受控日志。底层可取消时必须提供用户取消。
+- 用户可见字符串进入 String Catalog，支持 English、简体中文、繁体中文和默认 Follow System。
 
 ### Node 环境
 
@@ -105,13 +110,13 @@ git diff -- scripts
 
 ## 文档导航与权威顺序
 
-- [产品需求](docs/requirements/product-requirements.md)：页面行为、状态、数据边界和验收契约。
-- [v1 MVP 范围](docs/requirements/v1-mvp.md)：当前阶段范围与非目标。
-- [总体架构](docs/architecture/macos-app-architecture.md)：当前组件、数据流、快照与进程边界。
+- [1.0 产品需求](docs/requirements/product-requirements.md)：唯一的用户行为、安全边界和验收契约。
+- [1.0 交付范围](docs/requirements/v1-mvp.md)：发布内容、非目标和门槛；不重复定义行为。
+- [总体架构](docs/architecture/macos-app-architecture.md)：当前基线、1.0 目标、数据流、快照与进程边界。
 - [平台支持](docs/requirements/platform-support.md)：macOS、arm64 和构建门禁。
 - [开发指南](docs/development.md)：环境、测试、构建和产物检查。
 - [开发产物清理规则](docs/development-cleanup.md)：清理语义、范围、安全边界与结果报告。
-- [研究依据](docs/research.md)：Apple、npm 与项目推论。
-- [人工验收清单](docs/manual-smoke-checklist.md)：真实机器和 UI 检查。
+- [研究依据](docs/research.md)：Apple、Homebrew、npm、nvm 官方依据与项目推论。
+- [人工验收清单](docs/manual-smoke-checklist.md)：真实机器、系统授权和 UI 检查。
 
 发生冲突时，先以当前工程配置、源码和测试确认实现事实，再核对产品需求与架构文档。冲突会改变用户行为、公共契约或安全边界时，不自行选择，说明影响后等待确认。

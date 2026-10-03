@@ -1,6 +1,6 @@
 # Cellar 研究依据
 
-更新日期：2026-09-21
+更新日期：2026-10-04
 
 本文保存会影响 Cellar 架构和产品承诺的外部依据。实现事实以代码和测试为准；本文件区分官方文档、源码证据和项目推论，避免把尚未人工验证的行为写成平台保证。
 
@@ -23,11 +23,10 @@
 | `applicationShouldTerminate(_:)` 可以允许、取消或延迟退出 | Apple 官方 | [applicationShouldTerminate(_:)](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/applicationshouldterminate(_:)) |
 | 关闭最后一个窗口后返回 `true` 会继续进入终止确认 | Apple 官方 | [applicationShouldTerminateAfterLastWindowClosed(_:)](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/applicationshouldterminateafterlastwindowclosed(_:)) |
 | `NavigationSplitView` 适合作为两栏根导航，前导选择控制详情页 | Apple 官方 | [NavigationSplitView](https://developer.apple.com/documentation/swiftui/navigationsplitview) |
-| macOS 会把 `navigationSubtitle` 与导航标题一起显示在 titlebar | Apple 官方 | [navigationSubtitle(_:)](https://developer.apple.com/documentation/swiftui/view/navigationsubtitle(_:)-262n7) |
-| `Divider` 在非 Stack 环境中水平延伸，可分隔 titlebar 与详情内容 | Apple 官方 | [Divider](https://developer.apple.com/documentation/swiftui/divider) |
-| `GroupBox` 用于视觉上归组相关内容，弹性 frame 可以采用父级提供的完整宽度 | Apple 官方 | [GroupBox](https://developer.apple.com/documentation/swiftui/groupbox)、[frame](https://developer.apple.com/documentation/swiftui/view/frame(minwidth:idealwidth:maxwidth:minheight:idealheight:maxheight:alignment:)) |
-| 内容较多时可以用 disclosure control 组织 Sidebar 层级；Sidebar 通常不应超过两级 | Apple 官方 | [Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)、[DisclosureGroup](https://developer.apple.com/documentation/swiftui/disclosuregroup) |
-| `scrollIndicators(.hidden)` 可以隐藏直接 `ScrollView` 的滚动指示器，同时保留滚动行为 | Apple 官方 | [scrollIndicators(_:axes:)](https://developer.apple.com/documentation/swiftui/view/scrollindicators(_:axes:)) |
+| SwiftUI `Settings` scene 用于声明 App 的标准设置窗口 | Apple 官方 | [Settings](https://developer.apple.com/documentation/swiftui/settings) |
+| `openURL` 使用环境提供的系统 URL 打开行为，网站链接不需要内嵌浏览器 | Apple 官方 | [OpenURLAction](https://developer.apple.com/documentation/swiftui/openurlaction) |
+| `LazyVGrid` 根据 grid item 定义按需创建二维布局，适合响应式卡片集合 | Apple 官方 | [LazyVGrid](https://developer.apple.com/documentation/swiftui/lazyvgrid) |
+| Sidebar 应提供少量清晰的顶层目的地并保持一致位置 | Apple 官方与项目推论 | [HIG: Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars) |
 | `searchable` 为集合界面提供平台一致的搜索入口；搜索词仍应由 App 在边界校验后交给数据层 | Apple 官方与项目推论 | [Adding a search interface to your app](https://developer.apple.com/documentation/swiftui/adding-a-search-interface-to-your-app) |
 | `confirmationDialog` 用于呈现与当前动作相关的一组选择；不可逆 Homebrew 动作仍需在内容中明确目标和影响 | Apple 官方与项目推论 | [confirmationDialog(_:isPresented:titleVisibility:actions:message:)](https://developer.apple.com/documentation/swiftui/view/confirmationdialog(_:ispresented:titlevisibility:actions:message:)) |
 | Cellar 使用 1080 × 720 默认尺寸，同时允许系统窗口调整和恢复 | 项目推论 | 基于 `defaultSize` 语义和已确认产品要求 |
@@ -66,7 +65,20 @@
 | `HOMEBREW_NO_AUTO_UPDATE` 禁止 install/upgrade/tap 等命令前自动更新，`HOMEBREW_NO_AUTOREMOVE` 禁止 cleanup/uninstall 自动移除未使用的依赖 Formula | Homebrew 官方 | [Homebrew environment variables](https://docs.brew.sh/Manpage#environment) |
 | Homebrew 默认使用 API 安装时会读取并缓存远端 JSON；搜索、详情、过期检查和 mutation 不能承诺完全离线或零 cache 写入 | Homebrew 官方 | [API installation and JSON API](https://docs.brew.sh/How-to-Create-and-Maintain-a-Tap#installing) |
 
-由上述语义得到的项目边界：查询与写操作都可能联网并更新 Homebrew 自己的 cache；写命令不是事务。Cellar 在确认前展示计划，在命令结束后重新查询真实状态。Formula/Cask 卸载显式设置禁止自动更新和 autoremove；Cask artifact 仅用于 standard/zap 影响说明和 postflight 报告，App 不自行删除文件。
+由上述语义得到的项目边界：查询与写操作都可能联网并更新 Homebrew 自己的 cache；写命令不是事务。Cellar 内部保留 typed plan，高风险或批量动作按产品矩阵确认，并在命令结束后重新查询真实状态。Formula/Cask 卸载显式设置禁止自动更新和 autoremove；Cask artifact 仅用于 standard/zap 影响说明和 postflight 报告，App 不自行删除文件。
+
+## Homebrew 与系统安装引导
+
+| 结论 | 分类 | 依据 |
+|---|---|---|
+| Homebrew 官方安装文档提供 macOS `.pkg` 安装器；该安装器仅支持 Apple Silicon，并安装到默认 `/opt/homebrew` prefix | Homebrew 官方 | [Installation](https://docs.brew.sh/Installation) |
+| Homebrew 当前版本和 `.pkg` 资产由官方 `Homebrew/brew` releases 发布 | Homebrew 官方 | [Homebrew/brew Releases](https://github.com/Homebrew/brew/releases) |
+| macOS Installer package 必须交给系统安装机制执行，Cellar 不应自行解包来跳过 installer scripts、receipts 或授权 | Homebrew 官方与项目决策 | [Installation](https://docs.brew.sh/Installation) |
+| Gatekeeper 会检查从 App Store 外下载的软件，并结合 Developer ID/notarization 识别已知恶意内容 | Apple 官方 | [Safely open apps on your Mac](https://support.apple.com/102445) |
+
+由此确定 1.0 setup 边界：Cellar 只接受 Homebrew 官方 release metadata 与适用于当前平台的 `.pkg`，验证来源、发布元数据中可用的摘要/签名及 macOS 信任结果，再交给系统 Installer 打开。Cellar 不执行远端 shell installer、不实现 package 内部步骤、不运行自己的 `sudo`，也不收集管理员密码。摘要/签名的具体可用字段属于实现时必须验证的外部契约；官方元数据未提供时不能伪造“已校验摘要”的结论。
+
+Command Line Tools 的安装由 macOS 系统流程拥有。Cellar 只做状态检测和系统请求，不下载或封装 CLT payload；实际系统提示、授权和完成状态必须人工验收。nvm 只链接其官方项目安装说明，1.0 不在 App 中执行远端安装脚本。
 
 ## 平台和架构
 
@@ -90,24 +102,28 @@
 | `npm outdated --json` 通常返回以包名为 key 的对象，值包含 current、wanted、latest、dependent 和 location | npm 官方源码 | [npm/cli outdated.js](https://github.com/npm/cli/blob/latest/lib/commands/outdated.js) |
 | `npm config get` 返回 default、builtin、global、user、project、env 和 CLI 层合并后的有效配置 | npm 官方源码 | [npm config](https://docs.npmjs.com/cli/v11/commands/npm-config)、[@npmcli/config](https://github.com/npm/cli/tree/latest/workspaces/config) |
 | 全局 npm 包属于当前 npm/global prefix；切换 nvm Node 版本可能切换整套全局包 | npm/nvm 行为与项目事实 | [npm folders](https://docs.npmjs.com/cli/v11/configuring-npm/folders)、[nvm README](https://github.com/nvm-sh/nvm) |
+| `npm search` 在 Registry 中搜索匹配 package term，并提供 JSON 输出；搜索行为会受配置的 Registry 影响 | npm 官方 | [npm search](https://docs.npmjs.com/cli/v11/commands/npm-search)、[npm registry](https://docs.npmjs.com/cli/v11/using-npm/registry) |
+| nvm 的版本、alias/default 与安装说明以官方 `nvm-sh/nvm` 项目为准 | nvm 官方项目 | [nvm README](https://github.com/nvm-sh/nvm) |
 
 `npm outdated` 的退出码 1 可以表示“存在更新”，不一定是执行错误。Cellar 使用的 Node Manager 已把这一语义转换成统一 JSON envelope；Swift 层只解析该契约，不重新解释 npm 原始文本。
 
-## UI 状态
+## 本地化、可访问性与 UI 状态
 
 | 结论 | 分类 | 依据 |
 |---|---|---|
-| `Table` 适合展示可滚动的多列集合 | Apple 官方 | [Table](https://developer.apple.com/documentation/swiftui/table) |
 | `ContentUnavailableView` 适合空数据和错误等无法展示内容的状态 | Apple 官方 | [ContentUnavailableView](https://developer.apple.com/documentation/swiftui/contentunavailableview) |
-| Node 包列表使用 `Table`，模块失败使用明确空态，不用空表伪装成功 | 项目推论 | 与 v1 状态契约一致 |
+| String Catalog 管理可本地化字符串和多语言变体 | Apple 官方 | [Localizing and varying text with a string catalog](https://developer.apple.com/documentation/xcode/localizing-and-varying-text-with-a-string-catalog) |
+| macOS App 应支持键盘导航、辅助技术和不只依赖颜色的状态表达 | Apple 官方 | [HIG: Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility) |
+| 系统提供 Reduce Motion、Increase Contrast 和 Reduce Transparency 等辅助功能环境值 | Apple 官方 | [Accessibility environment](https://developer.apple.com/documentation/swiftui/environmentvalues#Accessibility) |
+| 1.0 卡片网格仍需为 loading、empty、offline、partial error 提供语义不同的状态，不能用空结果伪装成功 | 项目推论 | 与 1.0 产品状态契约一致 |
 
 ## SwiftUI 性能与 macOS 26 界面
 
 | 结论 | 分类 | 依据 |
 |---|---|---|
 | SwiftUI Instrument 的 update groups 和 cause-and-effect graph 用于区分视图更新环、长 `body` 和非 SwiftUI CPU 成本；不应用延迟或动画掩盖状态重入 | Apple 官方 | [Understanding and improving SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance)、[WWDC25: Optimize SwiftUI performance with Instruments](https://developer.apple.com/videos/play/wwdc2025/306/) |
-| `List` 与 `Table` 适合稳定 ID 的高密度集合；过滤应在构建 row 之前完成，不在 row 构建时反向写 selection | Apple 官方与项目推论 | [WWDC23: Demystify SwiftUI performance](https://developer.apple.com/videos/play/wwdc2023/10160/)、[`Table`](https://developer.apple.com/documentation/swiftui/table) |
-| macOS Sidebar 应使用系统列表、可折叠 section 和稳定的行 selection；非 List row 的 utility 导航不与 `NSOutlineView` 共用 selection | Apple 官方与本机崩溃证据 | [HIG: Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)；macOS 26.7 崩溃栈为 `NSOutlineView → OutlineListCoordinator → AttributeGraph` |
+| `List` 和 lazy layout 适合稳定 ID 的集合；过滤应在构建 row/card 前完成，不在子视图构建时反向写 selection | Apple 官方与项目推论 | [WWDC23: Demystify SwiftUI performance](https://developer.apple.com/videos/play/wwdc2023/10160/)、[`LazyVGrid`](https://developer.apple.com/documentation/swiftui/lazyvgrid) |
+| macOS Sidebar 应使用稳定的系统 selection；固定底部 Activity 不向 Sidebar `List` 注入树外 selection | Apple 官方与本机崩溃证据 | [HIG: Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)；macOS 26.7 崩溃栈为 `NSOutlineView → OutlineListCoordinator → AttributeGraph` |
 | Liquid Glass 是导航和交互控件层；标准 toolbar、sheet、button 和 segmented control 优先使用系统适配，内容卡、表格行和日志不铺满自定义玻璃 | Apple 官方 | [Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)、[HIG: Toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars) |
 | 进度只显示实际可证明的阶段或数量；无可靠百分比时使用不定 `ProgressView`，不使用常驻高帧率 shimmer | Apple 官方与项目推论 | [HIG: Progress indicators](https://developer.apple.com/design/human-interface-guidelines/progress-indicators)、[`ProgressView`](https://developer.apple.com/documentation/swiftui/progressview) |
 
@@ -123,8 +139,10 @@
 - 首次窗口尺寸、窗口恢复和用户调整。
 - `Command-Q`、关闭最后窗口和活动任务组合。
 - Finder 启动下对 `/opt/homebrew` 和默认 nvm Node 的发现。
+- macOS Command Line Tools 系统请求与 Homebrew 官方 `.pkg` 的信任提示、授权和完成状态。
+- 官方 release metadata、npm Registry search 与 Node/nvm 线上版本在离线、超时和限流场景下的表现。
 - `npm outdated` 在离线、registry 超时、认证失败和代理环境下的表现。
 - App 退出后是否存在遗留的 bash、npm 或 brew 子进程。
-- 中文 UI 在 1080 × 720 及更窄窗口中的截断和可读性。
+- English、简体中文和繁体中文 UI 在 1080 × 720 及更窄窗口中的截断、键盘与 VoiceOver 可用性。
 
 这些项目进入[人工验收清单](manual-smoke-checklist.md)。人工验证失败时修改实现或收缩产品承诺，不增加未经证明的 fallback。

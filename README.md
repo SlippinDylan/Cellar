@@ -1,48 +1,48 @@
 # Cellar
 
-Cellar 是一个原生 macOS 开发环境工具。它把 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 的状态放在同一个窗口里，并提供受控的 Homebrew 查询与管理功能。
+Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 把 Homebrew Formula、Homebrew Cask、npm 全局包、Node/nvm 与终端配置组织为查找、安装、更新、卸载和维护等用户任务，同时保留每个 provider 的真实语义与安全边界。
 
-> Cellar 仍在开发，没有可下载的正式版本。Homebrew、Node 和 Shell 的写操作都会先展示计划并等待确认。
+> Cellar 仍在开发，没有可下载的正式版本。以下内容是已确认的 1.0 产品范围；当前源码会随实现任务逐步达到该契约。
 
-## 当前能力
+## Cellar 1.0
 
-| 页面 | 内容 |
+| 入口 | 用途 |
 |---|---|
-| 概览 | Homebrew、Node、Shell 和 Manager 快照摘要 |
-| Homebrew | 概览、已安装项、可升级项、搜索发现、诊断、配置与 Tap |
-| Node | Node/npm 版本、全局包、Registry、nvm 版本和受控维护操作 |
-| Shell | Zsh、Oh My Zsh、插件、主题和受控配置整理 |
-| 操作记录 | 本次 App 会话中的刷新结果和错误 |
+| Home | Homebrew 与 Node/npm/nvm 的本地状态、线上版本、数量和具体更新摘要 |
+| Library | 统一查看、搜索和管理已安装的 Formula、Cask 与 npm 全局包 |
+| Discover | 搜索 Homebrew 与 npm Registry，单项或同 provider/type 批量安装 |
+| Updates | 按 All、Homebrew、npm、Formula 或 Cask scope 查看和执行更新 |
+| Tools | CLT/Homebrew/nvm setup、Node runtime、项目 `.nvmrc`、诊断与受限维护 |
+| Activity | 当前任务、取消、最近最多 100 条持久摘要、筛选与复制 |
 
-Cellar 启动后会自动刷新。Homebrew、Node 或 Shell 其中一项失败时，其他已经读取的状态仍会保留。npm 更新检查失败也不会清空 Node 版本和全局包列表。
+Activity 固定在主窗口侧边栏底部。Settings 使用标准 macOS 窗口，包含 General、Sources、Terminal 和 About。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
 
-Homebrew 可以单个或按同类型批量安装 Formula/Cask、更新 Homebrew 元数据、选择升级、卸载单个 Formula、以 standard 或 zap 模式卸载单个 Cask，以及添加或安全移除 Tap。批量输入一行一个名称，单次最多 100 项。每项写操作都会先展示计划并等待确认，完成后重新读取状态。Homebrew 操作不是事务；命令失败时可能已经完成其中一部分，Cellar 会保留实际结果而不会显示为整体回滚。
+目录使用简洁卡片：名称、Formula/Cask/npm 类型、当前/可用版本、语义更新状态、最多两行说明、一个主动作和系统浏览器网站链接。卡片本体不承担跳转。
 
-Node 可以在当前受控 Node 环境中安装、更新和卸载 npm 全局包，管理 nvm/Node 版本、默认与 scope Registry，执行受限维护操作，并为用户明确选择的项目写入 `.nvmrc`。写操作同样先生成计划并确认；“用于本次 Cellar 会话”只改变 App 后续命令的受控 PATH，不改变已经打开的终端。
+## 操作与安全
 
-Shell 可以安装 Oh My Zsh、从 GitHub HTTPS 地址安装插件、更新受管理的插件与主题配置，并把 zcompdump 和历史备份整理到 `~/.zsh`。修改 `.zshrc` 前会创建备份；符号链接、非普通文件和计划后状态变化会阻止执行。
+- npm 只管理全局包，并始终标明目标 Node 环境。
+- 单项安装/更新从卡片开始；批量、卸载、zap、清理和配置修改使用任务专用确认。
+- 批量任务一次只处理一个 provider/type，逐项顺序执行；某项失败后继续，用户取消则停止未开始项。
+- 写操作不是事务，不承诺回滚。Cellar 会保留成功、失败、已取消和 post-refresh 后的真实状态。
+- Formula/Cask 卸载禁止 Homebrew 自动更新和 autoremove。Cellar 不执行 Homebrew cleanup，不自行删除 Cask artifact 或孤儿依赖。
+- Cellar 不运行自己的 `sudo` 或 Privileged Helper，不收集管理员密码，不修改 `.zprofile`，不运行 `chsh`。
 
-## 当前限制
-
-- 不安装 Command Line Tools 或 Homebrew，不修改 `.zprofile`。
-- 不执行 Homebrew cleanup，不自动删除孤儿依赖，也不由 App 自行删除 Cask 残留文件。
-- 不调用 `sudo`，不包含 Privileged Helper；需要更高权限的项目只报告给用户。
-- 不切换默认登录 Shell，不运行 `chsh`，也不删除 Oh My Zsh 或用户插件目录。
-- Node 环境支持默认的 `~/.nvm` 布局和常见系统路径；自定义 NVM_DIR、asdf、fnm 与 Volta 尚未支持。
-- Homebrew、Node 和 Shell 查询和写操作分别设置 5 分钟和 30 分钟 deadline；界面尚未提供用户取消入口。
-- 界面文本目前只有中文。
+缺少 Command Line Tools 时，Cellar 只请求 macOS 系统安装流程。缺少 Homebrew 时，只从 Homebrew 官方发布渠道取得适用于 Apple Silicon 的 `.pkg`，完成来源和系统信任检查后交给 macOS Installer；Cellar 不重写安装器或执行远端安装脚本。nvm 提供官方安装指引，不在 App 内运行远端脚本。
 
 ## 数据与网络
 
-Manager 以只读资源随 App 打包，首次运行时复制到：
+Cellar 没有账户、遥测或自有服务端。Homebrew、npm Registry、nvm/Node 版本、Oh My Zsh、GitHub 插件和 Sparkle 更新会按用户可见功能访问官方或用户配置的来源。Homebrew/npm 查询也可能写入各自 cache；单一网络检查失败不会清空已读取的本地状态。
+
+Manager 只读资源随 App 打包，运行副本安装到：
 
 ```text
 ~/Library/Application Support/Cellar/Managers/<version>/
 ```
 
-Cellar 不包含账户、遥测或自己的服务端。`npm outdated`、包安装和更新会访问当前配置的 npm registry；Node/nvm 写操作可能修改 `~/.npmrc`、`~/.nvm`、npm cache，以及用户明确选择项目中的 `.nvmrc`。Homebrew 查询和操作可能访问 Homebrew 或第三方 Tap 的服务。Oh My Zsh 和插件安装会访问固定官方脚本或用户确认的 GitHub 地址；Shell 配置操作会备份并更新 `.zshrc` 的受管理 block。Cellar 不修改 `.zprofile` 正文，也不调用 `chsh`。
+Activity 最多持久化 100 条去敏后的结构化摘要。原始命令输出不进入持久摘要，只在当前会话诊断区域或既有受控日志中提供。
 
-Release 构建使用 Sparkle 检查 `https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml`。Debug 和普通本地构建默认关闭 updater；配置发布密钥并通过发布流水线构建后才启用自动检查。
+Release 构建使用 Sparkle 检查 `https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml`。Debug 和普通本地构建默认关闭 updater；只有发布流水线配置密钥并显式开启时才检查更新。
 
 ## 系统要求
 
@@ -71,9 +71,10 @@ xcodebuild build \
 
 | 文档 | 内容 |
 |---|---|
-| [产品需求](docs/requirements/product-requirements.md) | 页面行为、状态、数据边界和验收契约 |
-| [v1 MVP 范围](docs/requirements/v1-mvp.md) | 当前阶段范围和非目标 |
-| [总体架构](docs/architecture/macos-app-architecture.md) | 组件、数据流、Manager 与进程边界 |
+| [1.0 产品需求](docs/requirements/product-requirements.md) | 唯一的用户行为、安全边界与验收契约 |
+| [1.0 交付范围](docs/requirements/v1-mvp.md) | 发布内容、非目标和门槛 |
+| [总体架构](docs/architecture/macos-app-architecture.md) | 目标架构、当前基线、数据流与进程边界 |
 | [平台支持](docs/requirements/platform-support.md) | macOS、arm64 和构建门禁 |
+| [研究依据](docs/research.md) | Apple、Homebrew、npm 与 nvm 官方依据 |
 | [开发指南](docs/development.md) | 测试、构建、产物检查和清理 |
-| [人工验收清单](docs/manual-smoke-checklist.md) | 真实机器和 UI 检查 |
+| [人工验收清单](docs/manual-smoke-checklist.md) | 真实机器、系统授权和 UI 检查 |

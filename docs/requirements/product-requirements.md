@@ -1,304 +1,240 @@
-# Cellar 产品需求
+# Cellar 1.0 产品需求
 
-状态：Homebrew 本轮目标行为契约
+状态：已确认的 1.0 产品契约；实现中
 
-更新日期：2026-09-20
+更新日期：2026-10-04
 
-## 产品定位
+本文是 Cellar 1.0 用户行为、范围和验收的唯一权威来源。当前代码尚未实现的条目是交付要求，不是已交付声明。组件边界见[总体架构](../architecture/macos-app-architecture.md)，阶段范围见[1.0 交付范围](v1-mvp.md)，外部依据见[研究文档](../research.md)。
 
-Cellar 是一个原生 macOS 开发环境工具。它在一个窗口中汇总 Homebrew、Node/npm/nvm、Zsh 和 Oh My Zsh 的本机状态，并显示本次会话的操作记录。
+## 1. 摘要
 
-Homebrew、Node 与 Shell 模块提供写操作。Homebrew 通过 Bridge 受控调用绝对 `brew`，Node 使用 Manager schema v1，Shell 使用叠加在冻结交互 Manager 上的 App 专用 schema v1 adapter；App 不驱动任何交互菜单。每项写操作先展示计划并要求确认，执行后重新读取真实状态。
+Cellar 是面向 Apple Silicon Mac 的原生开发环境管理工具。它把 Homebrew Formula、Homebrew Cask、npm 全局包、Node/nvm 与终端配置组织为“查看、发现、安装、更新、卸载和维护”等用户任务，而不是要求用户先理解不同命令行工具的页面结构。
 
-## 目标
+统一界面不抹平 provider 差异。每项操作始终保留 Formula、Cask 或 npm 身份、明确的 Node 环境、真实副作用和失败边界；批量操作不是事务，也不承诺回滚。
 
-| ID | 目标 |
-|---|---|
-| G-01 | 从 Finder 或 Xcode 启动时仍能读取常见 Apple Silicon Homebrew 和默认 nvm Node 环境 |
-| G-02 | 在同一界面展示 Homebrew、Node/npm 和 Shell 的真实状态，并完成受控的 Homebrew 常用操作 |
-| G-03 | 保持外部命令参数、环境、输出和错误边界明确 |
-| G-04 | 单项读取失败时保留其他已经成功取得的状态 |
-| G-05 | Homebrew、Node 与 Shell 写操作保持范围明确，不执行协议外状态变更 |
+## 2. 背景与用户
 
-## v1 非目标
+目标用户是在 macOS 上维护本机开发工具、但不希望反复记忆多套 CLI 语法的开发者。他们需要快速回答三个问题：本机有什么、有什么可更新、一个操作会影响哪里。
 
-| ID | 非目标 | 原因 |
+现有实现已经具备受控进程、Homebrew 查询和 mutation、Node Manager schema v1、Shell adapter、部分失败保留与 Manager 快照。1.0 在这些边界上重组信息架构，补齐官方目录、环境安装引导、批量编排、取消、持久 Activity、本地化和可访问性。
+
+## 3. 目标与成功标准
+
+| ID | 目标 | 1.0 验收信号 |
 |---|---|---|
-| NG-01 | 安装 Command Line Tools 或 Homebrew、修改 `.zprofile` | 环境引导与系统配置不属于本轮范围 |
-| NG-05 | 切换登录 Shell、删除 Oh My Zsh 或执行任意 Shell 命令 | 当前协议只覆盖明确的用户级配置操作 |
-| NG-06 | root 操作、Privileged Helper 或 `sudo` | v1 能力不需要提权 |
-| NG-07 | 后台驻留或菜单栏入口 | Cellar 是普通前台窗口应用 |
-| NG-08 | Intel、Universal Binary、Rosetta 或 macOS 15 | 平台只支持 macOS 26+、arm64 |
-| NG-09 | Homebrew cleanup 或自动删除孤儿依赖 | 删除范围必须由用户明确选择，不做隐式扩张 |
-| NG-10 | App 自行删除 Cask 残留文件 | artifact 仅展示和报告，删除交由 Homebrew standard/zap 语义 |
-| NG-11 | 批量卸载 Formula/Cask | 本轮卸载限定单个目标，降低误操作和部分完成风险 |
+| G-01 | 任务导向 | 用户从 Home、Library、Discover、Updates 或 Tools 完成任务，无需先选择技术模块 |
+| G-02 | 真实且清楚 | 卡片显示 provider/type、版本、状态和目标环境；未知状态不伪装为最新 |
+| G-03 | 安全写入 | 写操作有明确范围、适当确认、取消和 post-refresh，并保留部分完成结果 |
+| G-04 | 可恢复读取 | 一个 provider 或线上检查失败时，其他本地数据继续可用 |
+| G-05 | 原生体验 | 支持键盘、VoiceOver、系统外观、窄窗口和标准 macOS Settings/菜单行为 |
+| G-06 | 国际化 | 英文、简体中文和繁体中文覆盖所有用户可见字符串，默认跟随系统 |
+| G-07 | 低资源占用 | 空闲时无轮询；独立 IO 只使用有界并发；大列表和状态更新无持续高频工作 |
 
-## 导航与窗口
+## 4. 信息架构
 
-Cellar 使用两栏 `NavigationSplitView`。侧边栏主列表包含概览、Homebrew、Node 和 Shell；操作记录与设置位于可滚动列表之外的固定底部 utility 区域。启动时默认选择概览。
+主窗口使用两栏 `NavigationSplitView`。首次窗口默认内容尺寸为 1080 × 720 点，可由用户调整和由系统恢复。
 
-| ID | 行为 |
+侧边栏主导航顺序固定为：
+
+1. Home
+2. Library
+3. Discover
+4. Updates
+5. Tools
+
+Activity 固定在侧边栏底部。Settings 使用标准 SwiftUI `Settings` scene，不作为主窗口页面。App 是普通前台应用，不提供 `MenuBarExtra`，不在关闭最后窗口后后台驻留。
+
+无活动任务时，关闭最后窗口和 `Command-Q` 退出 App。有活动任务时，本次退出请求被拒绝；界面提供取消入口，任务结束后用户可再次退出。
+
+### 4.1 Home
+
+Home 只显示 Homebrew 与 Node/npm/nvm，不显示 Oh My Zsh、Shell 或 Manager 技术信息。
+
+- Homebrew：安装状态、本机版本、线上最新版本、Formula/Cask 数量、更新时间和最多五个具体更新名称。
+- Node/npm/nvm：可用状态、当前受控 Node/npm 版本、nvm default、线上版本、当前 Node 环境的 npm 全局包数量、更新时间和最多五个具体更新名称。
+- 本地状态先显示，线上版本和更新检查随后异步完成；线上失败不能清空本地状态。
+- 缺少 Command Line Tools、Homebrew 或 nvm 时，在对应区域提供内联说明和可用的安装/引导动作，不显示轮播式 onboarding。
+
+### 4.2 Library
+
+Library 展示已安装软件，提供 All、Homebrew、npm scope；Homebrew 下提供 Formula 与 Cask subtype scope。
+
+- 使用卡片和本地搜索/筛选。
+- npm 卡片始终显示所属 Node 环境，不把多个 Node 安装的全局包合并成整机唯一集合。
+- 单项卸载使用一次任务专用确认。
+- Manage mode 支持同一 provider/type 内的批量卸载；逐项顺序执行，某项失败后继续，并显示每项结果。
+- Cask 批量卸载默认 standard；zap 必须由用户对明确目标主动选择，不能静默升级为 zap。
+
+### 4.3 Discover
+
+Discover 是 Homebrew Formula、Homebrew Cask 和 npm Registry 的统一搜索入口。scope 必须清楚可见，结果保留 provider/type 身份。
+
+- 空查询不请求完整远端目录；搜索结果有界并可取消。
+- 结果卡显示名称、类型、可用版本、最多两行说明、网站链接和一个状态相关主动作。
+- npm 搜索结果说明 Registry 来源；安装目标始终是界面当前明确标注的 Node 环境。
+- Formula/Cask 同名时不能依靠名称猜测类型。
+- 批量安装一次只接受一个明确 provider/type，一行一项，去空、去重，最多 100 项；预览目标后统一确认，逐项保留结果。
+
+### 4.4 Updates
+
+Updates 提供 All、Homebrew、npm scope；Homebrew 下提供 Formula 与 Cask subtype scope。
+
+- 卡片显示当前版本、可用版本和 `behind`、`current`、`ahead` 或 `unknown` 语义状态。
+- 只有 `behind` 提供更新动作；npm 的 `ahead` 或 `unknown` 不产生更新或降级动作。
+- “Update All”只影响当前可见 scope。跨 provider 的 All 视图仍拆成 provider/type 明确的顺序任务，不生成混合命令。
+- 单项更新从卡片直接开始；批量更新使用一次任务专用确认。
+- `brew update` 只更新 Homebrew/Tap 元数据，是 Tools 中的独立动作，不与包更新、查看或卸载隐式绑定。
+
+### 4.5 Tools
+
+Tools 按任务组织，而不是暴露 Manager 菜单：
+
+- Environment setup：Command Line Tools、Homebrew 与 nvm 状态和安全引导。
+- Runtime：安装、切换本次 Cellar 会话使用的 Node、设置 nvm default、安全卸载 Node。
+- Project：为用户通过系统目录选择器明确选择的项目读取或写入 `.nvmrc`。
+- Diagnostics：`brew doctor`、受控 PATH 和关键路径。
+- Maintenance：Homebrew 元数据更新、npm/node-gyp/Manager 日志等现有受限维护动作，以及 Zsh tidy。
+
+Homebrew `cleanup`、自动删除孤儿依赖和任意路径清理不在 Tools 范围内。普通界面不展示原始命令或“生成计划/执行计划”等内部术语。
+
+### 4.6 Activity
+
+Activity 展示当前任务与最近最多 100 条结构化摘要，并跨 App 启动持久化。
+
+- 摘要包含用户可理解的动作、scope、时间、进行中/成功/部分完成/失败/已取消状态和逐项目结果。
+- 支持按状态或 provider 筛选，支持复制用户摘要和显式诊断详情。
+- 默认界面不显示原始命令。stdout/stderr 和原始技术输出只在当前会话的诊断区域或现有受控日志中提供，不写入持久摘要。
+- 持久数据在写入前去除凭证、环境变量秘密和不必要的用户路径。
+- 底层任务可取消时提供取消；取消后仍 post-refresh 已经可能改变的状态，并显示实际完成项。
+
+### 4.7 Settings
+
+Settings 使用标准窗口和四个 pane：
+
+- General：语言，默认 Follow System，可显式选择 English、简体中文或繁体中文。
+- Sources：Homebrew Tap 与 npm 默认/scope Registry。
+- Terminal：Oh My Zsh、插件和主题。
+- About：版本、更新通道、开源与 Sparkle 检查更新入口。
+
+Terminal 插件可从 Oh My Zsh 内置插件、已安装自定义插件或用户确认的 `https://github.com/<owner>/<repository>` 添加；不提供“推荐插件”目录。主题只选择本机已安装的 `.zsh-theme`。插件和主题使用一次 Apply 提交；Cellar 永不运行 `chsh`。
+
+## 5. 卡片与交互契约
+
+目录型页面共享自适应卡片网格。卡片本体没有导航或点击动作；只有明确控件可触发操作。
+
+每张卡片按数据可用性展示：
+
+- 名称及 Formula、Cask 或 npm provider/type；
+- 当前版本和/或可用版本；
+- 语义更新状态；
+- 最多两行、尾部截断的说明；
+- 一个主动作；
+- 通过系统默认浏览器打开的官方网站链接；
+- 执行中的真实阶段或不定进度。
+
+Cask 图标仅在本机已有、来源明确且读取成本低时使用；否则使用系统或 provider symbol。界面使用系统字体、颜色、material 和标准控件，不以装饰性玻璃覆盖内容卡片。
+
+键盘必须能到达所有动作，并显示焦点。状态不能只靠颜色表达。支持 VoiceOver 名称/值/顺序、Light/Dark、Increased Contrast、Reduce Motion、Reduce Transparency，以及窄/宽窗口。菜单命令和快捷键覆盖可达的刷新、搜索及常用 toolbar 动作。
+
+## 6. 数据与版本语义
+
+### 6.1 Homebrew
+
+- Formula 与 Cask 是不同身份；查询、安装、更新、卸载和批量操作都保留类型。
+- 本机信息以受控绝对 `brew` 返回的结构化数据为准；线上 Homebrew 版本与安装器元数据来自官方来源。
+- Cask artifact 只用于卸载前说明和执行后报告。Cellar 不自行 `rm` artifact，也不做名称或 bundle identifier 模糊扫描。
+- 卸载显式禁止 Homebrew 自动更新和 autoremove。
+
+### 6.2 Node、npm 与 nvm
+
+- npm 1.0 只管理全局包，不管理项目依赖。
+- 全局包属于明确 Node 安装。默认启动环境优先解析 `~/.nvm/alias/default`；缺失、循环或无法匹配时不猜测最新版。
+- Finder/Xcode 启动不读取 `.zshrc`。受控 PATH 只加入明确解析的默认或本次会话 Node `bin` 和批准的系统路径。
+- npm Registry 搜索与 Node runtime 管理是不同职责。
+- `npm outdated` 或线上元数据失败是独立部分失败，不能抹掉 Node/npm 版本、包列表和配置。
+
+### 6.3 版本状态
+
+在可以可靠比较时，版本状态为：
+
+- `behind`：可用版本高于当前版本；允许更新。
+- `current`：当前与可用版本相同。
+- `ahead`：当前版本高于线上/Registry 版本；只展示，不自动降级。
+- `unknown`：缺失、非可比较版本或检查失败；不声称已是最新，也不提供更新。
+
+## 7. 写操作与安全边界
+
+### 7.1 确认规则
+
+| 动作 | 用户确认 |
 |---|---|
-| UI-01 | 首次创建窗口时默认内容尺寸为 1080 × 720 点，用户可以调整窗口大小 |
-| UI-02 | App 启动后直接显示普通前台窗口，不创建 `MenuBarExtra` |
-| UI-03 | 关闭最后一个窗口时请求退出 App |
-| UI-04 | 没有活动任务时 `Command-Q` 立即退出 |
-| UI-05 | 有活动任务时拒绝当前退出请求；任务结束后用户可以再次退出 |
-| UI-06 | 工具栏刷新按钮在刷新期间禁用，重复刷新请求不启动第二轮任务 |
-| UI-07 | 每个一级页面在系统 titlebar 显示标题和一句用途说明，详情区顶部使用统一分割线 |
-| UI-08 | 页面内容使用一致的水平边距；概览使用一条紧凑环境状态带和独立系统信息区，模块页的状态总览占满内容宽度 |
-| UI-09 | Homebrew、Node 和 Shell 在左侧 Sidebar 中作为可折叠一级分类，所有二级页面提供对应真实功能 |
-| UI-10 | 左侧 Sidebar 保留垂直滚动，滚动指示器交由 macOS 系统策略管理 |
-| UI-11 | Sidebar 使用系统 `List(.sidebar)` 选择样式；设置页使用 macOS 26 系统工具栏和克制的 Liquid Glass pane selector |
-| UI-12 | About 展示 Bundle 版本并提供 Sparkle 检查更新入口；普通本地构建禁用 updater |
+| 单项安装、单项更新 | 从卡片直接开始，不显示通用计划页 |
+| 批量安装、批量更新 | 预览明确 scope 和目标后一次确认 |
+| 单项/批量卸载、Cask zap | 一次任务专用确认，说明不可回滚与影响范围 |
+| Tap、Registry、Terminal、`.nvmrc` 等配置修改 | 一次任务专用确认 |
+| cleanup 类受限维护 | 一次任务专用确认并列出精确候选；Homebrew cleanup 不支持 |
 
-## 启动与刷新
+内部仍使用强类型计划、时效和状态指纹保护高风险操作。确认后的目标或状态变化必须拒绝执行并要求用户重新开始。所有 mutation 在有能力处理结果的层保存退出状态和逐项目结果，完成、失败或取消后读取真实状态。
 
-正常启动后，根视图自动发起一次刷新。Hosted XCTest 进程不执行自动刷新，防止测试访问用户真实环境。
+### 7.2 批量、并发与取消
 
-一次刷新按以下顺序执行：
+- 同一时间只执行一个全局写任务；重复提交不启动第二项。
+- 每次提交只包含一个 provider/type；跨 scope 的用户动作拆为清楚的 typed operation。
+- 批量 install/update/uninstall 顺序执行；单项失败后继续未执行项，用户取消则停止尚未开始的项。
+- 不做事务承诺或自动回滚。成功、失败、已取消和无法确认的项目分别呈现。
+- 退出保护覆盖仍在运行的任务；取消通过既有进程组生命周期终止可取消的子进程。
 
-1. 验证 App Bundle 中的 Manager 快照。
-2. 将当前版本快照安装到 Application Support；已有完整副本直接复用，不完整副本重新安装。
-3. 并行读取 Homebrew、Node 和 Shell 状态。
-4. 分别保存成功结果和错误。
-5. 用一条完成记录替换操作记录中的“进行中”条目。
+### 7.3 环境安装
 
-如果快照安装失败，本轮不启动后续三项读取。Homebrew、Node 或 Shell 单项失败不影响另外两项结果。
+- Command Line Tools：只请求 macOS 提供的系统安装流程。Cellar 不下载、不打包、不模拟 CLT 安装器，也不代替系统授权。
+- Homebrew：只下载 Homebrew 官方发布渠道提供、适用于当前平台的官方安装包，完成来源、摘要/签名与 macOS 信任检查后交给系统 Installer 打开。系统 Installer 负责权限说明和授权；Cellar 不重写 Homebrew 安装逻辑、不运行网络脚本、不收集管理员密码，也不提供自己的 `sudo` 或 Privileged Helper。
+- 已有但损坏或来源不明的 Homebrew 不被覆盖、删除或“自动修复”；界面说明检测结果并引导用户采用 Homebrew 官方恢复方式。
+- nvm：1.0 提供状态、官方安装指引和已有 nvm 环境管理；不在 App 内执行远端安装脚本。
 
-## 页面行为
+下载、元数据、摘要、签名/Gatekeeper 检查和打开 Installer 必须可替换，以便自动测试只使用本地 fixture，绝不打开真实 Installer。
 
-### 概览
+### 7.4 明确禁止
 
-概览顶部用一条横向状态带展示 Homebrew、Node 和 Shell：
+Cellar 1.0 不会：
 
-- Homebrew：版本和已安装项目数量；未读取时显示不可用。
-- Node：Node 版本和全局包数量；未读取时显示不可用。
-- Shell：Zsh 版本和 Oh My Zsh 安装状态。
+- 执行 Homebrew cleanup、自动删除孤儿依赖，或自行删除 Cask 残留；
+- 运行 `sudo`、内置 Privileged Helper、保存密码或绕过 macOS 授权界面；
+- 修改 `.zprofile` 正文、运行 `chsh`、删除 Oh My Zsh 或接受任意 Git URL/任意 Shell 命令；
+- 驱动 Homebrew 或 Zsh 的交互菜单；
+- 管理 npm 项目依赖，或把不同 Node 环境的全局包合并；
+- 在未确认的 provider/type 之间混合批量命令；
+- 后台驻留、退出后继续任务、收集遥测或使用 Cellar 账户服务。
 
-下方系统信息区展示 Homebrew、Node、Shell 配置和 Manager 运行副本的路径，并带出 Manager 快照版本。首次刷新期间显示进度；刷新完成后如有错误，在“需要检查”区域逐项列出，并显示最后刷新时间。
+## 8. 文件、网络与隐私
 
-### Homebrew
+Cellar 没有账户、遥测或自有服务端。网络请求只服务于用户可见的版本、目录、包管理、插件或更新任务，并使用官方服务或用户明确配置的 Tap/Registry/GitHub 地址。
 
-Homebrew 使用现有六个二级页面。安装入口位于“发现”，卸载入口位于“已安装”，升级入口位于“可升级”，Tap 管理位于“配置”；不新增只承载单个动作的侧边栏页面。
+Manager 只读资源从 App Bundle 安装到：
 
-#### 概览
+```text
+~/Library/Application Support/Cellar/Managers/<version>/
+```
 
-| ID | 展示内容 |
-|---|---|
-| HB-01 | 是否在受控 PATH 中找到 `brew` |
-| HB-02 | Homebrew 版本和 brew 可执行文件绝对路径 |
-| HB-03 | prefix、repository 和 cache 路径 |
-| HB-04 | 已安装 Formula、Cask、Tap 与可升级项数量 |
-| HB-05 | 最近一次读取时间和各数据分区错误 |
+App Bundle Resources 不写入运行数据。Activity 的结构化摘要持久化在 Cellar 自有 Application Support 范围，最多 100 条；原始输出不进入该摘要存储。
 
-找不到 brew 是正常的“未安装”状态，不是命令失败。找到 brew 但基础命令非零退出时，页面显示读取失败。Homebrew Manager 快照存在不代表 App 会调用它。
+Homebrew 和 npm 查询也可能访问网络并写入各自 cache。拒绝网络或单一来源失败时，本地已知状态尽量继续展示。任何真实安装、更新、卸载或配置操作只在用户动作和上述确认边界内发生。
 
-#### 已安装
+## 9. 性能与可靠性
 
-| ID | 行为 |
-|---|---|
-| HB-10 | Formula 与 Cask 分组显示，支持名称搜索和类型筛选 |
-| HB-11 | 每项显示名称、显示名称、已安装版本、描述和可用的来源信息 |
-| HB-12 | Formula 详情展示依赖、被依赖关系和安装信息；缺失字段明确显示不可用 |
-| HB-13 | Cask 详情展示 Homebrew 报告的 artifact；计划只检查其中无 glob 的精确绝对路径、`~/` 路径和明确 App bundle，显示当前存在项与预计占用空间 |
-| HB-14 | Formula 只允许单目标卸载；确认计划明确声明不执行 autoremove |
-| HB-15 | Cask 单目标卸载必须由用户分别选择 standard 或 zap；两者不使用模糊的统一“卸载”动作，postflight 报告仍存在的已声明路径 |
-| HB-16 | Formula/Cask 卸载显式禁止自动更新；App 不自行 `rm` artifact 或其他残留 |
+- 启动先读取本地状态；线上版本检查不阻塞首屏。
+- 相互独立的只读 IO 使用有界并发；不使用轮询循环、高频动画或投机 cache。
+- 进程使用绝对 executable、参数数组、受控 environment、明确工作目录/stdin/stdout/stderr、deadline、输出上限、取消和进程组回收；禁止 `bash -c`。
+- 读取、线上版本、搜索和单项 mutation 的失败分开建模；一个错误不清空无关成功数据。
+- View 不直接运行命令；Models 不执行 IO；自动测试不接触用户真实环境。
 
-#### 可升级
+## 10. 发布范围与非目标
 
-| ID | 行为 |
-|---|---|
-| HB-20 | 分组列出可升级 Formula/Cask，显示当前版本和可用版本 |
-| HB-21 | 用户可以选择一项或多项进行升级；确认计划列出精确目标和类型 |
-| HB-22 | `brew update` 是独立动作，不与查看或卸载隐式绑定 |
-| HB-23 | 升级执行后重新查询可升级与已安装状态；部分目标失败时逐项保留结果 |
+1.0 支持 macOS 26.0 及以上、仅 Apple Silicon `arm64`，使用 Swift 6、SwiftUI、Foundation 和必要的 AppKit/Sparkle。不支持 Intel、Universal Binary、Rosetta、macOS 15、App Sandbox 或 Mac App Store。
 
-#### 发现
+1.0 不保证自定义 `NVM_DIR`、asdf、fnm、Volta、远程主机、团队同步、后台自动更新包、自动修复开发环境或任意 CLI 执行。新的删除、提权、持久化或外部协议能力必须先更新本文的产品与安全契约。
 
-| ID | 行为 |
-|---|---|
-| HB-30 | 用户输入非空查询后分别搜索 Formula 与 Cask，不在空查询时请求全部远端目录 |
-| HB-31 | 搜索结果可以继续读取详情；详情加载失败不抹掉已有搜索结果 |
-| HB-32 | 安装前展示目标名称、类型、版本/描述等可用信息和将执行的命令语义 |
-| HB-33 | Formula/Cask 安装使用明确类型，禁止依靠同名解析猜测目标 |
-| HB-34 | 发现页支持从 sheet 输入批量名称；单次计划限 1–100 个同类型 Formula 或 Cask，去除重复项后逐项读取详情并统一确认 |
+## 11. 验收边界
 
-#### 诊断
+自动测试和无签名构建验证类型、状态、解码、进程、取消、持久化、测试隔离、localization coverage、最低系统和 arm64 产物。所有外部写操作使用 fake executable、fixture 和临时目录。
 
-| ID | 行为 |
-|---|---|
-| HB-40 | 显示 Command Line Tools 是否可用，但不提供安装入口 |
-| HB-41 | 用户主动运行 `brew doctor`；保留退出状态、stdout 和 stderr，不把非零结果显示为“无问题” |
-| HB-42 | 展示受控 PATH、brew 路径以及 App 能识别的环境问题 |
-
-#### 配置与 Tap
-
-| ID | 行为 |
-|---|---|
-| HB-50 | 显示 prefix、repository、cache、Cellar 及 Homebrew 配置信息 |
-| HB-51 | 列出当前 Tap，并支持添加合法的 Tap 名称 |
-| HB-52 | 移除 Tap 前扫描该 Tap 提供且当前已安装的 Formula/Cask；存在关联安装项时拒绝执行并列出阻塞项 |
-| HB-53 | 安全检查通过后仍需展示计划并确认；执行后重新读取 Tap 与包状态 |
-
-#### 写操作通用契约
-
-所有 Homebrew mutation 使用同一流程：
-
-1. 根据当前读取结果生成只包含一个明确意图的计划。
-2. 在确认界面展示动作、目标、类型、模式、预期副作用和不包含的动作。
-3. 用户确认后取得 Homebrew 操作锁。
-4. Bridge 使用已发现的绝对 `brew` 路径、参数数组、受控环境和空 stdin 执行。
-5. 保留退出码、stdout、stderr 与逐项目结果。
-6. 无论成功或失败，都在命令结束后重新读取受影响页面的真实状态。
-
-写操作不是事务，也不承诺回滚。Homebrew 或 Tap 执行过程中可能已经修改部分目标、依赖或 cache；界面必须把这种情况显示为部分完成，不能只用单个成功布尔值覆盖实际结果。计划只在当前确认流程中有效，取消后再次操作需要重新生成。
-
-卸载 Formula/Cask 时必须同时禁止隐式 `brew update` 和自动 `autoremove`。Cask zap 可能由 Homebrew 删除其定义的关联文件，但 Cellar 不自行删除 artifact，也不在失败后补做文件删除；postflight 只报告 Homebrew 输出和重新查询到的状态。
-
-### Node
-
-Node 页面使用 Node Manager schema v1。查询环境固定关闭 JSON execute；只有确认后的单次写操作才在对应子进程环境中设置 `NODE_MANAGER_ALLOW_JSON_EXECUTE=1`，项目 `.nvmrc` 还必须设置独立的 project-write 开关。
-
-左侧 Node 分类包含概览、全局包、Node 版本、Registry 和维护。每个页面只承载对应职责。
-
-| ID | 命令 | 用途 |
-|---|---|---|
-| ND-01 | `summary` | Node/npm 路径、版本、全局 prefix/root 和有效 registry |
-| ND-02 | `packages` | 当前 Node 环境的顶层 npm 全局包 |
-| ND-03 | `config` | registry、cache、prefix 及 user/project/global registry 层 |
-| ND-04 | `outdated` | 当前、wanted 和 latest 版本 |
-
-`summary`、`packages` 和 `config` 是页面核心数据，按顺序读取。`outdated` 最后执行；它访问当前配置的 npm registry，失败时页面仍显示核心数据，并单独显示更新检查错误。
-
-包表按本地化名称顺序排列，列出包名、当前版本、wanted 和 latest。没有更新数据时使用占位符，不把网络失败解释为“全部已是最新”。
-
-#### Node 写操作
-
-- 全局包安装接受 Manager 校验过的安全 package spec；更新和卸载只作用于当前受控 Node 环境中的明确包名。
-- Node 版本支持安装、用于本次 Cellar 会话、设置 nvm default 和安全卸载。“会话使用”不修改用户终端；default 是独立持久操作。
-- Registry 支持设置或删除用户默认 Registry，以及设置或删除明确 scope 的 Registry。
-- 维护操作限定为 Manager 声明的 npm cache 校验/清理、node-gyp cache、孤立 bin、无用户包旧 Node 和 Manager 日志；候选删除使用 plan token 并在执行前复验。
-- 项目 `.nvmrc` 只允许写入用户通过系统目录选择器明确选择的目录；符号链接或计划后状态变化必须拒绝执行。
-- 所有 mutation 经过 plan、确认、execute 和 post-refresh；计划五分钟过期，同一 App 状态下不并发执行第二项 Node 操作。
-
-### Shell
-
-左侧 Shell 分类包含概览、Oh My Zsh、插件与主题和维护。
-
-| ID | 展示内容 |
-|---|---|
-| SH-01 | `/bin/zsh --version` 的完整单行结果 |
-| SH-02 | `~/.oh-my-zsh` 是否是目录 |
-| SH-03 | Oh My Zsh 检查路径 |
-| SH-04 | Zsh Manager 快照是否存在 |
-
-Shell query 读取 `.zshrc` 中最后生效的主题和插件列表。写操作只维护带明确 marker 的插件、主题和 compdump block；修改前备份现有普通文件，并使用 `zsh -n` 校验。`.zshrc` 是符号链接或非普通文件时拒绝写入。
-
-#### Shell 写操作
-
-- Oh My Zsh 安装使用冻结 Manager 中固定 commit 的官方 HTTPS 安装脚本，并设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
-- 插件安装只接受 `https://github.com/<owner>/<repository>` 形式，clone 到 Oh My Zsh custom plugins 目录后通过 managed block 启用。
-- 插件选择只能包含已安装自定义插件、Oh My Zsh 内置插件和强制保留的 `git`。
-- 主题只能从已安装的 `.zsh-theme` 列表选择。
-- 整理仅移动 home 顶层已声明的 zcompdump、Zsh 备份和 `.zprofile.bak`，并写入受管理的 compdump 位置；不删除文件。
-- plan token 覆盖 `.zshrc` 和操作目标状态；确认后状态变化时拒绝执行。
-
-### 操作记录
-
-操作记录只存在于当前 App 进程内，不持久化，最多保留最近 100 条。刷新开始时加入“进行中”记录，结束后替换为成功或失败记录。失败详情包含本轮各模块的可读错误。
-
-关闭并重新打开 App 后，旧记录不会恢复。
-
-## 状态与错误契约
-
-| 状态 | 用户看到的行为 |
-|---|---|
-| 尚未刷新 | 页面没有业务数据；正常启动会立即进入刷新 |
-| 首次刷新 | 相关页面在完整详情区域水平、垂直居中显示 `ProgressView`，刷新按钮禁用 |
-| 全部成功 | 页面展示真实状态，操作记录标记成功 |
-| 部分失败 | 成功模块继续展示；概览和对应页面显示失败原因 |
-| Homebrew 分区失败 | 已成功读取的 Homebrew 分区继续展示；失败分区提供重试，不把缺失数据解释为空集合 |
-| Homebrew 操作等待确认 | 确认界面列出精确动作、目标、模式和明确排除项；取消不执行命令 |
-| Homebrew 操作部分完成 | 展示实际完成、失败和无法确认的项目；post-refresh 结果优先于执行前快照 |
-| Node 更新检查失败 | Node 核心数据和包表保留，更新列没有可用值，并显示独立错误 |
-| 快照失败 | 后续探测不运行，概览显示 Manager 快照错误 |
-| JSON 无效 | 不解析文本作为替代数据，显示无法识别的输出错误 |
-| schema 不是 v1 | 显式报告不支持的 schema，不尝试宽泛兼容 |
-
-外部工具的 stderr、非零退出状态和 Manager 业务错误必须保留。界面不能把失败显示成成功或空数据。
-
-## Node 环境选择
-
-nvm 的每个 Node 版本有独立的 npm 全局包目录。Cellar 页面展示的是本轮受控环境选择到的 Node，不代表用户所有终端，也不代表整台机器只有这一套全局包。
-
-环境解析规则：
-
-1. 检查 `~/.nvm/versions/node/` 下可执行的三段式版本目录。
-2. 解析 `~/.nvm/alias/default`，支持具体版本、版本前缀、`node`、`stable` 和可继续解析的 alias 文件。
-3. alias 明确匹配已安装版本时，把对应 `bin` 放在 PATH 首位。
-4. alias 缺失、循环、无法解析或没有匹配版本时，不猜测最新版本。
-5. 之后依次使用 `/opt/homebrew/bin`、`/opt/homebrew/sbin`、`/usr/local/bin` 和系统路径。
-
-Cellar 不加载 `.zshrc`，也不会改变已经打开的终端所使用的 Node 版本。
-
-## 文件、网络与隐私
-
-Cellar 不包含遥测、账户系统或项目自己的网络服务。
-
-App 启动后可能产生以下外部行为：
-
-- 把 Bundle 中的 Manager 快照复制到 `~/Library/Application Support/Cellar/Managers/<version>/`。
-- 运行 Homebrew 查询命令和 `/bin/zsh --version`。
-- 通过 Node Manager 运行 npm/nvm 查询，以及用户确认的受控写操作。
-- `npm outdated` 访问用户当前配置的 npm registry，并遵守 npm 自身的网络和 cache 行为。
-- Homebrew 的搜索、详情、过期检查、Tap、`update`、安装和升级可能访问 Homebrew 服务或第三方 Tap，并写入 Homebrew 自己管理的 API cache、下载 cache 和安装目录。
-- 用户确认的 Homebrew 安装、更新、升级、卸载与 Tap 变更会修改 Homebrew 管理的本机状态；命令不是事务，失败时可能已经部分完成。
-
-Cellar 只在用户确认对应计划后修改包管理和 Shell 状态。Shell 写入限定为 `.zshrc` managed block、`.zshrc` 备份、`~/.zsh` 整理目录、Oh My Zsh 和用户确认插件；不修改 `.zprofile` 正文，不切换登录 Shell，不调用 `sudo`。拒绝网络请求会影响 npm、Node/nvm、Homebrew、Oh My Zsh 和插件安装；本机已有状态应尽量继续展示。
-
-## 功能需求
-
-| ID | 需求 | 阶段 |
-|---|---|---|
-| FR-01 | 提供模块 Sidebar、底部操作记录/设置入口及统一 titlebar | v1 |
-| FR-02 | 启动后自动刷新真实环境状态 | v1 |
-| FR-03 | Homebrew 六个页面提供概览、已安装、可升级、发现、诊断、配置与 Tap | Homebrew 阶段 |
-| FR-04 | Node 页面显示 summary、全局包、配置和可更新版本 | v1 |
-| FR-05 | Shell 页面显示 Zsh 与 Oh My Zsh 状态 | v1 |
-| FR-06 | 操作记录保存当前会话的刷新结果 | v1 |
-| FR-07 | 单模块失败不清除其他模块结果 | v1 |
-| FR-08 | Node 更新检查失败时保留核心 Node 数据 | v1 |
-| FR-09 | 活动任务期间拒绝退出 | v1 |
-| FR-10 | Manager 快照从 Bundle 安装到版本化 Application Support 目录 | v1 |
-| FR-11 | Formula/Cask 安装、`brew update` 与选择升级经过计划、确认、执行和 post-refresh | Homebrew 阶段 |
-| FR-12 | Formula 单目标卸载禁止自动更新和 autoremove | Homebrew 阶段 |
-| FR-13 | Cask standard/zap 作为两个明确模式执行，App 不自行删除 artifact | Homebrew 阶段 |
-| FR-14 | Tap 添加与安全移除经过关联安装项检查和用户确认 | Homebrew 阶段 |
-| FR-15 | Homebrew 部分完成、stdout、stderr 和退出状态进入当前会话操作记录 | Homebrew 阶段 |
-| FR-16 | About 提供 Sparkle 更新入口，发布构建按 manifest 通道读取签名 appcast | 发布阶段 |
-
-## 非功能需求
-
-| ID | 需求 |
-|---|---|
-| NFR-01 | 最低 macOS 26.0，仅构建 arm64 |
-| NFR-02 | 外部命令使用绝对 executable 和参数数组，不使用 `bash -c` |
-| NFR-03 | 明确设置子进程环境、目录和标准 IO |
-| NFR-04 | App Bundle Resources 不产生运行时写入 |
-| NFR-05 | 自动测试不访问用户真实包管理环境和 Application Support |
-| NFR-06 | `scripts/` 在 App 开发期间保持冻结 |
-| NFR-07 | View 不直接执行外部命令，Models 不执行 IO |
-| NFR-08 | Homebrew Bridge 只调用已发现的绝对 `brew` URL，参数按数组传递，stdin 为空 |
-| NFR-09 | 同一时间最多执行一个包管理写操作；写操作期间拒绝重复提交和 App 退出 |
-
-## 验收边界
-
-自动测试和无签名构建可以验证 JSON、环境解析、进程输出、快照复制、退出策略、macOS 版本和 arm64 产物。它们不能证明真实 brew/npm/nvm 配置、registry 网络、窗口视觉或 macOS 退出交互。
-
-真实机器验收使用[人工验收清单](../manual-smoke-checklist.md)。没有执行的项目不得描述为已经验证。
-
-## 后续阶段
-
-当前仍不包含安装 Command Line Tools 或 Homebrew、修改 `.zprofile` 正文、Homebrew cleanup、自动孤儿依赖删除、App 自行清理 Cask 残留、`sudo`、Privileged Helper、切换登录 Shell 或删除 Oh My Zsh。未来增加这些能力时必须重新定义权限、删除范围、恢复与测试契约。
+真实 Finder 启动、系统授权、官方 Installer、真实 Homebrew/npm/nvm、网络、窗口、键盘、VoiceOver 和视觉质量按[人工验收清单](../manual-smoke-checklist.md)验证。未执行的项目不得描述为已验证或已发布。

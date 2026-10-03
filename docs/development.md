@@ -2,6 +2,15 @@
 
 本文记录 Cellar 的本地环境、测试、构建、产物检查和安全清理流程。产品行为见[产品需求](requirements/product-requirements.md)，组件和数据流见[总体架构](architecture/macos-app-architecture.md)。
 
+## 1.0 实现纪律
+
+- 产品需求是目标行为的唯一来源。架构文档中的“当前基线”用于理解现有代码，不覆盖目标契约。
+- 任务导航统一发生在 Features/Services；Formula、Cask、npm 和 Node environment identity 必须保留到 Bridge，不引入通用命令执行器。
+- 用户界面可以隐藏内部 plan 术语，但强类型计划、状态指纹、全局 mutation slot 和 post-refresh 不能删除。
+- String Catalog 是用户可见静态字符串的来源；新增界面同步提供 English、简体中文和繁体中文，默认语言行为为 Follow System。
+- 独立只读 IO 使用有界并发；批量 mutation 顺序执行。禁止轮询、高频装饰动画和未经测量的 cache/依赖。
+- 普通自动开发可以读取必要的项目文件，但不以真实 Homebrew、npm、nvm、Shell、Registry 或系统 Installer 作为验证夹具。
+
 ## 环境与工程
 
 - macOS 26 或更高版本，Apple Silicon。
@@ -23,13 +32,18 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 
 - 不运行用户安装的 brew、node、npm、nvm 或 Zsh Manager。
 - Homebrew Bridge 测试注入假 brew executable，覆盖查询 JSON、搜索文本、计划、精确参数、环境、退出码、部分完成和 post-refresh；测试不得访问网络、Homebrew cache 或真实安装目录。
-- Homebrew mutation 测试必须断言未确认时不启动进程，Formula/Cask 卸载禁止自动更新和 autoremove，Cask artifact 不触发 App 文件删除，Tap 有关联安装项时不能执行移除。
+- Homebrew mutation 测试必须断言需要确认的动作在确认前不启动进程，Formula/Cask 卸载禁止自动更新和 autoremove，Cask artifact 不触发 App 文件删除，Tap 有关联安装项时不能执行移除。
 - Node Bridge 测试在临时目录创建假 `main.sh`，只验证参数、JSON、错误和部分失败。
 - Node mutation 测试必须使用临时 HOME 和假 Manager，断言查询关闭 execute、确认执行才打开单次 write gate、项目写入使用独立 gate，且不访问真实 npm registry、cache、`~/.nvm` 或用户项目。
 - Manager 安装测试注入临时 Application Support 根目录。
 - 进程测试只执行测试自己创建的临时脚本。
 - Hosted tests 通过 `XCTestConfigurationFilePath` 识别测试进程，禁止根视图自动刷新。
 - Shell adapter 测试复制 Bundle Manager 到临时目录并注入临时 HOME，只允许修改测试 `.zshrc`、Oh My Zsh fixture 和 adapter runtime；不得访问用户真实 Shell 配置或网络。
+- Catalog、线上版本和 npm Registry search 测试注入本地 fake transport，覆盖有界结果、ETag/cache、取消、超时、无效响应和独立部分失败；不得访问真实 endpoint。
+- CLT/Homebrew setup 测试注入状态探测、下载、摘要/签名/trust check 和 system opener。只使用 fixture 与临时目录，不请求系统 CLT UI，不打开 Installer，不写 `/opt/homebrew`。
+- Batch coordinator 测试使用 fake typed operations，断言同 provider/type、顺序执行、项目失败后继续、取消后停止未开始项、无回滚声明和正确 post-refresh。
+- Activity 持久化测试注入临时 Application Support，断言最多 100 条、结构化本地化数据、凭证/原始输出不落盘和损坏数据隔离。
+- Localization 检查必须覆盖 String Catalog 中 English、简体中文和繁体中文的缺失项，并搜索新增的非本地化用户字符串。
 - 测试结束后不得留下 `~/Library/Application Support/Cellar/`、npm cache 变更或全局包变更。
 
 需要验证真实环境时，使用[人工验收清单](manual-smoke-checklist.md)，并先向用户说明会读取的工具、网络和目录。真实环境检查不属于普通单元测试。
@@ -108,14 +122,15 @@ xcodebuild build \
 | 改动范围 | 最小验证 |
 |---|---|
 | 仅文档或 `AGENTS.md` | 链接、路径、术语和 diff 检查 |
-| Models 或纯解析规则 | 相关测试 suite |
+| Models、版本语义或纯解析规则 | 相关测试 suite |
 | Bridge、环境解析、Process 或 Manager 契约 | 相关测试；跨边界时运行完整测试 |
-| Services、生命周期或 Features | 相关测试和 Debug 构建 |
+| Catalog/setup、batch、Activity persistence | fake/临时根目录相关测试；跨边界时完整测试和 Debug 构建 |
+| Services、生命周期、localization 或 Features | 相关测试、localization coverage 和 Debug 构建 |
 | Homebrew 查询、计划或写操作 | Homebrew 相关测试、完整测试和 Debug 构建；真实操作仅进入人工验收 |
 | Xcode 工程、资源或平台设置 | 完整测试、Debug 与 Release 构建、产物检查 |
 | 真实 Homebrew、Node/nvm、窗口和退出行为 | 自动验证后执行相关人工清单 |
 
-UI 改动不主动启动 App 或截图。完成编译和相关测试后交给用户视觉验收；用户明确要求运行或提供截图时再检查实际界面。普通自动验证不得为“顺便验收”而调用真实 Homebrew 写操作。
+UI 改动不主动启动 App 或截图。完成编译和相关测试后交给用户视觉验收；用户明确要求运行或进入计划中的视觉验收任务时，只以只读方式启动和截图。任何视觉验收都不得触发真实 Homebrew/npm/nvm/Shell 写操作或系统 Installer。
 
 ## Release 产物检查
 
@@ -176,3 +191,5 @@ git diff -- scripts
 ```
 
 确认验证结果对应最终改动。如果验证后又修改了代码，重新运行受影响的检查。不要把 `build/`、测试结果、临时日志或 App 运行副本加入提交。
+
+仅文档变更还应检查：仓库内 Markdown 相对链接存在；旧技术模块导航术语没有被误写成 1.0 目标；`Formula`、`Cask`、`npm`、`nvm` 大小写一致；产品契约与 README/AGENTS/架构/人工清单互相可达。

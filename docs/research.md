@@ -106,6 +106,8 @@ Command Line Tools 则直接采用 Apple 文档中的 `xcode-select --install` �
 | `npm config get` 返回 default、builtin、global、user、project、env 和 CLI 层合并后的有效配置 | npm 官方源码 | [npm config](https://docs.npmjs.com/cli/v11/commands/npm-config)、[@npmcli/config](https://github.com/npm/cli/tree/latest/workspaces/config) |
 | 全局 npm 包属于当前 npm/global prefix；切换 nvm Node 版本可能切换整套全局包 | npm/nvm 行为与项目事实 | [npm folders](https://docs.npmjs.com/cli/v11/configuring-npm/folders)、[nvm README](https://github.com/nvm-sh/nvm) |
 | `npm search` 在 Registry 中搜索匹配 package term，并提供 JSON 输出；搜索行为会受配置的 Registry 影响 | npm 官方 | [npm search](https://docs.npmjs.com/cli/v11/commands/npm-search)、[npm registry](https://docs.npmjs.com/cli/v11/using-npm/registry) |
+| Registry HTTP `GET /-/v1/search` 接受 `text`、`size` 和 `from`；官方 API 上限为 250，Cellar 的单次结果上限为 100。`GET /{package}/latest` 返回对应版本元数据 | npm 官方与项目约束 | [npm Public Registry API](https://github.com/npm/registry/blob/main/docs/REGISTRY-API.md) |
+| Node 官方站点以 `https://nodejs.org/dist/index.json` 读取发布列表；Cellar 从中选择提供 macOS arm64 tar 的最新稳定语义版本。nvm 版本来自官方仓库 latest stable Release | 官方源码与项目约束 | [Node release-post source](https://github.com/nodejs/nodejs.org/blob/main/apps/site/scripts/release-post/index.mjs)、[nvm releases](https://github.com/nvm-sh/nvm/releases) |
 | nvm 的版本、alias/default 与安装说明以官方 `nvm-sh/nvm` 项目为准 | nvm 官方项目 | [nvm README](https://github.com/nvm-sh/nvm) |
 
 `npm outdated` 的退出码 1 可以表示“存在更新”，不一定是执行错误。Cellar 使用的 Node Manager 已把这一语义转换成统一 JSON envelope；Swift 层只解析该契约，不重新解释 npm 原始文本。

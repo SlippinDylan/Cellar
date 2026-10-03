@@ -22,13 +22,18 @@ enum CatalogWebsites {
     static func origin(_ url: URL) -> String? {
         guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
               let host = url.host, !host.isEmpty,
-              host.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
+              let encodedHost = URLComponents(url: url, resolvingAgainstBaseURL: false)?.encodedHost,
+              host.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters).union(CharacterSet(charactersIn: "/\\?#@"))) == nil,
               url.user == nil, url.password == nil,
               url.port.map({ (1...65_535).contains($0) }) != false
         else { return nil }
+        // URL.host omits IPv6 brackets, which must remain part of the authority key.
+        let isIPv6Literal = encodedHost.hasPrefix("[") && encodedHost.hasSuffix("]")
+        guard isIPv6Literal || host.rangeOfCharacter(from: CharacterSet(charactersIn: ":[]")) == nil else { return nil }
         let defaultPort = scheme == "https" ? 443 : 80
         let port = url.port.map { $0 == defaultPort ? "" : ":\($0)" } ?? ""
-        return "\(scheme)://\(host.lowercased())\(port)"
+        let canonicalHost = isIPv6Literal ? encodedHost.lowercased() : host.lowercased()
+        return "\(scheme)://\(canonicalHost)\(port)"
     }
 
     static func safeWebsite(_ url: URL?) -> URL? {

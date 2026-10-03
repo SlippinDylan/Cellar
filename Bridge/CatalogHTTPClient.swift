@@ -151,13 +151,14 @@ actor CatalogHTTPClient {
         guard let origin = CatalogWebsites.origin(url) else { throw CatalogSourceError.invalidURL }
         var headers = ["Accept": "application/json", "User-Agent": "Cellar"]
         if url.host == "api.github.com" { headers["X-GitHub-Api-Version"] = "2022-11-28" }
-        if let etag = cache[url]?.etag { headers["If-None-Match"] = etag }
+        let cachedResponse = cache[url]
+        if let etag = cachedResponse?.etag { headers["If-None-Match"] = etag }
         let response = try await transport.data(for: CatalogHTTPRequest(url: url, allowedOrigins: [origin], headers: headers, maximumBytes: maximumBytes, timeout: 20))
         try Task.checkCancellation()
         guard CatalogWebsites.origin(response.url) == origin else { throw CatalogSourceError.invalidResponse }
         guard response.body.count <= maximumBytes else { throw CatalogSourceError.responseTooLarge }
         if response.status == 304 {
-            guard let cached = cache[url], cached.body.count <= maximumBytes else { throw CatalogSourceError.invalidResponse }
+            guard let cached = cachedResponse, cached.body.count <= maximumBytes else { throw CatalogSourceError.invalidResponse }
             if response.cacheControl?.lowercased().contains("no-store") == true {
                 cache[url] = nil
                 cacheOrder.removeAll { $0 == url }

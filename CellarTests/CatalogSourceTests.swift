@@ -40,6 +40,25 @@ final class CatalogSourceTests: XCTestCase {
         XCTAssertNil(finalRequests[3].headers["If-None-Match"])
     }
 
+    func testConcurrentNotModifiedUsesRequestCacheSnapshot() async throws {
+        let transport = ConcurrentNotModifiedTransport()
+        let client = CatalogHTTPClient(transport: transport)
+        let url = CatalogWebsites.npmRegistry
+        let original = try await client.data(from: url)
+        let first = Task { try await client.data(from: url) }
+        await transport.waitForPendingRequests(1)
+        let second = Task { try await client.data(from: url) }
+        await transport.waitForPendingRequests(2)
+        let requests = await transport.requests
+        XCTAssertEqual(requests.dropFirst().map { $0.headers["If-None-Match"] }, ["fixture", "fixture"])
+        await transport.completeNext(cacheControl: "no-store")
+        let firstResult = try await first.value
+        XCTAssertEqual(firstResult, original)
+        await transport.completeNext(cacheControl: nil)
+        let secondResult = try await second.value
+        XCTAssertEqual(secondResult, original)
+    }
+
     func testResponseSizeStatusAndUnexpectedNotModifiedAreRejected() async throws {
         let transport = FakeCatalogTransport(body: Data(repeating: 0, count: 11))
         let client = CatalogHTTPClient(transport: transport)
@@ -147,6 +166,44 @@ final class CatalogSourceTests: XCTestCase {
             XCTAssertEqual(forwarded != nil, expected)
         }
         XCTAssertEqual([CatalogWebsites.homebrew, CatalogWebsites.node, CatalogWebsites.npm, CatalogWebsites.npmRegistry, CatalogWebsites.nvm, CatalogWebsites.commandLineTools].map(\.scheme), Array(repeating: "https", count: 6))
+    }
+
+    func testIPv6OriginsDoNotCollideAcrossRedirectsOrResponses() async throws {
+        let registry = try XCTUnwrap(URL(string: "http://[::1]:8080/"))
+        let other = try XCTUnwrap(URL(string: "http://[::1:8080]/"))
+        let origin = try XCTUnwrap(CatalogWebsites.origin(registry))
+        XCTAssertEqual(origin, "http://[::1]:8080")
+        XCTAssertEqual(CatalogWebsites.origin(other), "http://[::1:8080]")
+        XCTAssertNotEqual(origin, CatalogWebsites.origin(other))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [LocalCatalogURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: registry)
+        let response = try XCTUnwrap(HTTPURLResponse(url: registry, statusCode: 302, httpVersion: "HTTP/1.1", headerFields: nil))
+        let policy = CatalogRedirectPolicy(allowedOrigins: [origin])
+        for (target, allowed) in [(registry.appending(path: "canonical/search"), true), (other, false)] {
+            let forwarded: URLRequest? = await withCheckedContinuation { continuation in
+                policy.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: URLRequest(url: target)) { continuation.resume(returning: $0) }
+            }
+            XCTAssertEqual(forwarded != nil, allowed)
+        }
+        let transport = FakeCatalogTransport(body: Data("{}".utf8))
+        let client = CatalogHTTPClient(transport: transport)
+        await transport.setResponseURL(registry.appending(path: "canonical/search"))
+        _ = try await client.data(from: registry)
+        await transport.setResponseURL(other)
+        do { _ = try await client.data(from: registry); XCTFail("Expected distinct IPv6 origin rejection") }
+        catch { XCTAssertEqual(error as? CatalogSourceError, .invalidResponse) }
+    }
+
+    func testOriginsRejectDecodedHostDelimiters() throws {
+        for delimiter in ["%2F", "%5C", "%3F", "%23", "%40", "%3A", "%5B", "%5D"] {
+            let url = try XCTUnwrap(URL(string: "https://bad\(delimiter)host/"))
+            XCTAssertNil(CatalogWebsites.origin(url), delimiter)
+            XCTAssertNil(CatalogWebsites.safeWebsite(url), delimiter)
+            XCTAssertThrowsError(try NPMRegistryClient(registryURL: url), delimiter)
+        }
     }
 
     func testMalformedRegistryResultsAreRejected() async throws {
@@ -353,4 +410,36 @@ private actor ThrowingCatalogTransport: CatalogHTTPTransport {
     init(code: URLError.Code) { self.code = code }
     func data(for request: CatalogHTTPRequest) async throws -> CatalogHTTPResponse { count += 1; throw URLError(code) }
     func download(_ request: CatalogHTTPRequest, to destination: URL) async throws { throw URLError(code) }
+}
+
+private actor ConcurrentNotModifiedTransport: CatalogHTTPTransport {
+    private(set) var requests: [CatalogHTTPRequest] = []
+    private var pending: [(CatalogHTTPRequest, CheckedContinuation<CatalogHTTPResponse, Error>)] = []
+    private var waiter: (count: Int, continuation: CheckedContinuation<Void, Never>)?
+
+    func data(for request: CatalogHTTPRequest) async throws -> CatalogHTTPResponse {
+        requests.append(request)
+        if requests.count == 1 {
+            return CatalogHTTPResponse(url: request.url, status: 200, body: Data("original".utf8), etag: "fixture")
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            pending.append((request, continuation))
+            if let waiter, pending.count == waiter.count {
+                self.waiter = nil
+                waiter.continuation.resume()
+            }
+        }
+    }
+
+    func waitForPendingRequests(_ count: Int) async {
+        if pending.count == count { return }
+        await withCheckedContinuation { waiter = (count, $0) }
+    }
+
+    func completeNext(cacheControl: String?) {
+        let (request, continuation) = pending.removeFirst()
+        continuation.resume(returning: CatalogHTTPResponse(url: request.url, status: 304, body: Data(), etag: nil, cacheControl: cacheControl))
+    }
+
+    func download(_ request: CatalogHTTPRequest, to destination: URL) async throws { throw URLError(.unsupportedURL) }
 }

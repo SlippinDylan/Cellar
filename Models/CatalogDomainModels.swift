@@ -299,6 +299,7 @@ struct BatchIntent: Equatable, Sendable {
 
 enum BatchItemStatus: String, Codable, Sendable {
     case succeeded
+    case partiallySucceeded
     case failed
     case cancelled
     case unknown
@@ -322,7 +323,8 @@ enum ActivityStatus: String, Codable, Sendable {
         case .succeeded: .succeeded
         case .failed: .failed
         case .cancelled: .cancelled
-        case .partiallySucceeded, .running: .unknown
+        case .partiallySucceeded: .partiallySucceeded
+        case .running: .unknown
         }
     }
 
@@ -331,7 +333,7 @@ enum ActivityStatus: String, Codable, Sendable {
         case .succeeded, .running: nil
         case .failed: .providerFailure
         case .cancelled: .cancelledByUser
-        case .partiallySucceeded: .stateUnavailable
+        case .partiallySucceeded: .providerFailure
         }
     }
 }
@@ -348,7 +350,7 @@ struct BatchOutcome: Equatable, Sendable {
 
     var status: ActivityStatus {
         if itemOutcomes.allSatisfy({ $0.status == .succeeded }) { return .succeeded }
-        if itemOutcomes.contains(where: { $0.status == .succeeded }) { return .partiallySucceeded }
+        if itemOutcomes.contains(where: { $0.status == .succeeded || $0.status == .partiallySucceeded }) { return .partiallySucceeded }
         if itemOutcomes.allSatisfy({ $0.status == .cancelled }) { return .cancelled }
         return .failed
     }

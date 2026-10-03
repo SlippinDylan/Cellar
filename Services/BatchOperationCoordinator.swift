@@ -131,7 +131,8 @@ final class BatchOperationCoordinator: ObservableObject {
                         status = switch result.outcome {
                         case .succeeded: .succeeded
                         case .failed: .failed
-                        case .partial, .stateUnknown: .unknown
+                        case .partial: .partiallySucceeded
+                        case .stateUnknown: .unknown
                         }
                     case .npm(let providerPlan, let environment):
                         let result = try await self.provider.executeNPM(providerPlan, environment: environment)
@@ -234,7 +235,7 @@ private extension BatchOutcome {
                                itemOutcomes: itemOutcomes.map { outcome in
             let reason: ActivityItemReason? = switch outcome.status {
             case .succeeded: nil
-            case .failed: .providerFailure
+            case .failed, .partiallySucceeded: .providerFailure
             case .cancelled: .cancelledByUser
             case .unknown: .stateUnavailable
             }

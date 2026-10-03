@@ -242,6 +242,29 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         }
     }
 
+    func testHomebrewPartialIsPreservedWithoutAnyFullySucceededItem() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarBatchPartialTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        let provider = FakeBatchProvider(failingNames: ["two"], partialNames: ["one"])
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: ["one", "two"].map {
+            .homebrew(.init(name: $0, kind: .formula))
+        }))
+        let plan = try await coordinator.prepare(intent)
+        let result = try await coordinator.execute(plan)
+        guard case .homebrew(let first) = result.providerResults[0] else { return XCTFail("Expected Homebrew result") }
+        XCTAssertEqual(first.outcome, .partial)
+        XCTAssertEqual(result.outcome.itemOutcomes.map { $0.status.rawValue }, ["partiallySucceeded", "failed"])
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        XCTAssertEqual(result.outcome.succeededItemCount, 0)
+        XCTAssertEqual(activity.summaries.first?.status, .partiallySucceeded)
+        XCTAssertEqual(activity.summaries.first?.itemOutcomes.map { $0.status.rawValue }, ["partiallySucceeded", "failed"])
+        let restored = ActivityStore(applicationSupportRoot: root)
+        try restored.load()
+        XCTAssertEqual(restored.summaries, activity.summaries)
+    }
+
     private var environment: NodeEnvironmentContext {
         .init(identifier: "nvm:v22.0.0", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
     }
@@ -253,7 +276,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
     }
 }
 
-private actor FakeBatchProvider: BatchOperationProviding {
+actor FakeBatchProvider: BatchOperationProviding {
     enum Failure: Error { case provider, refresh, plan }
     let failingNames: Set<String>
     let refreshFails: Bool
@@ -261,6 +284,7 @@ private actor FakeBatchProvider: BatchOperationProviding {
     let onPaused: @Sendable () -> Void
     let planFails: Bool
     let unknownNames: Set<String>
+    let partialNames: Set<String>
     let pauseRefresh: Bool
     let onRefresh: @Sendable () -> Void
     var refreshContinuation: AsyncStream<Void>.Continuation?
@@ -273,13 +297,15 @@ private actor FakeBatchProvider: BatchOperationProviding {
 
     init(failingNames: Set<String> = [], refreshFails: Bool = false,
          pausedName: String? = nil, onPaused: @escaping @Sendable () -> Void = {}, planFails: Bool = false,
-         unknownNames: Set<String> = [], pauseRefresh: Bool = false, onRefresh: @escaping @Sendable () -> Void = {}) {
+         unknownNames: Set<String> = [], partialNames: Set<String> = [], pauseRefresh: Bool = false,
+         onRefresh: @escaping @Sendable () -> Void = {}) {
         self.failingNames = failingNames
         self.refreshFails = refreshFails
         self.pausedName = pausedName
         self.onPaused = onPaused
         self.planFails = planFails
         self.unknownNames = unknownNames
+        self.partialNames = partialNames
         self.pauseRefresh = pauseRefresh
         self.onRefresh = onRefresh
     }
@@ -304,7 +330,7 @@ private actor FakeBatchProvider: BatchOperationProviding {
                                         controlledPath: "", commandLineToolsAvailable: true)
         return HomebrewActionResult(plan: plan,
                                     command: .init(arguments: ["fake"], standardOutput: "TOKEN=secret stdout", standardError: "",
-                                                   terminationStatus: failed ? 1 : 0, standardOutputWasTruncated: false,
+                                                   terminationStatus: failed || partialNames.contains(identity.name) ? 1 : 0, standardOutputWasTruncated: false,
                                                    standardErrorWasTruncated: false),
                                     snapshot: unknownNames.contains(identity.name) ? nil : snapshot,
                                     postflightError: unknownNames.contains(identity.name) ? "secret" : nil, remainingResidualPaths: [])

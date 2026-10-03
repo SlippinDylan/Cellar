@@ -37,12 +37,13 @@ final class AppModel: ObservableObject {
     init(
         service: SystemProbeService,
         operationStore: OperationStore = .shared,
-        activityStore: ActivityStore? = nil
+        activityStore: ActivityStore? = nil,
+        batchProvider: (any BatchOperationProviding)? = nil
     ) {
         self.service = service
         self.operationStore = operationStore
         self.activityStore = activityStore
-        batchCoordinator = BatchOperationCoordinator(provider: ProviderBatchOperations(service: service),
+        batchCoordinator = BatchOperationCoordinator(provider: batchProvider ?? ProviderBatchOperations(service: service),
                                                      operationStore: operationStore, activityStore: activityStore)
     }
 
@@ -167,7 +168,9 @@ final class AppModel: ObservableObject {
         let result = try await batchCoordinator.execute(plan)
         switch result.refreshedState {
         case .homebrew(let status): homebrew = status
-        case .npm(let snapshot): node = snapshot
+        case .npm(let snapshot):
+            node = snapshot
+            preferredNodeVersion = snapshot.summary.nodeVersion
         case nil: break
         }
         if result.refreshedState != nil { refreshedAt = Date() }

@@ -17,6 +17,16 @@ actor NodeManagerClient {
         let summaryValue: NodeSummary = try await request(
             "summary", managerDirectory: managerDirectory, environment: environment
         )
+        return try await loadSnapshot(managerDirectory: managerDirectory, preferredNodeVersion: preferredNodeVersion,
+                                      environment: environment, summary: summaryValue)
+    }
+
+    private func loadSnapshot(
+        managerDirectory: URL,
+        preferredNodeVersion: String?,
+        environment: [String: String],
+        summary: NodeSummary
+    ) async throws -> NodeSnapshot {
         let inventoryValue: NodePackageInventory = try await request(
             "packages", managerDirectory: managerDirectory, environment: environment
         )
@@ -53,7 +63,7 @@ actor NodeManagerClient {
 
         let outdatedError = outdatedResult.failure?.localizedDescription
         return NodeSnapshot(
-            summary: summaryValue,
+            summary: summary,
             configuration: configurationValue,
             packages: packages,
             installations: environmentResolver.installations(preferredNodeVersion: preferredNodeVersion),
@@ -73,6 +83,14 @@ actor NodeManagerClient {
         preferredNodeVersion: String? = nil
     ) async throws -> NodeActionPlan {
         let environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        return try await plan(request, managerDirectory: managerDirectory, environment: environment)
+    }
+
+    private func plan(
+        _ request: NodeActionRequest,
+        managerDirectory: URL,
+        environment: [String: String]
+    ) async throws -> NodeActionPlan {
         let payload: NodeActionPlanPayload = try await self.request(
             "plan",
             arguments: planArguments(for: request),
@@ -90,6 +108,15 @@ actor NodeManagerClient {
         managerDirectory: URL,
         preferredNodeVersion: String? = nil
     ) async throws -> NodeOperationResult {
+        let environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        return try await execute(plan, managerDirectory: managerDirectory, environment: environment)
+    }
+
+    private func execute(
+        _ plan: NodeActionPlan,
+        managerDirectory: URL,
+        environment: [String: String]
+    ) async throws -> NodeOperationResult {
         guard plan.canExecute else {
             throw BridgeError.managerFailure(
                 code: plan.payload.blockedReason ?? "plan-not-executable",
@@ -100,7 +127,7 @@ actor NodeManagerClient {
             throw BridgeError.managerFailure(code: "plan-expired", detail: "Node 操作计划已过期，请重新生成")
         }
 
-        var environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        var environment = environment
         environment["NODE_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
         if plan.request.action == .writeProjectNVMRC {
             environment["NODE_MANAGER_ALLOW_PROJECT_WRITE"] = "1"
@@ -118,41 +145,66 @@ actor NodeManagerClient {
         guard action == .installPackage || action == .updatePackage || action == .uninstallPackage else {
             throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
         }
-        try await validatePackageEnvironment(identity.environment, managerDirectory: managerDirectory)
+        let validated = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
         return try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
-                              preferredNodeVersion: identity.environment.nodeVersion)
+                              environment: validated.environment)
     }
 
     func executePackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeOperationResult {
         guard plan.request.action == .installPackage || plan.request.action == .updatePackage || plan.request.action == .uninstallPackage else {
             throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
         }
-        try await validatePackageEnvironment(environment, managerDirectory: managerDirectory)
-        return try await execute(plan, managerDirectory: managerDirectory, preferredNodeVersion: environment.nodeVersion)
+        let validated = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+        return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
     }
 
-    private func validatePackageEnvironment(_ context: NodeEnvironmentContext, managerDirectory: URL) async throws {
-        try requirePackageInstallation(context)
-        let environment = environmentResolver.environment(preferredNodeVersion: context.nodeVersion)
+    private func validatedPackageEnvironment(
+        _ context: NodeEnvironmentContext,
+        managerDirectory: URL,
+        requireMatchingNPMVersion: Bool = true
+    ) async throws -> (environment: [String: String], summary: NodeSummary) {
+        let installation = try requirePackageInstallation(context)
+        let installationURL = URL(filePath: installation.directory, directoryHint: .isDirectory).resolvingSymlinksInPath()
+        let bin = installationURL.appending(path: "bin", directoryHint: .isDirectory)
+        var environment = environmentResolver.environment(preferredNodeVersion: context.nodeVersion)
+        // Other provider directories must not supply node/npm if this installation disappears.
+        environment["PATH"] = [bin.path, "/usr/bin", "/bin", "/usr/sbin", "/sbin"].joined(separator: ":")
         let summary: NodeSummary = try await request("summary", managerDirectory: managerDirectory, environment: environment)
-        guard summary.nodeVersion == context.nodeVersion, summary.npmVersion == context.npmVersion else {
+        guard summary.nodeVersion == context.nodeVersion,
+              !requireMatchingNPMVersion || summary.npmVersion == context.npmVersion
+        else {
             throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
         }
+        try validatePackageEntries(summary, installationURL: installationURL)
+        return (environment, summary)
     }
 
     func loadPackageSnapshot(_ context: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeSnapshot {
-        try requirePackageInstallation(context)
-        let snapshot = try await loadSnapshot(managerDirectory: managerDirectory, preferredNodeVersion: context.nodeVersion)
-        guard snapshot.summary.nodeVersion == context.nodeVersion else {
-            throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
-        }
-        return snapshot
+        let validated = try await validatedPackageEnvironment(context, managerDirectory: managerDirectory, requireMatchingNPMVersion: false)
+        return try await loadSnapshot(managerDirectory: managerDirectory, preferredNodeVersion: context.nodeVersion,
+                                      environment: validated.environment, summary: validated.summary)
     }
 
-    private func requirePackageInstallation(_ context: NodeEnvironmentContext) throws {
+    private func requirePackageInstallation(_ context: NodeEnvironmentContext) throws -> NodeInstallation {
         let installations = environmentResolver.installations(preferredNodeVersion: context.nodeVersion)
-        guard installations.contains(where: { $0.version == context.nodeVersion }) else {
+        guard let installation = installations.first(where: { $0.version == context.nodeVersion }) else {
             throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
+        }
+        return installation
+    }
+
+    private func validatePackageEntries(_ summary: NodeSummary, installationURL: URL) throws {
+        let bin = installationURL.appending(path: "bin", directoryHint: .isDirectory)
+        for (name, actualPath) in [("node", summary.nodePath), ("npm", summary.npmPath)] {
+            let entry = bin.appending(path: name)
+            let resolvedEntry = entry.resolvingSymlinksInPath()
+            guard actualPath.hasPrefix("/"),
+                  FileManager.default.isExecutableFile(atPath: entry.path),
+                  resolvedEntry.path.hasPrefix(installationURL.path + "/"),
+                  URL(filePath: actualPath).resolvingSymlinksInPath().path == resolvedEntry.path
+            else {
+                throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
+            }
         }
     }
 

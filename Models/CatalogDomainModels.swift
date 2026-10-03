@@ -158,13 +158,16 @@ private struct ParsedSemanticVersion: Comparable {
     let prerelease: [Identifier]
 
     init?(_ value: String) {
-        var value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        if value.hasPrefix("v") {
-            value.removeFirst()
+        let buildParts = value.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false)
+        if buildParts.count == 2 {
+            guard Self.validIdentifiers(buildParts[1]) else { return nil }
         }
-        value = String(value.split(separator: "+", maxSplits: 1, omittingEmptySubsequences: false)[0])
 
-        let versionParts = value.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        let versionParts = buildParts[0].split(
+            separator: "-",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )
         let core = versionParts[0].split(separator: ".", omittingEmptySubsequences: false)
         guard core.count == 3,
               let major = Self.number(core[0]),
@@ -177,9 +180,7 @@ private struct ParsedSemanticVersion: Comparable {
             let identifiers = versionParts[1].split(separator: ".", omittingEmptySubsequences: false)
             guard !identifiers.isEmpty else { return nil }
             for identifier in identifiers {
-                guard !identifier.isEmpty,
-                      identifier.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "-" })
-                else { return nil }
+                guard Self.validIdentifier(identifier) else { return nil }
                 if let number = Int(identifier) {
                     guard identifier == "0" || !identifier.hasPrefix("0") else { return nil }
                     prerelease.append(.numeric(number))
@@ -214,8 +215,25 @@ private struct ParsedSemanticVersion: Comparable {
     }
 
     private static func number(_ value: Substring) -> Int? {
-        guard value == "0" || !value.hasPrefix("0") else { return nil }
+        guard !value.isEmpty,
+              value.utf8.allSatisfy({ (48...57).contains($0) }),
+              value == "0" || !value.hasPrefix("0")
+        else { return nil }
         return Int(value)
+    }
+
+    private static func validIdentifiers(_ value: Substring) -> Bool {
+        let identifiers = value.split(separator: ".", omittingEmptySubsequences: false)
+        return !identifiers.isEmpty && identifiers.allSatisfy(validIdentifier)
+    }
+
+    private static func validIdentifier(_ value: Substring) -> Bool {
+        !value.isEmpty && value.utf8.allSatisfy { byte in
+            byte == 45
+                || (48...57).contains(byte)
+                || (65...90).contains(byte)
+                || (97...122).contains(byte)
+        }
     }
 }
 
@@ -270,7 +288,8 @@ struct BatchIntent: Equatable, Sendable {
 
     init?(operation: BatchOperation, items: [BatchItem]) {
         guard let scope = items.first?.scope,
-              items.allSatisfy({ $0.scope == scope })
+              items.allSatisfy({ $0.scope == scope }),
+              Set(items).count == items.count
         else { return nil }
         self.operation = operation
         self.scope = scope
@@ -303,6 +322,12 @@ struct BatchOutcome: Equatable, Sendable {
     let intent: BatchIntent
     let itemOutcomes: [BatchItemOutcome]
 
+    init?(intent: BatchIntent, itemOutcomes: [BatchItemOutcome]) {
+        guard itemOutcomes.map(\.item) == intent.items else { return nil }
+        self.intent = intent
+        self.itemOutcomes = itemOutcomes
+    }
+
     var status: ActivityStatus {
         if itemOutcomes.allSatisfy({ $0.status == .succeeded }) { return .succeeded }
         if itemOutcomes.contains(where: { $0.status == .succeeded }) { return .partiallySucceeded }
@@ -325,16 +350,27 @@ enum ActivityOperationKind: String, Codable, Sendable {
     case maintenance
 }
 
+enum ActivityItemReason: String, Codable, Sendable {
+    case providerFailure
+    case cancelledByUser
+    case stateUnavailable
+}
+
 struct ActivityItemSummary: Equatable, Codable, Sendable {
     let displayName: String
     let status: BatchItemStatus
-    let userFacingMessage: String?
+    let reason: ActivityItemReason?
+}
+
+enum ActivityScope: Hashable, Codable, Sendable {
+    case homebrew(HomebrewPackageKind)
+    case npm(NodeEnvironmentContext)
 }
 
 struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {
     let id: UUID
     let operation: ActivityOperationKind
-    let providerScope: CatalogProviderScope?
+    let scope: ActivityScope?
     let targetDisplayNames: [String]
     let date: Date
     let status: ActivityStatus

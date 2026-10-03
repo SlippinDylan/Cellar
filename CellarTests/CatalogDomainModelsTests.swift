@@ -39,12 +39,30 @@ final class CatalogDomainModelsTests: XCTestCase {
         XCTAssertEqual(card.nodeEnvironment, node20)
     }
 
-    func testHomebrewAndOnlineVersionStatesRepresentUnknownAndOffline() {
-        XCTAssertEqual(HomebrewInstallationState.notChecked, .notChecked)
-        XCTAssertEqual(
-            OnlineVersionState.unavailable(reason: "Offline"),
-            .unavailable(reason: "Offline")
+    func testHomebrewAndOnlineVersionStatesPreserveDistinctSemanticsAndPayloads() throws {
+        let installation = HomebrewInstallation(
+            executablePath: "/opt/homebrew/bin/brew",
+            version: "5.0.0"
         )
+        let installed = HomebrewInstallationState.installed(installation)
+        guard case .installed(let decodedInstallation) = installed else {
+            return XCTFail("Expected installed state")
+        }
+        XCTAssertEqual(decodedInstallation, installation)
+        XCTAssertNotEqual(installed, .notChecked)
+        XCTAssertNotEqual(HomebrewInstallationState.notChecked, .checking)
+        XCTAssertNotEqual(HomebrewInstallationState.commandLineToolsRequired, .notInstalled)
+
+        let online = OnlineVersionState.available(version: "5.0.0")
+        guard case .available(let version) = online else {
+            return XCTFail("Expected available online version")
+        }
+        XCTAssertEqual(version, "5.0.0")
+        guard case .unavailable(let reason) = OnlineVersionState.unavailable(reason: "Offline") else {
+            return XCTFail("Expected unavailable online state")
+        }
+        XCTAssertEqual(reason, "Offline")
+        XCTAssertNotEqual(online, .notLoaded)
     }
 
     func testSemanticVersionStatusDoesNotTreatAheadOrUnknownAsUpdates() {
@@ -72,6 +90,40 @@ final class CatalogDomainModelsTests: XCTestCase {
         XCTAssertEqual(
             SemanticVersionStatus(current: "2.0.0-beta.2", available: "2.0.0"),
             .behind
+        )
+    }
+
+    func testSemanticVersionStatusRejectsMalformedOrNonASCIIIdentifiers() {
+        let invalidVersions = [
+            "1.0.0+",
+            "1.0.0+build..1",
+            "1.0.0+build_1",
+            "1.0.0+构建",
+            "1.0.0-",
+            "1.0.0-beta..1",
+            "1.0.0-beta_1",
+            "1.0.0-测试",
+            "1.0.0-01",
+            "v1.0.0",
+            " 1.0.0",
+            "1.0.0 ",
+        ]
+
+        for version in invalidVersions {
+            XCTAssertEqual(
+                SemanticVersionStatus(current: version, available: "2.0.0"),
+                .unknown,
+                version
+            )
+        }
+
+        XCTAssertEqual(
+            SemanticVersionStatus(current: "1.0.0-alpha.1+build.01", available: "1.0.0"),
+            .behind
+        )
+        XCTAssertEqual(
+            SemanticVersionStatus(current: "1.0.0+build.01", available: "1.0.0+other"),
+            .current
         )
     }
 
@@ -115,7 +167,7 @@ final class CatalogDomainModelsTests: XCTestCase {
         let intent = try XCTUnwrap(BatchIntent(operation: .install, items: [formula, secondFormula]))
         XCTAssertEqual(intent.scope, .homebrew(.formula))
 
-        let result = BatchOutcome(
+        let result = try XCTUnwrap(BatchOutcome(
             intent: intent,
             itemOutcomes: [
                 .init(item: formula, status: .succeeded, userFacingMessage: nil),
@@ -125,11 +177,28 @@ final class CatalogDomainModelsTests: XCTestCase {
                     userFacingMessage: "Installation failed"
                 ),
             ]
-        )
+        ))
 
         XCTAssertEqual(result.status, .partiallySucceeded)
         XCTAssertEqual(result.itemOutcomes.first?.status, .succeeded)
         XCTAssertEqual(result.succeededItemCount, 1)
+    }
+
+    func testBatchOutcomeRequiresExactlyOneOrderedOutcomePerIntentItem() throws {
+        let first = BatchItem.homebrew(.init(name: "wget", kind: .formula))
+        let second = BatchItem.homebrew(.init(name: "jq", kind: .formula))
+        let unrelated = BatchItem.homebrew(.init(name: "tree", kind: .formula))
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: [first, second]))
+        let success = BatchItemOutcome(item: first, status: .succeeded, userFacingMessage: nil)
+        let failure = BatchItemOutcome(item: second, status: .failed, userFacingMessage: nil)
+        let other = BatchItemOutcome(item: unrelated, status: .unknown, userFacingMessage: nil)
+
+        XCTAssertNil(BatchOutcome(intent: intent, itemOutcomes: []))
+        XCTAssertNil(BatchOutcome(intent: intent, itemOutcomes: [success]))
+        XCTAssertNil(BatchOutcome(intent: intent, itemOutcomes: [success, success]))
+        XCTAssertNil(BatchOutcome(intent: intent, itemOutcomes: [success, other]))
+        XCTAssertNil(BatchOutcome(intent: intent, itemOutcomes: [failure, success]))
+        XCTAssertNotNil(BatchOutcome(intent: intent, itemOutcomes: [success, failure]))
     }
 
     func testNPMBatchScopeIncludesNodeEnvironment() throws {
@@ -144,16 +213,39 @@ final class CatalogDomainModelsTests: XCTestCase {
         XCTAssertEqual(intent.scope, .npm(environment))
     }
 
+    func testNPMBatchRejectsItemsFromDifferentNodeEnvironments() {
+        let node20 = NodeEnvironmentContext(
+            identifier: "nvm:v20.18.0",
+            nodeVersion: "v20.18.0",
+            npmVersion: "10.8.2"
+        )
+        let node22 = NodeEnvironmentContext(
+            identifier: "nvm:v22.12.0",
+            nodeVersion: "v22.12.0",
+            npmVersion: "10.9.0"
+        )
+
+        XCTAssertNil(BatchIntent(operation: .update, items: [
+            .npm(.init(name: "typescript", environment: node20)),
+            .npm(.init(name: "eslint", environment: node22)),
+        ]))
+    }
+
     func testActivityEnvelopeRoundTripsOnlySanitizedSummaryFields() throws {
+        let environment = NodeEnvironmentContext(
+            identifier: "nvm:v22.12.0",
+            nodeVersion: "v22.12.0",
+            npmVersion: "10.9.0"
+        )
         let summary = ActivitySummary(
             id: UUID(uuidString: "51FBB913-AC51-4C8A-A68C-7D5A11A50B15")!,
             operation: .install,
-            providerScope: .homebrew(.formula),
-            targetDisplayNames: ["wget"],
+            scope: .npm(environment),
+            targetDisplayNames: ["typescript"],
             date: Date(timeIntervalSince1970: 1_700_000_000),
-            status: .succeeded,
+            status: .failed,
             itemOutcomes: [
-                .init(displayName: "wget", status: .succeeded, userFacingMessage: nil)
+                .init(displayName: "typescript", status: .failed, reason: .providerFailure)
             ]
         )
         let envelope = PersistedActivityEnvelope(summaries: [summary])
@@ -163,10 +255,12 @@ final class CatalogDomainModelsTests: XCTestCase {
         let json = try XCTUnwrap(String(data: data, encoding: .utf8))
 
         XCTAssertEqual(decoded, envelope)
+        XCTAssertEqual(decoded.summaries.first?.scope, .npm(environment))
+        XCTAssertEqual(decoded.summaries.first?.itemOutcomes.first?.reason, .providerFailure)
         XCTAssertFalse(json.contains("command"))
         XCTAssertFalse(json.contains("stdout"))
         XCTAssertFalse(json.contains("stderr"))
-        XCTAssertFalse(json.contains("environment"))
+        XCTAssertFalse(json.contains("userFacingMessage"))
     }
 
     func testApplicationLanguageMapsToLocaleOverride() {

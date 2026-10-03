@@ -45,6 +45,8 @@ final class AppModel: ObservableObject {
     let homeOutdatedDependencies: HomeOutdatedDependencies
     var checkedOutdatedRefresh: Date?
     var activeOutdatedRefreshID: UUID?
+    var homeBackgroundOwner: (operationID: UUID, refreshedAt: Date, task: Task<Bool, Never>)?
+    var latestHomeBackgroundRequestID: UUID?
 
     init(
         service: SystemProbeService,
@@ -122,7 +124,9 @@ final class AppModel: ObservableObject {
         switch action {
         case .refresh: await refresh()
         case .show(let destination): selectedDestination = destination
-        case .cancel: operationStore.cancelActiveTask()
+        case .cancel:
+            latestHomeBackgroundRequestID = nil
+            operationStore.cancelActiveTask()
         }
     }
 

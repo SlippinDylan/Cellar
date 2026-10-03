@@ -12,6 +12,10 @@ final class OperationStore: ObservableObject {
     var activeOperationCount: Int { activeOperationIDs.count }
     var hasActiveOperations: Bool { !activeOperationIDs.isEmpty }
 
+    func isSoleOperation(_ identifier: UUID) -> Bool {
+        activeOperationIDs == [identifier]
+    }
+
     init() {}
 
     func performCancellable<Value: Sendable>(

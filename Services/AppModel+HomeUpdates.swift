@@ -25,8 +25,31 @@ extension AppModel {
 
     func refreshHomeBackground(after localRefresh: Date?, environment: [String: String] = ProcessInfo.processInfo.environment) async {
         guard environment["XCTestConfigurationFilePath"] == nil, let localRefresh,
-              localRefresh == refreshedAt, !isBusy, !Task.isCancelled else { return }
+              localRefresh == refreshedAt, !Task.isCancelled else { return }
+        let requestID = UUID()
+        latestHomeBackgroundRequestID = requestID
+        if let previous = homeBackgroundOwner {
+            guard !operationStore.hasActiveOperations || operationStore.isSoleOperation(previous.operationID) else { return }
+            let healthyDuplicate = previous.refreshedAt == localRefresh && !previous.task.isCancelled
+                && operationStore.activeTask?.cancellationRequested != true
+            if !healthyDuplicate { previous.task.cancel() }
+            let completed = await previous.task.value
+            guard !Task.isCancelled, latestHomeBackgroundRequestID == requestID else { return }
+            if completed && previous.refreshedAt == localRefresh { return }
+        }
+        guard !Task.isCancelled, latestHomeBackgroundRequestID == requestID,
+              localRefresh == refreshedAt, !isBusy else { return }
         let operationID = operationStore.begin()
+        let task = Task { await self.runHomeBackground(operationID: operationID, localRefresh: localRefresh, environment: environment) }
+        homeBackgroundOwner = (operationID, localRefresh, task)
+        await withTaskCancellationHandler {
+            _ = await task.value
+        } onCancel: { task.cancel() }
+        if homeBackgroundOwner?.operationID == operationID { homeBackgroundOwner = nil }
+    }
+
+    private func runHomeBackground(operationID: UUID, localRefresh: Date, environment: [String: String]) async -> Bool {
+        // Release the slot before task.value resumes a caller waiting to take ownership.
         defer { operationStore.end(operationID) }
         do {
             try await operationStore.performCancellable(operationID: operationID) {
@@ -35,8 +58,10 @@ extension AppModel {
                 _ = await (versions, updates)
                 try Task.checkCancellation()
             }
+            return true
         } catch is CancellationError {
             // Each child settles its state before the shared lifecycle slot is released.
+            return false
         } catch {
             preconditionFailure("Home reads handle provider failures before returning: \(error)")
         }

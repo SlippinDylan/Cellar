@@ -381,6 +381,108 @@ final class HomeDashboardTests: XCTestCase {
         XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: model.operationStore.hasActiveOperations), .terminateNow)
     }
 
+    func testReturningHomeDuringPriorCancellationCleanupTakesOverExactlyOnce() async {
+        await assertHomeBackgroundTakeover(cancelFirst: true, cancelReplacement: false, unrelatedOperation: false)
+    }
+
+    func testReplacementCallerCancelledBeforeTakeoverStartsNoChecks() async {
+        await assertHomeBackgroundTakeover(cancelFirst: true, cancelReplacement: true, unrelatedOperation: false)
+    }
+
+    func testUnrelatedOperationWinningTheSlotPreventsDeferredHomeChecks() async {
+        await assertHomeBackgroundTakeover(cancelFirst: true, cancelReplacement: false, unrelatedOperation: true)
+    }
+
+    func testOverlappingDuplicateHomeCallsDoNotCancelOrRestartHealthyChecks() async {
+        await assertHomeBackgroundTakeover(cancelFirst: false, cancelReplacement: false, unrelatedOperation: false)
+    }
+
+    func testCancelCommandDuringPendingTakeoverStartsNoChecks() async {
+        await assertHomeBackgroundTakeover(cancelFirst: true, cancelReplacement: false, unrelatedOperation: false, cancelCommand: true)
+    }
+
+    private func assertHomeBackgroundTakeover(cancelFirst: Bool, cancelReplacement: Bool, unrelatedOperation: Bool, cancelCommand: Bool = false) async {
+        let keys = ["brew", "npm"] + HomeOnlineSource.allCases.map { "version:\($0.rawValue)" }
+        let started = expectation(description: "all six first-owner reads are waiting")
+        started.expectedFulfillmentCount = keys.count
+        let cleanup = XCTestExpectation(description: "all six reads received cancellation but retain cleanup")
+        cleanup.expectedFulfillmentCount = keys.count
+        let arrived = expectation(description: "replacement caller entered Home")
+        let events = HomeTestEvents()
+        let gate = HomeOutdatedGate()
+        let read: @Sendable (String) async throws -> Void = { key in
+            let attempt = await events.nextCall(key)
+            if attempt == 0 {
+                await withTaskCancellationHandler {
+                    await gate.wait(key, started: started)
+                } onCancel: { cleanup.fulfill() }
+                try Task.checkCancellation()
+            }
+        }
+        var dashboard = dependencies(events: events)
+        dashboard.latestVersion = { source in
+            try await read("version:\(source.rawValue)")
+            return "2.0.0"
+        }
+        let model = updateModel(dependencies: HomeOutdatedDependencies(homebrew: {
+            try await read("brew")
+            return [HomebrewOutdatedPackage(identity: .init(name: "current-result", kind: .formula), installedVersions: ["1.0.0"], currentVersion: "2.0.0")]
+        }, node: { _ in
+            try await read("npm")
+            return ["behind": OutdatedPackage(current: "1.0.0", wanted: "1.0.0", latest: "2.0.0")]
+        }), dashboardDependencies: dashboard)
+        let refresh = model.refreshedAt
+        let first = Task { await model.refreshHomeBackground(after: refresh, environment: [:]) }
+        await fulfillment(of: [started], timeout: 2)
+        if cancelFirst {
+            first.cancel()
+            await fulfillment(of: [cleanup], timeout: 2)
+        }
+        XCTAssertEqual(model.operationStore.activeOperationCount, 1)
+        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: model.operationStore.hasActiveOperations), .terminateCancel)
+        let replacement = Task {
+            arrived.fulfill()
+            await model.refreshHomeBackground(after: refresh, environment: [:])
+        }
+        await fulfillment(of: [arrived], timeout: 2)
+        if cancelReplacement { replacement.cancel() }
+        if cancelCommand { await model.performShellAction(.cancel) }
+        let unrelatedID = unrelatedOperation ? model.operationStore.begin() : nil
+        for key in keys { await gate.resume(key) }
+        await first.value
+        await replacement.value
+        let takesOver = cancelFirst && !cancelReplacement && !unrelatedOperation && !cancelCommand
+        for key in keys {
+            let count = await events.count(key)
+            XCTAssertEqual(count, takesOver ? 2 : 1, key)
+        }
+        if takesOver || !cancelFirst {
+            XCTAssertEqual(model.homebrewUpdateState, .available)
+            XCTAssertEqual(model.nodeUpdateState, .available)
+            XCTAssertEqual(model.homebrew?.snapshot?.outdatedPackages.first?.identity.name, "current-result")
+            XCTAssertEqual(model.node?.packages.first?.latestVersion, "2.0.0")
+            XCTAssertTrue(model.homeDashboard.onlineVersions.values.allSatisfy { $0 == .available(version: "2.0.0") })
+        } else {
+            XCTAssertEqual(model.homebrewUpdateState, .notLoaded)
+            XCTAssertEqual(model.nodeUpdateState, .notLoaded)
+        }
+        XCTAssertEqual(model.homebrew?.snapshot?.packages.count, 3)
+        XCTAssertEqual(model.node?.packages.count, 3)
+        if let unrelatedID {
+            XCTAssertEqual(model.operationStore.activeOperationCount, 1)
+            model.operationStore.end(unrelatedID)
+        }
+        XCTAssertEqual(model.operationStore.activeOperationCount, 0)
+        XCTAssertNil(model.operationStore.activeTask)
+        if takesOver {
+            await model.refreshHomeBackground(after: refresh, environment: [:])
+            for key in keys {
+                let count = await events.count(key)
+                XCTAssertEqual(count, 2, "Completed checks must not restart: \(key)")
+            }
+        }
+    }
+
     func testHomebrewOutdatedFailureKeepsCoreAndNPMResultsAndChecksDoNotPoll() async {
         let events = HomeTestEvents()
         let model = updateModel(dependencies: HomeOutdatedDependencies(homebrew: {

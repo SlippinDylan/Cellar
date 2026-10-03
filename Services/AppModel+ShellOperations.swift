@@ -32,11 +32,14 @@ extension AppModel {
         }
 
         do {
-            let operation = try await service.executeShell(plan, snapshot: managers)
+            let operation = try await operationStore.performCancellable(operationID: operationID) {
+                try await self.service.executeShell(plan, snapshot: managers)
+            }
             let refreshedShell: ShellStatus?
             let postflightError: String?
             do {
-                refreshedShell = try await service.loadShell(snapshot: managers)
+                let refresh = Task { try await service.loadShell(snapshot: managers) }
+                refreshedShell = try await refresh.value
                 postflightError = nil
             } catch {
                 refreshedShell = nil
@@ -62,9 +65,11 @@ extension AppModel {
                 outcome: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded,
                 detail: result.activityDetail
             )
+            recordShellSummary(plan, status: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded)
         } catch {
             shellOperationError = error.localizedDescription
-            if let refreshedShell = try? await service.loadShell(snapshot: managers) {
+            let refresh = Task { try await service.loadShell(snapshot: managers) }
+            if let refreshedShell = try? await refresh.value {
                 shell = refreshedShell
                 refreshedAt = Date()
             }
@@ -74,6 +79,7 @@ extension AppModel {
                 outcome: .failed,
                 detail: error.localizedDescription
             )
+            recordShellSummary(plan, status: error is CancellationError ? .cancelled : .failed)
         }
     }
 
@@ -84,6 +90,16 @@ extension AppModel {
     func dismissShellFeedback() {
         shellActionResult = nil
         shellOperationError = nil
+    }
+
+    private func recordShellSummary(_ plan: ShellActionPlan, status: ActivityStatus) {
+        let operation: ActivityOperationKind = switch plan.request.action {
+        case .installOhMyZsh, .installPlugin: .install
+        case .tidy: .maintenance
+        case .setPlugins, .switchTheme: .configuration
+        }
+        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: nil,
+                                             targetDisplayNames: [], date: Date(), status: status, itemOutcomes: []))
     }
 }
 

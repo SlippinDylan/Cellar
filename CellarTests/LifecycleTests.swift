@@ -49,6 +49,11 @@ final class LifecycleTests: XCTestCase {
         XCTAssertTrue(model.isBusy)
     }
 
+    func testHostedLiveModelDoesNotLoadOrCreatePersistentActivity() {
+        XCTAssertNotNil(ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"])
+        XCTAssertNil(AppModel.live().activityStore)
+    }
+
     func testHomebrewExecutionWaitsForAnotherModule() async {
         let model = AppModel.live()
         let plan = HomebrewActionPlan(

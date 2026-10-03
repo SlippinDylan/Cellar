@@ -1,0 +1,375 @@
+import AppKit
+import XCTest
+@testable import Cellar
+
+@MainActor
+final class BatchOperationCoordinatorTests: XCTestCase {
+    func testIntentRejectsEmptyDuplicateMixedProviderTypeAndEnvironment() {
+        let formula = BatchItem.homebrew(.init(name: "one", kind: .formula))
+        let cask = BatchItem.homebrew(.init(name: "two", kind: .cask))
+        let npm = BatchItem.npm(.init(name: "one", environment: environment))
+        let otherNPM = BatchItem.npm(.init(name: "two", environment: .init(
+            identifier: "nvm:v20.0.0", nodeVersion: "v20.0.0", npmVersion: "10.0.0"
+        )))
+        XCTAssertNil(BatchIntent(operation: .install, items: []))
+        XCTAssertNil(BatchIntent(operation: .install, items: [formula, formula]))
+        XCTAssertNil(BatchIntent(operation: .install, items: [formula, cask]))
+        XCTAssertNil(BatchIntent(operation: .install, items: [formula, npm]))
+        XCTAssertNil(BatchIntent(operation: .install, items: [npm, otherNPM]))
+    }
+
+    func testSequentialExecutionContinuesAfterFailureAndRefreshesOnce() async throws {
+        let provider = FakeBatchProvider(failingNames: ["two"])
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        let intent = try npmIntent(.install)
+        let plan = try await coordinator.prepare(intent)
+        XCTAssertFalse(store.hasActiveOperations)
+        let beforeExecution = await provider.executedNames()
+        XCTAssertEqual(beforeExecution, [])
+
+        let result = try await coordinator.execute(plan)
+
+        let names = await provider.executedNames()
+        let concurrency = await provider.maximumConcurrentCount()
+        let refreshes = await provider.refreshCount()
+        XCTAssertEqual(names, ["one", "two", "three"])
+        XCTAssertEqual(concurrency, 1)
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .failed, .succeeded])
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        XCTAssertEqual(result.outcome.succeededItemCount, 2)
+        XCTAssertEqual(result.refreshStatus, .succeeded)
+        XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertNil(store.activeTask)
+    }
+
+    func testRefreshFailureDoesNotEraseSuccessfulItemOutcomes() async throws {
+        let provider = FakeBatchProvider(refreshFails: true)
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        let plan = try await coordinator.prepare(npmIntent(.update))
+
+        let result = try await coordinator.execute(plan)
+
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .succeeded, .succeeded])
+        XCTAssertEqual(result.outcome.status, .succeeded)
+        XCTAssertEqual(result.refreshStatus, .failed)
+        let refreshes = await provider.refreshCount()
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertFalse(store.hasActiveOperations)
+    }
+
+    func testCancellationPropagatesAndStopsNotStartedItemsWithPartialResult() async throws {
+        let started = expectation(description: "Second item started")
+        let provider = FakeBatchProvider(pausedName: "two", onPaused: { started.fulfill() })
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        let plan = try await coordinator.prepare(npmIntent(.uninstall))
+        let task = Task { try await coordinator.execute(plan) }
+        await fulfillment(of: [started], timeout: 3)
+
+        XCTAssertTrue(store.hasActiveOperations)
+        XCTAssertTrue(store.activeTask?.canCancel == true)
+        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: store.hasActiveOperations), .terminateCancel)
+        store.cancelActiveTask()
+        let result = try await task.value
+
+        let names = await provider.executedNames()
+        let cancelled = await provider.observedCancellation()
+        let refreshes = await provider.refreshCount()
+        XCTAssertEqual(names, ["one", "two"])
+        XCTAssertTrue(cancelled)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .cancelled, .cancelled])
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertNil(store.activeTask)
+    }
+
+    func testParentCancellationPropagatesButFinalRefreshIsNotCancelled() async throws {
+        let started = expectation(description: "First item started")
+        let provider = FakeBatchProvider(pausedName: "one", onPaused: { started.fulfill() })
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        let plan = try await coordinator.prepare(npmIntent(.install))
+        let task = Task { try await coordinator.execute(plan) }
+        await fulfillment(of: [started], timeout: 3)
+        task.cancel()
+
+        let result = try await task.value
+
+        let cancelled = await provider.observedCancellation()
+        let refreshes = await provider.refreshCount()
+        XCTAssertTrue(cancelled)
+        XCTAssertEqual(result.outcome.status, .cancelled)
+        XCTAssertEqual(result.refreshStatus, .succeeded)
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertFalse(store.hasActiveOperations)
+    }
+
+    func testGlobalExclusionRejectsDuplicateAndOtherAppModelWork() async throws {
+        let started = expectation(description: "First item started")
+        let provider = FakeBatchProvider(pausedName: "one", onPaused: { started.fulfill() })
+        let store = OperationStore.shared
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        let plan = try await coordinator.prepare(npmIntent(.install))
+        let task = Task { try await coordinator.execute(plan) }
+        await fulfillment(of: [started], timeout: 3)
+        do {
+            _ = try await coordinator.execute(plan)
+            XCTFail("Duplicate write must be refused")
+        } catch {
+            XCTAssertEqual(error as? BatchOperationError, .busy)
+        }
+        let model = AppModel.live()
+        XCTAssertTrue(model.isBusy)
+        await model.refresh()
+        XCTAssertNil(model.managers)
+        XCTAssertEqual(store.activeOperationCount, 1)
+        store.cancelActiveTask()
+        _ = try await task.value
+        XCTAssertFalse(store.hasActiveOperations)
+    }
+
+    func testPreparedPlanIsSingleUseAndKeepsNPMEnvironment() async throws {
+        let provider = FakeBatchProvider()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore())
+        let plan = try await coordinator.prepare(npmIntent(.update))
+        _ = try await coordinator.execute(plan)
+        let environments = await provider.executedEnvironments()
+        XCTAssertEqual(environments, [environment, environment, environment])
+        do {
+            _ = try await coordinator.execute(plan)
+            XCTFail("A confirmed batch cannot be replayed")
+        } catch {
+            XCTAssertEqual(error as? BatchOperationError, .planUnavailable)
+        }
+    }
+
+    func testPreparationFailureDoesNotWriteAndCleansUpOperation() async throws {
+        let provider = FakeBatchProvider(planFails: true)
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        do {
+            _ = try await coordinator.prepare(npmIntent(.install))
+            XCTFail("Expected plan failure")
+        } catch {}
+        let names = await provider.executedNames()
+        let refreshes = await provider.refreshCount()
+        XCTAssertEqual(names, [])
+        XCTAssertEqual(refreshes, 0)
+        XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertNil(store.activeTask)
+    }
+
+    func testCancellationBeforeStartingDoesNotRefreshOrExecute() async throws {
+        let provider = FakeBatchProvider()
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        let plan = try await coordinator.prepare(npmIntent(.install))
+        let task = Task { try await coordinator.execute(plan) }
+        task.cancel()
+        let result = try await task.value
+        let names = await provider.executedNames()
+        let refreshes = await provider.refreshCount()
+        XCTAssertEqual(names, [])
+        XCTAssertEqual(refreshes, 0)
+        XCTAssertEqual(result.refreshStatus, .notNeeded)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.cancelled, .cancelled, .cancelled])
+        XCTAssertFalse(store.hasActiveOperations)
+    }
+
+    func testQuitProtectionAndExclusionRemainUntilRefreshCompletes() async throws {
+        let started = expectation(description: "Refresh started")
+        let provider = FakeBatchProvider(pauseRefresh: true, onRefresh: { started.fulfill() })
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
+        let plan = try await coordinator.prepare(npmIntent(.update))
+        let task = Task { try await coordinator.execute(plan) }
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertTrue(store.hasActiveOperations)
+        XCTAssertEqual(store.activeOperationCount, 1)
+        XCTAssertNil(store.activeTask)
+        do {
+            _ = try await coordinator.prepare(npmIntent(.install))
+            XCTFail("Refresh reconciliation still owns the operation slot")
+        } catch {
+            XCTAssertEqual(error as? BatchOperationError, .busy)
+        }
+        task.cancel()
+        await provider.resumeRefresh()
+        let result = try await task.value
+        XCTAssertEqual(result.refreshStatus, .succeeded)
+        XCTAssertFalse(store.hasActiveOperations)
+    }
+
+    func testHomebrewUsesTypedSinglePlansAndRetainsUnknownPartialDiagnostics() async throws {
+        let provider = FakeBatchProvider(failingNames: ["two"], unknownNames: ["three"])
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore())
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: ["one", "two", "three"].map {
+            .homebrew(.init(name: $0, kind: .cask))
+        }))
+        let plan = try await coordinator.prepare(intent)
+        let result = try await coordinator.execute(plan)
+        let names = await provider.executedNames()
+        let refreshes = await provider.refreshCount()
+        XCTAssertEqual(names, ["one", "two", "three"])
+        XCTAssertEqual(refreshes, 1)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .failed, .unknown])
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        guard case .homebrew(let third) = result.providerResults[2] else { return XCTFail("Expected typed Homebrew diagnostic") }
+        XCTAssertEqual(third.plan.targets.first?.kind, .cask)
+        XCTAssertEqual(third.outcome, .stateUnknown)
+        XCTAssertEqual(third.command.standardOutput, "TOKEN=secret stdout")
+    }
+
+    func testBatchPersistsSemanticOutcomesAndDistinctRefreshFailureWithoutProviderOutput() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarBatchActivityTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        let provider = FakeBatchProvider(failingNames: ["two"], refreshFails: true)
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
+        let plan = try await coordinator.prepare(npmIntent(.uninstall))
+        _ = try await coordinator.execute(plan)
+        XCTAssertEqual(activity.summaries.count, 2)
+        XCTAssertEqual(activity.summaries.map(\.operation), [.refresh, .uninstall])
+        XCTAssertEqual(activity.summaries.last?.status, .partiallySucceeded)
+        XCTAssertEqual(activity.summaries.last?.itemOutcomes.map(\.reason), [nil, .providerFailure, nil])
+        let json = try String(contentsOf: activity.fileURL, encoding: .utf8)
+        for secret in ["TOKEN", "secret", "stdout", "/private", "logFile", "command"] {
+            XCTAssertFalse(json.contains(secret), secret)
+        }
+    }
+
+    private var environment: NodeEnvironmentContext {
+        .init(identifier: "nvm:v22.0.0", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
+    }
+
+    private func npmIntent(_ operation: BatchOperation) throws -> BatchIntent {
+        try XCTUnwrap(BatchIntent(operation: operation, items: ["one", "two", "three"].map {
+            .npm(.init(name: $0, environment: environment))
+        }))
+    }
+}
+
+private actor FakeBatchProvider: BatchOperationProviding {
+    enum Failure: Error { case provider, refresh, plan }
+    let failingNames: Set<String>
+    let refreshFails: Bool
+    let pausedName: String?
+    let onPaused: @Sendable () -> Void
+    let planFails: Bool
+    let unknownNames: Set<String>
+    let pauseRefresh: Bool
+    let onRefresh: @Sendable () -> Void
+    var refreshContinuation: AsyncStream<Void>.Continuation?
+    var names: [String] = []
+    var environments: [NodeEnvironmentContext] = []
+    var refreshes = 0
+    var concurrent = 0
+    var maximumConcurrent = 0
+    var cancelled = false
+
+    init(failingNames: Set<String> = [], refreshFails: Bool = false,
+         pausedName: String? = nil, onPaused: @escaping @Sendable () -> Void = {}, planFails: Bool = false,
+         unknownNames: Set<String> = [], pauseRefresh: Bool = false, onRefresh: @escaping @Sendable () -> Void = {}) {
+        self.failingNames = failingNames
+        self.refreshFails = refreshFails
+        self.pausedName = pausedName
+        self.onPaused = onPaused
+        self.planFails = planFails
+        self.unknownNames = unknownNames
+        self.pauseRefresh = pauseRefresh
+        self.onRefresh = onRefresh
+    }
+
+    func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) throws -> HomebrewActionPlan {
+        if planFails { throw Failure.plan }
+        return HomebrewActionPlan(id: UUID(), action: operation.homebrewAction(for: identity.kind), targets: [identity],
+                                  tapName: nil, dependencies: [], dependents: [], artifacts: [], residualPaths: [],
+                                  associatedPackages: [], generatedAt: Date(), stateFingerprint: "fake-fingerprint")
+    }
+
+    func executeHomebrew(_ plan: HomebrewActionPlan) throws -> HomebrewActionResult {
+        guard let identity = plan.targets.first else { throw Failure.plan }
+        names.append(identity.name)
+        let failed = failingNames.contains(identity.name)
+        let package = HomebrewPackage(identity: identity, displayName: identity.name, description: nil, homepage: nil,
+                                      installedVersions: failed ? [] : ["1.0.0"], currentVersion: "1.0.0", tap: nil,
+                                      dependencies: [], pinned: false, deprecated: false, disabled: false, artifacts: [])
+        let snapshot = HomebrewSnapshot(executablePath: "/fake/brew", version: "5.0.0",
+                                        configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]),
+                                        packages: [package], outdatedPackages: [], taps: [], sectionErrors: [:],
+                                        controlledPath: "", commandLineToolsAvailable: true)
+        return HomebrewActionResult(plan: plan,
+                                    command: .init(arguments: ["fake"], standardOutput: "TOKEN=secret stdout", standardError: "",
+                                                   terminationStatus: failed ? 1 : 0, standardOutputWasTruncated: false,
+                                                   standardErrorWasTruncated: false),
+                                    snapshot: unknownNames.contains(identity.name) ? nil : snapshot,
+                                    postflightError: unknownNames.contains(identity.name) ? "secret" : nil, remainingResidualPaths: [])
+    }
+    func refreshHomebrew() throws -> HomebrewStatus {
+        refreshes += 1
+        if refreshFails { throw Failure.refresh }
+        return HomebrewStatus(executablePath: "/fake/brew", version: "5.0.0", managerAvailable: true, snapshot: nil)
+    }
+
+    func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) throws -> NodeActionPlan {
+        if planFails { throw Failure.plan }
+        let action: NodeAction = switch operation {
+        case .install: .installPackage
+        case .update: .updatePackage
+        case .uninstall: .uninstallPackage
+        }
+        let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(
+            "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"executeSupported\":true,\"executable\":true}".utf8
+        ))
+        return NodeActionPlan(id: UUID(), request: .init(action: action, subject: identity.name),
+                              payload: payload, generatedAt: Date())
+    }
+
+    func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult {
+        names.append(plan.request.subject)
+        environments.append(environment)
+        concurrent += 1
+        maximumConcurrent = max(maximumConcurrent, concurrent)
+        defer { concurrent -= 1 }
+        if plan.request.subject == pausedName {
+            let stream = AsyncStream<Void> { _ in onPaused() }
+            for await _ in stream {}
+            cancelled = Task.isCancelled
+            try Task.checkCancellation()
+        }
+        if failingNames.contains(plan.request.subject) { throw Failure.provider }
+        return NodeOperationResult(operationId: UUID().uuidString, action: plan.request.action.rawValue,
+                                   subject: plan.request.subject, exitCode: 0, status: "ok",
+                                   logFile: "/private/secret-path", detail: "TOKEN=secret stdout", residues: nil)
+    }
+
+    func refreshNPM(_ environment: NodeEnvironmentContext) async throws -> NodeSnapshot {
+        refreshes += 1
+        if pauseRefresh {
+            let (stream, continuation) = AsyncStream<Void>.makeStream()
+            refreshContinuation = continuation
+            onRefresh()
+            for await _ in stream {}
+        }
+        try Task.checkCancellation()
+        if refreshFails { throw Failure.refresh }
+        return NodeSnapshot(
+            summary: .init(nodePath: "/fake/node", npmPath: "/fake/npm", nodeVersion: environment.nodeVersion,
+                           npmVersion: environment.npmVersion, nvmLoaded: false, globalPrefix: "/fake",
+                           globalRoot: "/fake", registry: "https://registry.npmjs.org"),
+            configuration: .init(registry: "", cache: "", prefix: "", userRegistry: "", projectRegistry: "", globalRegistry: ""),
+            packages: [], installations: [], managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil
+        )
+    }
+
+    func executedNames() -> [String] { names }
+    func executedEnvironments() -> [NodeEnvironmentContext] { environments }
+    func refreshCount() -> Int { refreshes }
+    func maximumConcurrentCount() -> Int { maximumConcurrent }
+    func observedCancellation() -> Bool { cancelled }
+    func resumeRefresh() { refreshContinuation?.finish() }
+}

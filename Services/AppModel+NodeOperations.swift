@@ -36,19 +36,16 @@ extension AppModel {
         }
 
         do {
-            let operation = try await service.executeNode(
-                plan,
-                snapshot: managers,
-                preferredNodeVersion: preferredNodeVersion
-            )
+            let operation = try await operationStore.performCancellable(operationID: operationID) {
+                try await self.service.executeNode(plan, snapshot: managers,
+                                                   preferredNodeVersion: self.preferredNodeVersion)
+            }
             updatePreferredNodeVersion(after: plan)
             let refreshedSnapshot: NodeSnapshot?
             let postflightError: String?
             do {
-                refreshedSnapshot = try await service.loadNode(
-                    snapshot: managers,
-                    preferredNodeVersion: preferredNodeVersion
-                )
+                let refresh = Task { try await service.loadNode(snapshot: managers, preferredNodeVersion: preferredNodeVersion) }
+                refreshedSnapshot = try await refresh.value
                 postflightError = nil
             } catch {
                 refreshedSnapshot = nil
@@ -74,12 +71,11 @@ extension AppModel {
                 outcome: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded,
                 detail: result.activityDetail
             )
+            recordNodeSummary(plan, status: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded)
         } catch {
             nodeOperationError = error.localizedDescription
-            if let refreshedNode = try? await service.loadNode(
-                snapshot: managers,
-                preferredNodeVersion: preferredNodeVersion
-            ) {
+            let refresh = Task { try await service.loadNode(snapshot: managers, preferredNodeVersion: preferredNodeVersion) }
+            if let refreshedNode = try? await refresh.value {
                 node = refreshedNode
                 refreshedAt = Date()
             }
@@ -89,6 +85,7 @@ extension AppModel {
                 outcome: .failed,
                 detail: error.localizedDescription
             )
+            recordNodeSummary(plan, status: error is CancellationError ? .cancelled : .failed)
         }
     }
 
@@ -112,6 +109,32 @@ extension AppModel {
         default:
             break
         }
+    }
+
+    private func recordNodeSummary(_ plan: NodeActionPlan, status: ActivityStatus) {
+        let operation: ActivityOperationKind = switch plan.request.action {
+        case .installPackage, .installNode, .installNVM: .install
+        case .updatePackage: .update
+        case .uninstallPackage, .uninstallNode: .uninstall
+        case .cleanup: .maintenance
+        default: .configuration
+        }
+        let scope: ActivityScope?
+        let names: [String]
+        switch plan.request.action {
+        case .installPackage, .updatePackage, .uninstallPackage:
+            scope = node.map { snapshot in .npm(NodeEnvironmentContext(
+                identifier: snapshot.summary.nodeVersion, nodeVersion: snapshot.summary.nodeVersion,
+                npmVersion: snapshot.summary.npmVersion
+            )) }
+            names = plan.payload.packageName.map { [$0] } ?? []
+        default:
+            scope = nil
+            names = []
+        }
+        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: scope,
+                                             targetDisplayNames: names, date: Date(), status: status,
+                                             itemOutcomes: names.map { .init(displayName: $0, status: status.itemStatus, reason: status.itemReason) }))
     }
 }
 

@@ -17,12 +17,13 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 当前源码已经实现：
 
 - Overview/Homebrew/Node/Shell/Activity 的技术模块导航和主窗口内 Settings 页面；
-- `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条 Activity；
+- `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条诊断 Activity；
+- typed batch prepare/execute、可取消任务与最多 100 条结构化 Activity 持久摘要；
 - Homebrew 直接 Bridge、Node Manager schema v1、Shell schema v1 adapter；
 - 强类型计划、确认、单写操作、post-refresh、部分失败和进程组取消基础；
 - Manager 版本化安装、Sparkle、arm64/macOS 26 构建边界。
 
-1.0 要把这些能力组合为 Home/Library/Discover/Updates/Tools、底部 Activity 与标准 Settings scene，并增加官方目录/setup 数据源、typed batch coordinator、用户取消、持久 Activity、String Catalog 与卡片展示模型。完成前，目标架构不能被描述为当前已交付实现。
+1.0 要把这些能力组合为 Home/Library/Discover/Updates/Tools、底部 Activity 与标准 Settings scene，并将目录/setup、batch、取消和持久 Activity 接入任务页面，完成 String Catalog 与卡片展示。完成前，目标架构不能被描述为当前已交付实现。
 
 ## 分层与依赖
 
@@ -115,11 +116,15 @@ Batch coordinator 只组合现有单项 typed operation：
 
 全局 mutation slot 覆盖 Homebrew、npm、Node、Registry、Shell 与 setup 写入，防止跨模块同时修改环境。只读刷新与 mutation 是否能并行由当前状态一致性契约决定；不能证明安全时拒绝刷新而非返回混合快照。
 
+当前 `BatchOperationCoordinator` 在确认前准备有序单项计划，整批计划只能消费一次。执行通过 `ProviderBatchOperations` 复用既有 Homebrew/npm client；npm 在计划和执行前核对明确的已安装 Node/npm 环境，不回退到默认版本。`OperationStore` 登记覆盖执行、取消后的进程回收及最终复查；可取消 worker 与最终复查分开，取消不打断复查。Homebrew 保留单项执行契约要求的安全复查，再执行一次整批最终复查。最终复查失败独立报告，既有逐项结果保持不变。现有单项 Homebrew、Node 与 Shell 写操作也使用相同的取消登记。
+
 ## Activity 与持久化
 
 Activity store 保存最多 100 条结构化、可本地化的用户摘要。持久模型包含稳定 operation kind、provider scope、目标显示标识、时间、状态和 per-item outcomes；不保存命令行、完整 stdout/stderr、环境、token、registry credential 或不必要的绝对用户路径。
 
 原始输出只在当前 App 会话的内存诊断对象或既有受控 Manager 日志中存在。UI 的“复制诊断”显式组合可公开信息，持久化前执行 sanitizer。Activity 文件位于 Cellar 自有 Application Support 范围，并通过可注入根目录测试；损坏数据作为独立读取错误处理，不阻止环境状态加载。
+
+当前 `ActivityStore` 将 schema v1 摘要原子写入 `~/Library/Application Support/Cellar/Activity/activity.json`，保留最近 100 条并限制单文件大小为 1 MiB。持久目标使用 provider 包标识；npm 仅保留 Node/npm 版本与由版本派生的标识，不保留原始环境标识或安装路径。损坏或不支持版本的文件移到同一自有目录中的唯一 `.isolated` 文件并公开独立错误；写入失败保留原文件与内存摘要。旧 `ActivityEntry` 不迁移、不持久化。Hosted XCTest 不加载真实 Activity store。
 
 ## Homebrew
 

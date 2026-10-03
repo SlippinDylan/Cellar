@@ -114,6 +114,48 @@ actor NodeManagerClient {
         )
     }
 
+    func planPackage(_ identity: NPMPackageIdentity, action: NodeAction, managerDirectory: URL) async throws -> NodeActionPlan {
+        guard action == .installPackage || action == .updatePackage || action == .uninstallPackage else {
+            throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
+        }
+        try await validatePackageEnvironment(identity.environment, managerDirectory: managerDirectory)
+        return try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
+                              preferredNodeVersion: identity.environment.nodeVersion)
+    }
+
+    func executePackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeOperationResult {
+        guard plan.request.action == .installPackage || plan.request.action == .updatePackage || plan.request.action == .uninstallPackage else {
+            throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
+        }
+        try await validatePackageEnvironment(environment, managerDirectory: managerDirectory)
+        return try await execute(plan, managerDirectory: managerDirectory, preferredNodeVersion: environment.nodeVersion)
+    }
+
+    private func validatePackageEnvironment(_ context: NodeEnvironmentContext, managerDirectory: URL) async throws {
+        try requirePackageInstallation(context)
+        let environment = environmentResolver.environment(preferredNodeVersion: context.nodeVersion)
+        let summary: NodeSummary = try await request("summary", managerDirectory: managerDirectory, environment: environment)
+        guard summary.nodeVersion == context.nodeVersion, summary.npmVersion == context.npmVersion else {
+            throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
+        }
+    }
+
+    func loadPackageSnapshot(_ context: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeSnapshot {
+        try requirePackageInstallation(context)
+        let snapshot = try await loadSnapshot(managerDirectory: managerDirectory, preferredNodeVersion: context.nodeVersion)
+        guard snapshot.summary.nodeVersion == context.nodeVersion else {
+            throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
+        }
+        return snapshot
+    }
+
+    private func requirePackageInstallation(_ context: NodeEnvironmentContext) throws {
+        let installations = environmentResolver.installations(preferredNodeVersion: context.nodeVersion)
+        guard installations.contains(where: { $0.version == context.nodeVersion }) else {
+            throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
+        }
+    }
+
     func request<Payload: Decodable & Sendable>(
         _ command: String,
         arguments: [String] = [],

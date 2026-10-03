@@ -146,6 +146,18 @@ actor SystemProbeService {
         )
     }
 
+    func planNPMPackage(_ identity: NPMPackageIdentity, action: NodeAction, snapshot: SnapshotStatus) async throws -> NodeActionPlan {
+        try await nodeClient.planPackage(identity, action: action, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
+    func executeNPMPackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NodeOperationResult {
+        try await nodeClient.executePackage(plan, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
+    func loadNPMPackageEnvironment(_ environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NodeSnapshot {
+        try await nodeClient.loadPackageSnapshot(environment, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
     func terminateAllProcesses() async {
         await runner.terminateAll()
     }

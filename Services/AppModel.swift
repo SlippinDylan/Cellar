@@ -31,13 +31,19 @@ final class AppModel: ObservableObject {
 
     let service: SystemProbeService
     let operationStore: OperationStore
+    let activityStore: ActivityStore?
+    let batchCoordinator: BatchOperationCoordinator
 
     init(
         service: SystemProbeService,
-        operationStore: OperationStore = .shared
+        operationStore: OperationStore = .shared,
+        activityStore: ActivityStore? = nil
     ) {
         self.service = service
         self.operationStore = operationStore
+        self.activityStore = activityStore
+        batchCoordinator = BatchOperationCoordinator(provider: ProviderBatchOperations(service: service),
+                                                     operationStore: operationStore, activityStore: activityStore)
     }
 
     static func live() -> AppModel {
@@ -45,12 +51,20 @@ final class AppModel: ObservableObject {
         let installer = ManagerSnapshotInstaller()
         let client = NodeManagerClient(runner: runner)
         let shellClient = ShellManagerClient(runner: runner)
+        let activityStore: ActivityStore?
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            let store = ActivityStore(applicationSupportRoot: .applicationSupportDirectory)
+            store.restore()
+            activityStore = store
+        } else {
+            activityStore = nil
+        }
         return AppModel(service: SystemProbeService(
             runner: runner,
             installer: installer,
             nodeClient: client,
             shellClient: shellClient
-        ))
+        ), activityStore: activityStore)
     }
 
     var dashboard: DashboardSnapshot? {
@@ -65,7 +79,7 @@ final class AppModel: ObservableObject {
     }
 
     var isBusy: Bool {
-        isRefreshing || isHomebrewWorking || isNodeWorking || isShellWorking
+        operationStore.hasActiveOperations || isRefreshing || isHomebrewWorking || isNodeWorking || isShellWorking
     }
 
     var activeOperationLabel: String? {
@@ -73,6 +87,12 @@ final class AppModel: ObservableObject {
         if isHomebrewWorking { return "正在处理 Homebrew 任务" }
         if isNodeWorking { return "正在处理 Node 任务" }
         if isShellWorking { return "正在处理 Shell 任务" }
+        if let intent = batchCoordinator.activeIntent {
+            switch intent.scope {
+            case .homebrew: return "正在处理 Homebrew 任务"
+            case .npm: return "正在处理 Node 任务"
+            }
+        }
         return nil
     }
 
@@ -128,6 +148,37 @@ final class AppModel: ObservableObject {
             outcome: errorMessages.isEmpty ? .succeeded : .failed,
             detail: errorMessages.isEmpty ? "已读取全部环境状态" : errorMessages.joined(separator: "；")
         ))
+        activityStore?.append(ActivitySummary(id: UUID(), operation: .refresh, scope: nil,
+                                             targetDisplayNames: [], date: Date(),
+                                             status: errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: []))
+    }
+
+    func prepareBatch(_ intent: BatchIntent) async throws -> BatchPlan {
+        guard !isBusy else { throw BatchOperationError.busy }
+        setBatchWorking(intent.scope, true)
+        defer { setBatchWorking(intent.scope, false) }
+        return try await batchCoordinator.prepare(intent)
+    }
+
+    func executeBatch(_ plan: BatchPlan) async throws -> BatchExecutionResult {
+        guard !isBusy else { throw BatchOperationError.busy }
+        setBatchWorking(plan.intent.scope, true)
+        defer { setBatchWorking(plan.intent.scope, false) }
+        let result = try await batchCoordinator.execute(plan)
+        switch result.refreshedState {
+        case .homebrew(let status): homebrew = status
+        case .npm(let snapshot): node = snapshot
+        case nil: break
+        }
+        if result.refreshedState != nil { refreshedAt = Date() }
+        return result
+    }
+
+    private func setBatchWorking(_ scope: BatchScope, _ working: Bool) {
+        switch scope {
+        case .homebrew: isHomebrewWorking = working
+        case .npm: isNodeWorking = working
+        }
     }
 
     func beginActivity(title: String, detail: String) -> UUID {

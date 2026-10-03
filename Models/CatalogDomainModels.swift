@@ -316,6 +316,24 @@ enum ActivityStatus: String, Codable, Sendable {
     case partiallySucceeded
     case failed
     case cancelled
+
+    var itemStatus: BatchItemStatus {
+        switch self {
+        case .succeeded: .succeeded
+        case .failed: .failed
+        case .cancelled: .cancelled
+        case .partiallySucceeded, .running: .unknown
+        }
+    }
+
+    var itemReason: ActivityItemReason? {
+        switch self {
+        case .succeeded, .running: nil
+        case .failed: .providerFailure
+        case .cancelled: .cancelledByUser
+        case .partiallySucceeded: .stateUnavailable
+        }
+    }
 }
 
 struct BatchOutcome: Equatable, Sendable {

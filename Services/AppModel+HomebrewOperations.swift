@@ -100,7 +100,9 @@ extension AppModel {
         }
 
         do {
-            let result = try await service.executeHomebrew(plan)
+            let result = try await operationStore.performCancellable(operationID: operationID) {
+                try await self.service.executeHomebrew(plan)
+            }
             homebrewActionResult = result
             if let snapshot = result.snapshot {
                 homebrew = HomebrewStatus(
@@ -142,13 +144,20 @@ extension AppModel {
                 detail: activityDetail,
                 command: result.command
             )
+            let status: ActivityStatus = switch result.outcome {
+            case .succeeded: .succeeded
+            case .partial: .partiallySucceeded
+            case .failed, .stateUnknown: .failed
+            }
+            recordHomebrewSummary(plan, status: status)
         } catch {
             homebrewOperationError = error.localizedDescription
-            if let managers,
-               let refreshedHomebrew = try? await service.loadHomebrew(snapshot: managers)
-            {
-                homebrew = refreshedHomebrew
-                refreshedAt = Date()
+            if let managers {
+                let refresh = Task { try await service.loadHomebrew(snapshot: managers) }
+                if let refreshedHomebrew = try? await refresh.value {
+                    homebrew = refreshedHomebrew
+                    refreshedAt = Date()
+                }
             }
             finishActivity(
                 activityID,
@@ -156,6 +165,7 @@ extension AppModel {
                 outcome: .failed,
                 detail: error.localizedDescription
             )
+            recordHomebrewSummary(plan, status: error is CancellationError ? .cancelled : .failed)
         }
     }
 
@@ -185,6 +195,21 @@ extension AppModel {
         } catch {
             homebrewOperationError = error.localizedDescription
         }
+    }
+
+    private func recordHomebrewSummary(_ plan: HomebrewActionPlan, status: ActivityStatus) {
+        let operation: ActivityOperationKind = switch plan.action {
+        case .install: .install
+        case .upgrade, .update: .update
+        case .uninstallFormula, .uninstallCask, .zapCask: .uninstall
+        case .addTap, .removeTap: .configuration
+        }
+        let scope = plan.targets.first.map { ActivityScope.homebrew($0.kind) }
+        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: scope,
+                                             targetDisplayNames: plan.targets.map(\.name), date: Date(),
+                                             status: status, itemOutcomes: plan.targets.map {
+            ActivityItemSummary(displayName: $0.name, status: status.itemStatus, reason: status.itemReason)
+        }))
     }
 }
 

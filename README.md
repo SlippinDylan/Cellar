@@ -40,7 +40,7 @@ Manager 只读资源随 App 打包，运行副本安装到：
 ~/Library/Application Support/Cellar/Managers/<version>/
 ```
 
-Activity 最多持久化 100 条去敏后的结构化摘要。原始命令输出不进入持久摘要，只在当前会话诊断区域或既有受控日志中提供。
+Activity 最多持久化 100 条去敏后的结构化摘要，位于 `~/Library/Application Support/Cellar/Activity/activity.json`。原始命令输出不进入持久摘要，只在当前会话诊断区域或既有受控日志中提供。
 
 Release 构建使用 Sparkle 检查 `https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml`。Debug 和普通本地构建默认关闭 updater；只有发布流水线配置密钥并显式开启时才检查更新。
 

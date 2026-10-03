@@ -82,10 +82,19 @@ actor NodeManagerClient {
     }
 
     func loadOutdatedPackages(managerDirectory: URL, summary: NodeSummary) async throws -> [String: OutdatedPackage] {
-        let environment = environmentResolver.environment(preferredNodeVersion: summary.nodeVersion)
+        guard summary.nodePath.hasPrefix("/"), summary.npmPath.hasPrefix("/") else {
+            throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
+        }
+        let nodeExecutable = URL(filePath: summary.nodePath)
+        let npmExecutable = URL(filePath: summary.npmPath)
+        guard FileManager.default.isExecutableFile(atPath: nodeExecutable.path),
+              FileManager.default.isExecutableFile(atPath: npmExecutable.path)
+        else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
+        let environment = environmentResolver.environment(nodeExecutable: nodeExecutable, npmExecutable: npmExecutable)
         let current: NodeSummary = try await request("summary", managerDirectory: managerDirectory, environment: environment)
         guard current.nodePath == summary.nodePath, current.npmPath == summary.npmPath,
-              current.nodeVersion == summary.nodeVersion, current.npmVersion == summary.npmVersion
+              current.nodeVersion == summary.nodeVersion, current.npmVersion == summary.npmVersion,
+              current.globalPrefix == summary.globalPrefix, current.globalRoot == summary.globalRoot
         else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
         return try await request("outdated", managerDirectory: managerDirectory, environment: environment)
     }

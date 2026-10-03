@@ -23,6 +23,19 @@ struct NodeEnvironmentResolver: Sendable {
             searchPaths.insert(nodeBin.path, at: 0)
         }
 
+        return controlledEnvironment(searchPaths: searchPaths)
+    }
+
+    func environment(nodeExecutable: URL, npmExecutable: URL) -> [String: String] {
+        var paths = [nodeExecutable.deletingLastPathComponent().path]
+        let npmDirectory = npmExecutable.deletingLastPathComponent().path
+        if npmDirectory != paths[0] { paths.append(npmDirectory) }
+        paths.append(contentsOf: ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"])
+        return controlledEnvironment(searchPaths: paths)
+    }
+
+    private func controlledEnvironment(searchPaths: [String]) -> [String: String] {
+        let nvmDirectory = homeDirectory.appending(path: ".nvm", directoryHint: .isDirectory)
         let userName = NSUserName()
         var values = [
             "HOME": homeDirectory.path,

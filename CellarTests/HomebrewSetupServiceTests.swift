@@ -3,6 +3,110 @@ import XCTest
 @testable import Cellar
 
 final class HomebrewSetupServiceTests: XCTestCase {
+    func testTargetBecomesOccupiedDuringDownloadAndIsRejectedBeforeOpener() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cellar-setup-toctou-\(UUID())")
+        let target = root.appending(path: "prefix")
+        let downloads = root.appending(path: "downloads")
+        let events = SetupEvents()
+        let gate = SetupDownloadGate()
+        let downloading = expectation(description: "download is gated after initial eligibility")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let service = HomebrewSetupService(temporaryRoot: downloads, validateEligibility: {
+            await events.record("eligibility")
+            guard HomeDashboardDependencies.installationLocationIsClear(at: target) else { throw HomebrewSetupFailure.installationTarget }
+        }, metadata: { try Self.metadata() }, download: { _, destination in
+            try Data("fixture".utf8).write(to: destination)
+            await gate.wait(started: downloading)
+        }, digest: { _ in String(repeating: "a", count: 64) }, packageSignature: { _ in }, gatekeeper: { _ in },
+           opener: { _ in await events.record("open") })
+        let task = Task { try await service.openInstaller() }
+        await fulfillment(of: [downloading], timeout: 2)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        await gate.resume()
+        do { _ = try await task.value; XCTFail("A newly occupied prefix must prevent opener") }
+        catch let error as HomebrewSetupError {
+            XCTAssertEqual(error.failure, .installationTarget)
+            XCTAssertEqual(error.officialURL, CatalogWebsites.homebrew)
+        }
+        let recorded = await events.values
+        XCTAssertEqual(recorded, ["eligibility", "eligibility"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: downloads.path), [])
+    }
+
+    func testOccupiedDanglingAndInaccessibleTargetsFailClosedAtServiceBoundary() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cellar-setup-targets-\(UUID())")
+        let directory = root.appending(path: "occupied")
+        let file = root.appending(path: "file")
+        let link = root.appending(path: "dangling")
+        let locked = root.appending(path: "locked")
+        let inaccessible = locked.appending(path: "prefix")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data("fixture".utf8).write(to: file)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root.appending(path: "missing"))
+        try FileManager.default.createDirectory(at: inaccessible, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: locked.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: locked.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+        for target in [directory, file, link, inaccessible] {
+            let service = HomebrewSetupService(temporaryRoot: root.appending(path: "downloads"), validateEligibility: {
+                try await HomebrewSetupService.validateInstallationEligibility(at: target, commandLineTools: { .installed(developerDirectory: "/fixture") })
+            }, metadata: { XCTFail("Blocked targets must stop before metadata"); return try Self.metadata() },
+               download: { _, _ in XCTFail("No download") }, digest: { _ in "" }, packageSignature: { _ in }, gatekeeper: { _ in },
+               opener: { _ in XCTFail("No opener") })
+            do { _ = try await service.openInstaller(); XCTFail("Expected blocked target") }
+            catch let error as HomebrewSetupError {
+                XCTAssertEqual(error.failure, .installationTarget)
+                XCTAssertEqual(error.officialURL, CatalogWebsites.homebrew)
+            }
+        }
+    }
+
+    func testMissingOrUnverifiableCLTAndIndeterminateGuardNeverOpenInstaller() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cellar-setup-clt-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let probes: [@Sendable () async throws -> CommandLineToolsState] = [
+            { .notInstalled }, { throw CommandLineToolsError.invalidResponse }
+        ]
+        for probe in probes {
+            let service = HomebrewSetupService(temporaryRoot: root.appending(path: "downloads"), validateEligibility: {
+                try await HomebrewSetupService.validateInstallationEligibility(at: root.appending(path: "prefix"), commandLineTools: probe)
+            }, metadata: { XCTFail("CLT must be verified before metadata"); return try Self.metadata() },
+               download: { _, _ in XCTFail("No download") }, digest: { _ in "" }, packageSignature: { _ in }, gatekeeper: { _ in },
+               opener: { _ in XCTFail("No opener") })
+            do { _ = try await service.openInstaller(); XCTFail("Expected CLT failure") }
+            catch let error as HomebrewSetupError { XCTAssertEqual(error.failure, .commandLineToolsRequired) }
+        }
+        let indeterminate = HomebrewSetupService(temporaryRoot: root, validateEligibility: { throw CocoaError(.fileReadUnknown) },
+                                               metadata: { XCTFail("Unknown eligibility must stop before metadata"); return try Self.metadata() },
+                                               download: { _, _ in }, digest: { _ in "" }, packageSignature: { _ in }, gatekeeper: { _ in },
+                                               opener: { _ in XCTFail("No opener") })
+        do { _ = try await indeterminate.openInstaller(); XCTFail("Expected indeterminate target failure") }
+        catch let error as HomebrewSetupError {
+            XCTAssertEqual(error.failure, .installationTarget)
+            XCTAssertEqual(error.officialURL, CatalogWebsites.homebrew)
+        }
+    }
+
+    func testCLTIsRevalidatedAfterTrustChecksBeforeOpening() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cellar-setup-clt-change-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sequence = SetupCLTSequence()
+        let service = HomebrewSetupService(temporaryRoot: root.appending(path: "downloads"), validateEligibility: {
+            try await HomebrewSetupService.validateInstallationEligibility(at: root.appending(path: "prefix"), commandLineTools: { await sequence.next() })
+        }, metadata: { try Self.metadata() }, download: { _, destination in try Data("fixture".utf8).write(to: destination) },
+           digest: { _ in String(repeating: "a", count: 64) }, packageSignature: { _ in }, gatekeeper: { _ in },
+           opener: { _ in XCTFail("Changed CLT eligibility must prevent opener") })
+        do { _ = try await service.openInstaller(); XCTFail("Expected changed CLT rejection") }
+        catch let error as HomebrewSetupError {
+            XCTAssertEqual(error.failure, .commandLineToolsRequired)
+            XCTAssertEqual(error.officialURL, CatalogWebsites.homebrew)
+        }
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.appending(path: "downloads").path), [])
+    }
+
     func testEveryFailedVerificationPreventsOpeningInstaller() async throws {
         for failure in [HomebrewSetupFailure.digestMismatch, .packageSignature, .gatekeeper] {
             let events = SetupEvents()
@@ -10,6 +114,7 @@ final class HomebrewSetupServiceTests: XCTestCase {
             defer { try? FileManager.default.removeItem(at: root) }
             let service = HomebrewSetupService(
                 temporaryRoot: root,
+                validateEligibility: {},
                 metadata: { try Self.metadata() },
                 download: { _, destination in try Data("fixture".utf8).write(to: destination) },
                 digest: { _ in failure == .digestMismatch ? String(repeating: "b", count: 64) : String(repeating: "a", count: 64) },
@@ -36,6 +141,7 @@ final class HomebrewSetupServiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let service = HomebrewSetupService(
             temporaryRoot: root,
+            validateEligibility: {},
             metadata: { await events.record("metadata"); return try Self.metadata() },
             download: { _, destination in await events.record("download"); try Data("fixture".utf8).write(to: destination) },
             digest: { _ in await events.record("digest"); return String(repeating: "a", count: 64) },
@@ -60,6 +166,7 @@ final class HomebrewSetupServiceTests: XCTestCase {
             defer { try? FileManager.default.removeItem(at: root) }
             let service = HomebrewSetupService(
                 temporaryRoot: root,
+                validateEligibility: {},
                 metadata: { if failure != .download { throw failure }; return try Self.metadata() },
                 download: { _, destination in try Data("partial".utf8).write(to: destination); throw URLError(.timedOut) },
                 digest: { _ in await events.record("digest"); return "" },
@@ -86,6 +193,7 @@ final class HomebrewSetupServiceTests: XCTestCase {
             defer { try? FileManager.default.removeItem(at: root) }
             let service = HomebrewSetupService(
                 temporaryRoot: root,
+                validateEligibility: {},
                 metadata: { try Self.metadata() },
                 download: { _, destination in
                     if mode == "cancel" { throw CancellationError() }
@@ -172,6 +280,7 @@ final class HomebrewSetupServiceTests: XCTestCase {
         }
         let service = HomebrewSetupService(
             temporaryRoot: root,
+            validateEligibility: {},
             metadata: { try Self.metadata() },
             download: { _, destination in
                 try Data("fixture".utf8).write(to: destination)
@@ -207,4 +316,27 @@ actor SetupEvents {
 private actor SetupRequests {
     private(set) var values: [ProcessRequest] = []
     func record(_ value: ProcessRequest) { values.append(value) }
+}
+
+private actor SetupDownloadGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    func wait(started: XCTestExpectation) async {
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            started.fulfill()
+        }
+    }
+    func resume() {
+        guard let continuation else { preconditionFailure("Expected a gated download") }
+        self.continuation = nil
+        continuation.resume()
+    }
+}
+
+private actor SetupCLTSequence {
+    private var checks = 0
+    func next() -> CommandLineToolsState {
+        checks += 1
+        return checks == 1 ? .installed(developerDirectory: "/fixture") : .notInstalled
+    }
 }

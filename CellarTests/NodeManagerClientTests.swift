@@ -2,6 +2,53 @@ import XCTest
 @testable import Cellar
 
 final class NodeManagerClientTests: XCTestCase {
+    func testOutdatedUsesOriginalSystemPathsEvenWhenNVMHasTheSameVersion() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarExactNodeTests-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let systemBin = root.appending(path: "system/bin")
+        let nvmBin = root.appending(path: ".nvm/versions/node/v24.0.0/bin")
+        for bin in [systemBin, nvmBin] {
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            for name in ["node", "npm"] {
+                let file = bin.appending(path: name)
+                try Data("#!/bin/sh\nexit 0\n".utf8).write(to: file)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+            }
+        }
+        let log = root.appending(path: "calls.log")
+        let script = #"""
+        #!/bin/bash
+        printf '%s|%s\n' "$2" "$PATH" >> '\#(log.path)'
+        case "$2" in
+          summary)
+            printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"%s","npmPath":"%s","nodeVersion":"v24.0.0","npmVersion":"11.0.0","nvmLoaded":false,"globalPrefix":"/fixture","globalRoot":"/fixture/lib","registry":"https://fixture.invalid"}}\n' "$(command -v node)" "$(command -v npm)"
+            ;;
+          outdated)
+            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"outdated","data":{"example":{"current":"1.0.0","wanted":"1.0.0","latest":"2.0.0"}}}'
+            ;;
+          *) exit 2 ;;
+        esac
+        """#
+        try Data(script.utf8).write(to: root.appending(path: "main.sh"))
+        let summary = NodeSummary(nodePath: systemBin.appending(path: "node").path, npmPath: systemBin.appending(path: "npm").path,
+                                  nodeVersion: "v24.0.0", npmVersion: "11.0.0", nvmLoaded: false,
+                                  globalPrefix: "/fixture", globalRoot: "/fixture/lib", registry: "https://fixture.invalid")
+        let client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: NodeEnvironmentResolver(homeDirectory: root))
+        let outdated = try await client.loadOutdatedPackages(managerDirectory: root, summary: summary)
+        XCTAssertEqual(outdated["example"]?.latest, "2.0.0")
+        let calls = try String(contentsOf: log, encoding: .utf8)
+        XCTAssertTrue(calls.contains("summary|\(systemBin.path):"))
+        XCTAssertTrue(calls.contains("outdated|\(systemBin.path):"))
+        XCTAssertFalse(calls.contains(nvmBin.path))
+        try FileManager.default.removeItem(at: systemBin.appending(path: "node"))
+        do {
+            _ = try await client.loadOutdatedPackages(managerDirectory: root, summary: summary)
+            XCTFail("A missing original executable must not fall through to another Node")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-environment-changed") }
+        XCTAssertEqual(try String(contentsOf: log, encoding: .utf8), calls)
+    }
+
     func testKeepsCoreNodeDataWhenOutdatedCheckFails() async throws {
         let manager = FileManager.default.temporaryDirectory
             .appending(path: "CellarNodeManagerClientTests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -10,12 +57,19 @@ final class NodeManagerClientTests: XCTestCase {
 
         let script = manager.appending(path: "main.sh")
         let log = manager.appending(path: "calls.log")
+        let bin = manager.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["node", "npm"] {
+            let entry = bin.appending(path: name)
+            try Data("#!/bin/sh\nexit 0\n".utf8).write(to: entry)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: entry.path)
+        }
         let contents = #"""
         #!/bin/bash
         printf '%s\n' "$2" >> '\#(log.path)'
         case "$2" in
           summary)
-            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"/test/node","npmPath":"/test/npm","nodeVersion":"v24.0.0","npmVersion":"11.0.0","nvmLoaded":false,"globalPrefix":"/test","globalRoot":"/test/lib/node_modules","registry":"https://registry.npmjs.org/"}}'
+            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(bin.appending(path: "node").path)","npmPath":"\#(bin.appending(path: "npm").path)","nodeVersion":"v24.0.0","npmVersion":"11.0.0","nvmLoaded":false,"globalPrefix":"/test","globalRoot":"/test/lib/node_modules","registry":"https://registry.npmjs.org/"}}'
             ;;
           packages)
             printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{"example":{"version":"1.0.0"}}}}'

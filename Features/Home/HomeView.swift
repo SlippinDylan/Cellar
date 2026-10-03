@@ -36,9 +36,7 @@ struct HomeView: View {
         .controlSize(.regular)
         .task(id: model.isRefreshing ? nil : model.refreshedAt) {
             guard !model.isRefreshing else { return }
-            async let versions: Void = dashboard.refresh(after: model.refreshedAt)
-            async let updates: Void = model.refreshHomeOutdated(after: model.refreshedAt)
-            _ = await (versions, updates)
+            await model.refreshHomeBackground(after: model.refreshedAt)
         }
         .task(id: setupRequest) {
             guard let request = setupRequest else { return }
@@ -260,6 +258,8 @@ private extension HomeSetupFailure {
             case .systemOpen: LocalizedStringResource("macOS Installer could not be opened. Use the official Homebrew website for guidance.")
             case .temporaryFile: LocalizedStringResource("The installer’s temporary file could not be managed. Use the official Homebrew website for guidance.")
             case .installationInProgress: LocalizedStringResource("A Homebrew installer handoff is still pending. Finish it before starting another.")
+            case .commandLineToolsRequired: LocalizedStringResource("Command Line Tools are missing or could not be verified. The Homebrew installer was not opened.")
+            case .installationTarget: LocalizedStringResource("The Homebrew installation location is occupied or could not be verified. The installer was not opened.")
             }
         }
     }

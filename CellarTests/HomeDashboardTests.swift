@@ -1,4 +1,6 @@
+import AppKit
 import Combine
+import Darwin
 import Foundation
 import XCTest
 @testable import Cellar
@@ -245,6 +247,140 @@ final class HomeDashboardTests: XCTestCase {
         XCTAssertEqual(model.nodeUpdateState, .notLoaded)
     }
 
+    func testInvalidatedHomeUpdatesThenFailedCoreReadSettlesProgress() async {
+        let started = expectation(description: "obsolete reads are gated")
+        started.expectedFulfillmentCount = 2
+        let gate = HomeOutdatedGate()
+        let model = updateModel(dependencies: HomeOutdatedDependencies(homebrew: {
+            await gate.wait("brew", started: started)
+            return []
+        }, node: { _ in
+            await gate.wait("npm", started: started)
+            return [:]
+        }))
+        let first = Task { await model.refreshHomeOutdated(after: model.refreshedAt, environment: [:]) }
+        await fulfillment(of: [started], timeout: 2)
+        // Reproduce the invalidation performed when a new core refresh begins.
+        model.invalidateHomeUpdates()
+        XCTAssertEqual(model.homebrewUpdateState, .notLoaded)
+        XCTAssertEqual(model.nodeUpdateState, .notLoaded)
+        model.applyHomebrewReadResult(.failure(URLError(.badServerResponse)))
+        model.applyNodeReadResult(.failure(URLError(.badServerResponse)))
+        model.refreshedAt = Date()
+        await model.refreshHomeOutdated(after: model.refreshedAt, environment: [:])
+        XCTAssertEqual(model.homebrewUpdateState, .failed)
+        XCTAssertEqual(model.nodeUpdateState, .failed)
+        await gate.resume("brew")
+        await gate.resume("npm")
+        await first.value
+        XCTAssertEqual(model.homebrewUpdateState, .failed)
+        XCTAssertEqual(model.nodeUpdateState, .failed)
+        XCTAssertEqual(model.homebrew?.snapshot?.packages.count, 3)
+        XCTAssertEqual(model.node?.packages.count, 3)
+    }
+
+    func testHomeBackgroundIsRegisteredCancellableAndProtectsTerminationWhileProcessRuns() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarHomeLifecycleTests-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fifo = root.appending(path: "started.fifo")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let script = root.appending(path: "gated-provider.sh")
+        try Data("#!/bin/sh\nprintf '%s\\n' \"$$\" > \"$1/started.fifo\"\nexec /bin/sleep 30\n".utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        let pidReader = Task.detached { () throws -> pid_t in
+            let file = try FileHandle(forReadingFrom: fifo)
+            defer { try? file.close() }
+            let data = try XCTUnwrap(file.readToEnd())
+            return try XCTUnwrap(Int32(String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+        let readersStarted = expectation(description: "Node and four metadata reads started")
+        readersStarted.expectedFulfillmentCount = 5
+        let readersCancelled = expectation(description: "Node and four metadata reads cancelled")
+        readersCancelled.expectedFulfillmentCount = 5
+        var dashboard = dependencies(events: HomeTestEvents())
+        dashboard.latestVersion = { _ in
+            readersStarted.fulfill()
+            do { try await Task.sleep(for: .seconds(30)); return "1.0.0" }
+            catch { readersCancelled.fulfill(); throw error }
+        }
+        let runner = ProcessRunner()
+        let model = updateModel(dependencies: HomeOutdatedDependencies(homebrew: {
+            _ = try await runner.run(ProcessRequest(executableURL: script, arguments: [root.path],
+                                                    environment: ["HOME": root.path, "PATH": "/usr/bin:/bin"],
+                                                    currentDirectoryURL: root, timeout: .seconds(30)))
+            return []
+        }, node: { _ in
+            readersStarted.fulfill()
+            do { try await Task.sleep(for: .seconds(30)); return [:] }
+            catch { readersCancelled.fulfill(); throw error }
+        }), dashboardDependencies: dashboard)
+        let suite = "Cellar.HomeLifecycleTests.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let relaunch = ApplicationRelaunchController(operationStore: model.operationStore, defaults: defaults,
+                                                    defaultsDomainName: suite, terminateApplication: {})
+        let delegate = AppDelegate(operationStore: model.operationStore, relaunchController: relaunch, reopenApplication: {})
+        XCTAssertEqual(model.homebrew?.version, "Homebrew 5.0.0")
+        XCTAssertEqual(model.node?.packages.count, 3)
+        let task = Task { await model.refreshHomeBackground(after: model.refreshedAt, environment: [:]) }
+        let pid = try await pidReader.value
+        await fulfillment(of: [readersStarted], timeout: 2)
+        XCTAssertEqual(kill(pid, 0), 0)
+        XCTAssertTrue(model.operationStore.hasActiveOperations)
+        XCTAssertNotNil(model.operationStore.activeTask)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateCancel)
+        XCTAssertTrue(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
+        model.operationStore.cancelActiveTask()
+        if model.operationStore.activeTask == nil { task.cancel() } // Cleanup after a failing RED assertion.
+        await task.value
+        await fulfillment(of: [readersCancelled], timeout: 2)
+        XCTAssertEqual(kill(pid, 0), -1)
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+        XCTAssertNil(model.operationStore.activeTask)
+        XCTAssertEqual(model.operationStore.activeOperationCount, 0)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateNow)
+        XCTAssertEqual(model.homebrewUpdateState, .notLoaded)
+        XCTAssertEqual(model.nodeUpdateState, .notLoaded)
+        XCTAssertTrue(model.homeDashboard.onlineVersions.values.allSatisfy { $0 == .notLoaded })
+    }
+
+    func testHomeInstallActionRevalidatesCurrentCLTAndTargetBeforeOpening() async {
+        for missingTools in [true, false] {
+            let events = HomeTestEvents()
+            var deps = dependencies(events: events)
+            deps.commandLineTools = { missingTools ? .notInstalled : .installed(developerDirectory: "/fixture") }
+            deps.homebrewLocationOccupied = { !missingTools }
+            let model = HomeDashboardModel(dependencies: deps, operationStore: OperationStore())
+            await model.openHomebrewInstaller(installation: .notInstalled)
+            let count = await events.count("open")
+            XCTAssertEqual(count, 0)
+            XCTAssertEqual(model.setupState, .failed(.homebrew(missingTools ? .commandLineToolsRequired : .installationTarget)))
+            XCTAssertFalse(model.installerHandoffPending)
+        }
+    }
+
+    func testHomeBackgroundCompletesAndHostedOrRepeatedCallsDoNotLeaveAnActiveSlot() async {
+        let events = HomeTestEvents()
+        let model = updateModel(dependencies: HomeOutdatedDependencies(homebrew: {
+            await events.record("brew-outdated"); return []
+        }, node: { _ in
+            await events.record("npm-outdated"); return [:]
+        }), dashboardDependencies: dependencies(events: events))
+        await model.refreshHomeBackground(after: nil, environment: [:])
+        await model.refreshHomeBackground(after: model.refreshedAt)
+        let before = await events.values
+        XCTAssertTrue(before.isEmpty)
+        XCTAssertEqual(model.operationStore.activeOperationCount, 0)
+        await model.refreshHomeBackground(after: model.refreshedAt, environment: [:])
+        await model.refreshHomeBackground(after: model.refreshedAt, environment: [:])
+        let recorded = await events.values
+        XCTAssertEqual(recorded.count, 6)
+        XCTAssertEqual(model.operationStore.activeOperationCount, 0)
+        XCTAssertNil(model.operationStore.activeTask)
+        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: model.operationStore.hasActiveOperations), .terminateNow)
+    }
+
     func testHomebrewOutdatedFailureKeepsCoreAndNPMResultsAndChecksDoNotPoll() async {
         let events = HomeTestEvents()
         let model = updateModel(dependencies: HomeOutdatedDependencies(homebrew: {
@@ -329,7 +465,7 @@ final class HomeDashboardTests: XCTestCase {
         }
         XCTAssertTrue(home.contains(".task(id: model.isRefreshing ? nil : model.refreshedAt)"))
         XCTAssertTrue(home.contains(".task(id: setupRequest)"))
-        XCTAssertTrue(home.contains("model.refreshHomeOutdated(after:"))
+        XCTAssertTrue(home.contains("model.refreshHomeBackground(after:"))
         XCTAssertTrue(appModel.contains("service.loadHomebrew(snapshot: snapshot, includingOutdated: false)"))
         XCTAssertTrue(appModel.contains("preferredNodeVersion: self.preferredNodeVersion, includingOutdated: false"))
         XCTAssertTrue(shell.contains("HomeView(model: model)"))
@@ -339,6 +475,7 @@ final class HomeDashboardTests: XCTestCase {
         HomeDashboardDependencies(
             commandLineTools: { .installed(developerDirectory: "/fixture") },
             nvmInstalled: { true },
+            homebrewLocationOccupied: { false },
             latestVersion: { source in
                 await events.record("version:\(source.rawValue)")
                 if source == failedSource { throw URLError(.notConnectedToInternet) }
@@ -370,7 +507,7 @@ final class HomeDashboardTests: XCTestCase {
         ], installations: [NodeInstallation(version: "v20.0.0", directory: "/fixture/node20", isActive: false, isDefault: true), NodeInstallation(version: "v22.0.0", directory: "/fixture/node22", isActive: true, isDefault: false)], managerStatus: nil, logs: [], outdatedError: outdatedError, maintenanceError: nil)
     }
 
-    private func updateModel(dependencies updateDependencies: HomeOutdatedDependencies) -> AppModel {
+    private func updateModel(dependencies updateDependencies: HomeOutdatedDependencies, dashboardDependencies: HomeDashboardDependencies? = nil) -> AppModel {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarHomeUpdatesTests-\(UUID())")
         let runner = ProcessRunner()
         let resolver = NodeEnvironmentResolver(homeDirectory: root)
@@ -378,7 +515,7 @@ final class HomeDashboardTests: XCTestCase {
                                          nodeClient: NodeManagerClient(runner: runner, environmentResolver: resolver),
                                          shellClient: ShellManagerClient(runner: runner, environmentResolver: ShellEnvironmentResolver(homeDirectory: root)),
                                          environmentResolver: resolver)
-        let model = AppModel(service: service, operationStore: OperationStore(), homeDashboardDependencies: dependencies(events: HomeTestEvents()),
+        let model = AppModel(service: service, operationStore: OperationStore(), homeDashboardDependencies: dashboardDependencies ?? dependencies(events: HomeTestEvents()),
                              homeOutdatedDependencies: updateDependencies)
         let core = homebrewSnapshot(errors: [:]).replacingOutdated(packages: [], error: nil)
         model.applyHomebrewReadResult(.success(HomebrewStatus(executablePath: "/fixture/brew", version: core.version, managerAvailable: true, snapshot: core)))

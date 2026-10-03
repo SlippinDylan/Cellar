@@ -128,7 +128,7 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         guard !isBusy else { return }
-        activeOutdatedRefreshID = nil
+        invalidateHomeUpdates()
         isRefreshing = true
         errorMessages = []
         let operationID = operationStore.begin()
@@ -160,6 +160,8 @@ final class AppModel: ObservableObject {
         } catch {
             homebrewRefreshFailed = true
             nodeRefreshFailed = true
+            homebrewUpdateState = .failed
+            nodeUpdateState = .failed
             errorMessages.append("Manager 快照：\(error.localizedDescription)")
             refreshedAt = Date()
         }
@@ -199,6 +201,7 @@ final class AppModel: ObservableObject {
             homebrewOutdatedCheckedAt = nil
         case .failure(let error):
             homebrewRefreshFailed = true
+            homebrewUpdateState = .failed
             errorMessages.append("Homebrew：\(error.localizedDescription)")
         }
     }
@@ -213,6 +216,7 @@ final class AppModel: ObservableObject {
             nodeOutdatedCheckedAt = nil
         case .failure(let error):
             nodeRefreshFailed = true
+            nodeUpdateState = .failed
             errorMessages.append("Node：\(error.localizedDescription)")
         }
     }

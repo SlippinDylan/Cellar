@@ -67,6 +67,8 @@ enum HomebrewSetupFailure: Error, Equatable, Sendable {
     case systemOpen
     case temporaryFile
     case installationInProgress
+    case commandLineToolsRequired
+    case installationTarget
 }
 
 struct HomebrewSetupError: Error, Sendable {

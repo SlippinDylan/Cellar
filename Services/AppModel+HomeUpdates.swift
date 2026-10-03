@@ -17,6 +17,31 @@ struct HomeOutdatedDependencies: Sendable {
 }
 
 extension AppModel {
+    func invalidateHomeUpdates() {
+        activeOutdatedRefreshID = nil
+        if homebrewUpdateState == .loading { homebrewUpdateState = .notLoaded }
+        if nodeUpdateState == .loading { nodeUpdateState = .notLoaded }
+    }
+
+    func refreshHomeBackground(after localRefresh: Date?, environment: [String: String] = ProcessInfo.processInfo.environment) async {
+        guard environment["XCTestConfigurationFilePath"] == nil, let localRefresh,
+              localRefresh == refreshedAt, !isBusy, !Task.isCancelled else { return }
+        let operationID = operationStore.begin()
+        defer { operationStore.end(operationID) }
+        do {
+            try await operationStore.performCancellable(operationID: operationID) {
+                async let versions: Void = self.homeDashboard.refresh(after: localRefresh, environment: environment)
+                async let updates: Void = self.refreshHomeOutdated(after: localRefresh, environment: environment)
+                _ = await (versions, updates)
+                try Task.checkCancellation()
+            }
+        } catch is CancellationError {
+            // Each child settles its state before the shared lifecycle slot is released.
+        } catch {
+            preconditionFailure("Home reads handle provider failures before returning: \(error)")
+        }
+    }
+
     // Home owns this task alongside official versions. The two providers finish independently.
     func refreshHomeOutdated(after localRefresh: Date?, environment: [String: String] = ProcessInfo.processInfo.environment) async {
         guard environment["XCTestConfigurationFilePath"] == nil, let localRefresh,

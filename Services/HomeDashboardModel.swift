@@ -4,7 +4,7 @@ import Foundation
 struct HomeDashboardDependencies: Sendable {
     var commandLineTools: @Sendable () async throws -> CommandLineToolsState
     var nvmInstalled: @Sendable () async -> Bool
-    var homebrewLocationOccupied: @Sendable () async -> Bool = { false }
+    var homebrewLocationOccupied: @Sendable () async -> Bool
     var latestVersion: @Sendable (HomeOnlineSource) async throws -> String
     var requestCommandLineTools: @Sendable () async throws -> Void
     var openInstaller: @Sendable () async throws -> Void
@@ -34,16 +34,7 @@ struct HomeDashboardDependencies: Sendable {
     }
 
     static func installationLocationIsClear(at url: URL) -> Bool {
-        do {
-            // Inspect the directory entry itself so a dangling symlink is still occupied.
-            _ = try FileManager.default.attributesOfItem(atPath: url.path)
-            return false
-        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
-            return true
-        } catch {
-            // An inaccessible or indeterminate location is not proven safe for installation.
-            return false
-        }
+        HomebrewSetupService.installationLocationIsClear(at: url)
     }
 }
 
@@ -139,7 +130,18 @@ final class HomeDashboardModel: ObservableObject {
     func openHomebrewInstaller(installation: HomebrewInstallationState) async {
         guard installation == .notInstalled, canBeginSetup else { return }
         setupState = .preparingInstaller
-        await performSetup { [dependencies] in try await dependencies.openInstaller() }
+        await performSetup { [dependencies] in
+            let tools: CommandLineToolsState
+            do { tools = try await dependencies.commandLineTools() }
+            catch {
+                if error is CancellationError { throw error }
+                throw HomebrewSetupError(failure: .commandLineToolsRequired)
+            }
+            guard case .installed = tools else { throw HomebrewSetupError(failure: .commandLineToolsRequired) }
+            guard await !dependencies.homebrewLocationOccupied() else { throw HomebrewSetupError(failure: .installationTarget) }
+            try Task.checkCancellation()
+            try await dependencies.openInstaller()
+        }
         if setupState == .preparingInstaller {
             installerHandoffPending = true
             setupState = .installerOpened

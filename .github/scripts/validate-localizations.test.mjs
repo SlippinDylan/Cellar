@@ -24,7 +24,7 @@ test('missing language and untranslated language both fail', () => {
 });
 
 test('new unlocalized literals in views, menus, help and resources fail', () => {
-  for (const source of ['Text("Missing")', 'Button("Missing") {}', 'Link("Missing", destination: url)', '.help("Missing")', 'LocalizedStringResource("Missing")', 'CommandMenu("Missing") {}']) {
+  for (const source of ['Text("Missing")', 'Button("Missing") {}', 'Link("Missing", destination: url)', '.help("Missing")', 'LocalizedStringResource("Missing")', 'CommandMenu("Missing") {}', 'countRow("Missing", count)', 'inlineWarning("Missing")', 'HomeOnlineVersionRow(title: "Missing", state: state)', 'HomeTimestampRow(title: "Missing", date: date)']) {
     assert.match(validateLocalizations(catalog(), { 'View.swift': source })[0], /uncatalogued presentation string/);
   }
   assert.match(validateLocalizations(catalog(), { 'View.swift': 'Text(verbatim: "Home")' })[0], /bypasses localization/);

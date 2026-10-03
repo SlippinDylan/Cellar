@@ -103,6 +103,14 @@ struct HomebrewSnapshot: Sendable {
     let sectionErrors: [Section: String]
     let controlledPath: String
     let commandLineToolsAvailable: Bool
+
+    func replacingOutdated(packages: [HomebrewOutdatedPackage], error: String?) -> Self {
+        var errors = sectionErrors
+        errors[.outdated] = error
+        return Self(executablePath: executablePath, version: version, configuration: configuration,
+                    packages: self.packages, outdatedPackages: packages, taps: taps, sectionErrors: errors,
+                    controlledPath: controlledPath, commandLineToolsAvailable: commandLineToolsAvailable)
+    }
 }
 
 enum HomebrewCaskArtifactCategory: String, Sendable {

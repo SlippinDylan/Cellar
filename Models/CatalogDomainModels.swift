@@ -88,7 +88,7 @@ struct CatalogCardState: Identifiable, Equatable, Sendable {
         self.currentVersion = currentVersion
         self.availableVersion = availableVersion
         self.versionStatus = versionStatus
-        self.websiteURL = websiteURL
+        self.websiteURL = CatalogWebsites.safeWebsite(websiteURL)
         self.progress = progress
         self.primaryAction = primaryAction
     }

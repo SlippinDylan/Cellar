@@ -2,6 +2,21 @@ import XCTest
 @testable import Cellar
 
 final class HomebrewClientTests: XCTestCase {
+    func testCoreSnapshotDoesNotRunOutdatedAndEnrichmentPreservesTypedIdentity() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let core = try await fixture.client.loadSnapshot(includingOutdated: false)
+        XCTAssertEqual(core.version, "Homebrew 5.0.0")
+        XCTAssertEqual(core.packages.count, 2)
+        let before = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertFalse(before.contains("outdated"))
+        let outdated = try await fixture.client.loadOutdatedPackages()
+        let enriched = core.replacingOutdated(packages: outdated, error: nil)
+        XCTAssertEqual(enriched.packages.map(\.identity), core.packages.map(\.identity))
+        XCTAssertEqual(enriched.outdatedPackages.first?.identity, .init(name: "acme/tools/demo", kind: .formula))
+        XCTAssertNil(enriched.sectionErrors[.outdated])
+    }
+
     func testLoadsStructuredSnapshotAndIgnoresUnknownJSONFields() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }

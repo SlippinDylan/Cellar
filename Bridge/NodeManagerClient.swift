@@ -11,21 +11,23 @@ actor NodeManagerClient {
 
     func loadSnapshot(
         managerDirectory: URL,
-        preferredNodeVersion: String? = nil
+        preferredNodeVersion: String? = nil,
+        includingOutdated: Bool = true
     ) async throws -> NodeSnapshot {
         let environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
         let summaryValue: NodeSummary = try await request(
             "summary", managerDirectory: managerDirectory, environment: environment
         )
         return try await loadSnapshot(managerDirectory: managerDirectory, preferredNodeVersion: preferredNodeVersion,
-                                      environment: environment, summary: summaryValue)
+                                      environment: environment, summary: summaryValue, includingOutdated: includingOutdated)
     }
 
     private func loadSnapshot(
         managerDirectory: URL,
         preferredNodeVersion: String?,
         environment: [String: String],
-        summary: NodeSummary
+        summary: NodeSummary,
+        includingOutdated: Bool = true
     ) async throws -> NodeSnapshot {
         let inventoryValue: NodePackageInventory = try await request(
             "packages", managerDirectory: managerDirectory, environment: environment
@@ -42,14 +44,16 @@ actor NodeManagerClient {
             )
         }
         let outdatedResult: Result<[String: OutdatedPackage], Error>
-        do {
-            let outdated: [String: OutdatedPackage] = try await request(
-                "outdated", managerDirectory: managerDirectory, environment: environment
-            )
-            outdatedResult = .success(outdated)
-        } catch {
-            outdatedResult = .failure(error)
-        }
+        if includingOutdated {
+            do {
+                let outdated: [String: OutdatedPackage] = try await request(
+                    "outdated", managerDirectory: managerDirectory, environment: environment
+                )
+                outdatedResult = .success(outdated)
+            } catch {
+                outdatedResult = .failure(error)
+            }
+        } else { outdatedResult = .success([:]) }
         let outdatedValue = (try? outdatedResult.get()) ?? [:]
         let packages: [NodePackageRow] = (inventoryValue.dependencies ?? [:]).map { name, package in
             let available = outdatedValue[name]
@@ -75,6 +79,15 @@ actor NodeManagerClient {
                 .joined(separator: "；")
                 .nilIfBlank
         )
+    }
+
+    func loadOutdatedPackages(managerDirectory: URL, summary: NodeSummary) async throws -> [String: OutdatedPackage] {
+        let environment = environmentResolver.environment(preferredNodeVersion: summary.nodeVersion)
+        let current: NodeSummary = try await request("summary", managerDirectory: managerDirectory, environment: environment)
+        guard current.nodePath == summary.nodePath, current.npmPath == summary.npmPath,
+              current.nodeVersion == summary.nodeVersion, current.npmVersion == summary.npmVersion
+        else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
+        return try await request("outdated", managerDirectory: managerDirectory, environment: environment)
     }
 
     func plan(

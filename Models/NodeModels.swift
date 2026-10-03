@@ -202,4 +202,13 @@ struct NodeSnapshot: Sendable {
     let logs: [String]
     let outdatedError: String?
     let maintenanceError: String?
+
+    func replacingOutdated(packages outdated: [String: OutdatedPackage], error: String?) -> Self {
+        let rows = packages.map { package in
+            NodePackageRow(name: package.name, installedVersion: package.installedVersion,
+                           wantedVersion: outdated[package.name]?.wanted, latestVersion: outdated[package.name]?.latest)
+        }
+        return Self(summary: summary, configuration: configuration, packages: rows, installations: installations,
+                    managerStatus: managerStatus, logs: logs, outdatedError: error, maintenanceError: maintenanceError)
+    }
 }

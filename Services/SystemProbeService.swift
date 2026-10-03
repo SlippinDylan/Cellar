@@ -29,7 +29,7 @@ actor SystemProbeService {
         try await installer.installIfNeeded()
     }
 
-    func loadHomebrew(snapshot: SnapshotStatus) async throws -> HomebrewStatus {
+    func loadHomebrew(snapshot: SnapshotStatus, includingOutdated: Bool = true) async throws -> HomebrewStatus {
         let environment = environmentResolver.environment()
         guard let executable = locator.locate("brew", path: environment["PATH", default: ""]) else {
             return HomebrewStatus(
@@ -41,13 +41,17 @@ actor SystemProbeService {
         }
         let client = HomebrewClient(brewURL: executable, runner: runner)
         homebrewClient = client
-        let homebrewSnapshot = try await client.loadSnapshot()
+        let homebrewSnapshot = try await client.loadSnapshot(includingOutdated: includingOutdated)
         return HomebrewStatus(
             executablePath: executable.path,
             version: homebrewSnapshot.version,
             managerAvailable: snapshot.homebrewAvailable,
             snapshot: homebrewSnapshot
         )
+    }
+
+    func loadHomebrewOutdatedPackages() async throws -> [HomebrewOutdatedPackage] {
+        try await requireHomebrewClient().loadOutdatedPackages()
     }
 
     func searchHomebrew(_ query: String) async throws -> [HomebrewSearchResult] {
@@ -111,15 +115,23 @@ actor SystemProbeService {
 
     func loadNode(
         snapshot: SnapshotStatus,
-        preferredNodeVersion: String? = nil
+        preferredNodeVersion: String? = nil,
+        includingOutdated: Bool = true
     ) async throws -> NodeSnapshot {
         guard snapshot.nodeAvailable else {
             throw BridgeError.executableNotFound("node-manager/main.sh")
         }
         return try await nodeClient.loadSnapshot(
             managerDirectory: nodeManagerDirectory(snapshot),
-            preferredNodeVersion: preferredNodeVersion
+            preferredNodeVersion: preferredNodeVersion,
+            includingOutdated: includingOutdated
         )
+    }
+
+    func loadNodeOutdatedPackages(node: NodeSnapshot) async throws -> [String: OutdatedPackage] {
+        let snapshot = await installer.status()
+        guard snapshot.nodeAvailable else { throw BridgeError.executableNotFound("node-manager/main.sh") }
+        return try await nodeClient.loadOutdatedPackages(managerDirectory: nodeManagerDirectory(snapshot), summary: node.summary)
     }
 
     func planNode(

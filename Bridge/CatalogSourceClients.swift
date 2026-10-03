@@ -96,10 +96,7 @@ struct NodeVersionMetadataClient: Sendable {
     func load() async throws -> NodeOnlineVersions {
         async let node = state { try await latestNodeVersion() }
         async let npm = state { try await latestNPMVersion() }
-        async let nvm = state {
-            let tag = try await latestGitHubRelease(owner: "nvm-sh", repository: "nvm", http: http).tagName
-            return String(tag.dropFirst(tag.hasPrefix("v") ? 1 : 0))
-        }
+        async let nvm = state { try await latestNVMVersion() }
         let result = try await NodeOnlineVersions(node: node, npm: npm, nvm: nvm)
         try Task.checkCancellation()
         return result
@@ -119,6 +116,11 @@ struct NodeVersionMetadataClient: Sendable {
         let package = try JSONDecoder().decode(Package.self, from: await http.data(from: CatalogWebsites.npmRegistry.appending(path: "npm/latest")))
         guard SemanticVersionStatus(current: package.version, available: package.version) != .unknown else { throw CatalogSourceError.invalidResponse }
         return package.version
+    }
+
+    func latestNVMVersion() async throws -> String {
+        let tag = try await latestGitHubRelease(owner: "nvm-sh", repository: "nvm", http: http).tagName
+        return String(tag.dropFirst(tag.hasPrefix("v") ? 1 : 0))
     }
 
     private func state(_ operation: @Sendable () async throws -> String) async throws -> OnlineVersionState {

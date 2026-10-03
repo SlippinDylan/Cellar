@@ -29,7 +29,7 @@ struct AppRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            ShellPlaceholderView(destination: model.selectedDestination)
+            destinationContent
                 .navigationTitle(Text(model.selectedDestination.title))
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
@@ -69,6 +69,11 @@ struct AppRootView: View {
         }
         .navigationSplitViewStyle(.prominentDetail)
         .task { await model.refreshOnLaunch() }
+    }
+
+    @ViewBuilder private var destinationContent: some View {
+        if model.selectedDestination == .home { HomeView(model: model) }
+        else { ShellPlaceholderView(destination: model.selectedDestination) }
     }
 
     private var sidebarSelection: Binding<AppDestination?> {

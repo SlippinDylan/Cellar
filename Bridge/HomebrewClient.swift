@@ -69,7 +69,7 @@ actor HomebrewClient {
         ]
     }
 
-    func loadSnapshot() async throws -> HomebrewSnapshot {
+    func loadSnapshot(includingOutdated: Bool = true) async throws -> HomebrewSnapshot {
         try validateExecutable()
         let versionOutput = try await checkedRun(["--version"])
         let commandLineToolsAvailable = await probeCommandLineTools()
@@ -99,14 +99,10 @@ actor HomebrewClient {
             sectionErrors[.packages] = error.localizedDescription
         }
 
-        let outdated: [HomebrewOutdatedPackage]
-        do {
-            let rawOutdated = try await checkedRun(["outdated", "--json=v2"])
-            let envelope: BrewOutdatedEnvelope = try decode(rawOutdated)
-            outdated = envelope.models
-        } catch {
-            outdated = []
-            sectionErrors[.outdated] = error.localizedDescription
+        var outdated: [HomebrewOutdatedPackage] = []
+        if includingOutdated {
+            do { outdated = try await loadOutdatedPackages() }
+            catch { sectionErrors[.outdated] = error.localizedDescription }
         }
 
         let taps: [HomebrewTap]
@@ -132,6 +128,13 @@ actor HomebrewClient {
             controlledPath: environment["PATH", default: ""],
             commandLineToolsAvailable: commandLineToolsAvailable
         )
+    }
+
+    func loadOutdatedPackages() async throws -> [HomebrewOutdatedPackage] {
+        try validateExecutable()
+        let output = try await checkedRun(["outdated", "--json=v2"])
+        let envelope: BrewOutdatedEnvelope = try decode(output)
+        return envelope.models
     }
 
     func loadConfiguration() async throws -> HomebrewConfiguration {

@@ -12,6 +12,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var errorMessages: [String] = []
     @Published private(set) var activities: [ActivityEntry] = []
     @Published private(set) var isRefreshing = false
+    @Published private(set) var homebrewRefreshFailed = false
+    @Published private(set) var nodeRefreshFailed = false
+    @Published private(set) var homebrewRefreshedAt: Date?
+    @Published private(set) var nodeRefreshedAt: Date?
+    @Published var homebrewUpdateState = HomePackageUpdateState.notLoaded
+    @Published var nodeUpdateState = HomePackageUpdateState.notLoaded
+    @Published var homebrewOutdatedCheckedAt: Date?
+    @Published var nodeOutdatedCheckedAt: Date?
     @Published var homebrewSearchResults: [HomebrewSearchResult] = []
     @Published var homebrewDiagnostics: [HomebrewDiagnostic] = []
     @Published var homebrewDiagnosticReport: HomebrewDiagnosticReport?
@@ -33,16 +41,24 @@ final class AppModel: ObservableObject {
     let operationStore: OperationStore
     let activityStore: ActivityStore?
     let batchCoordinator: BatchOperationCoordinator
+    let homeDashboard: HomeDashboardModel
+    let homeOutdatedDependencies: HomeOutdatedDependencies
+    var checkedOutdatedRefresh: Date?
+    var activeOutdatedRefreshID: UUID?
 
     init(
         service: SystemProbeService,
         operationStore: OperationStore = .shared,
         activityStore: ActivityStore? = nil,
-        batchProvider: (any BatchOperationProviding)? = nil
+        batchProvider: (any BatchOperationProviding)? = nil,
+        homeDashboardDependencies: HomeDashboardDependencies? = nil,
+        homeOutdatedDependencies: HomeOutdatedDependencies? = nil
     ) {
         self.service = service
         self.operationStore = operationStore
         self.activityStore = activityStore
+        self.homeOutdatedDependencies = homeOutdatedDependencies ?? HomeOutdatedDependencies(service: service)
+        homeDashboard = HomeDashboardModel(dependencies: homeDashboardDependencies ?? .live(runner: ProcessRunner()), operationStore: operationStore)
         batchCoordinator = BatchOperationCoordinator(provider: batchProvider ?? ProviderBatchOperations(service: service),
                                                      operationStore: operationStore, activityStore: activityStore)
     }
@@ -65,7 +81,7 @@ final class AppModel: ObservableObject {
             installer: installer,
             nodeClient: client,
             shellClient: shellClient
-        ), activityStore: activityStore)
+        ), activityStore: activityStore, homeDashboardDependencies: .live(runner: runner))
     }
 
     var dashboard: DashboardSnapshot? {
@@ -112,6 +128,7 @@ final class AppModel: ObservableObject {
 
     func refresh() async {
         guard !isBusy else { return }
+        activeOutdatedRefreshID = nil
         isRefreshing = true
         errorMessages = []
         let operationID = operationStore.begin()
@@ -133,25 +150,18 @@ final class AppModel: ObservableObject {
             let installedManagers = try await service.installManagers()
             managers = installedManagers
 
-            async let homebrewResult = capture { try await service.loadHomebrew(snapshot: installedManagers) }
-            async let nodeResult = capture {
-                try await service.loadNode(
-                    snapshot: installedManagers,
-                    preferredNodeVersion: self.preferredNodeVersion
-                )
-            }
+            async let homebrewResult: Void = refreshHomebrewState(snapshot: installedManagers)
+            async let nodeResult: Void = refreshNodeState(snapshot: installedManagers)
             async let shellResult = capture { try await service.loadShell(snapshot: installedManagers) }
             let results = await (homebrewResult, nodeResult, shellResult)
 
-            homebrew = assign(results.0, name: "Homebrew")
-            node = assign(results.1, name: "Node")
             shell = assign(results.2, name: "Shell")
-            if let outdatedError = node?.outdatedError {
-                errorMessages.append("Node 更新检查：\(outdatedError)")
-            }
             refreshedAt = Date()
         } catch {
+            homebrewRefreshFailed = true
+            nodeRefreshFailed = true
             errorMessages.append("Manager 快照：\(error.localizedDescription)")
+            refreshedAt = Date()
         }
 
         activities.removeAll { $0.id == activityID }
@@ -165,6 +175,46 @@ final class AppModel: ObservableObject {
         activityStore?.append(ActivitySummary(id: UUID(), operation: .refresh, scope: nil,
                                              targetDisplayNames: [], date: Date(),
                                              status: errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: []))
+    }
+
+    private func refreshHomebrewState(snapshot: SnapshotStatus) async {
+        let result = await capture { try await self.service.loadHomebrew(snapshot: snapshot, includingOutdated: false) }
+        applyHomebrewReadResult(result)
+    }
+
+    private func refreshNodeState(snapshot: SnapshotStatus) async {
+        let result = await capture {
+            try await self.service.loadNode(snapshot: snapshot, preferredNodeVersion: self.preferredNodeVersion, includingOutdated: false)
+        }
+        applyNodeReadResult(result)
+    }
+
+    func applyHomebrewReadResult(_ result: Result<HomebrewStatus, Error>) {
+        switch result {
+        case .success(let status):
+            homebrew = status
+            homebrewRefreshFailed = false
+            homebrewRefreshedAt = Date()
+            homebrewUpdateState = .notLoaded
+            homebrewOutdatedCheckedAt = nil
+        case .failure(let error):
+            homebrewRefreshFailed = true
+            errorMessages.append("Homebrew：\(error.localizedDescription)")
+        }
+    }
+
+    func applyNodeReadResult(_ result: Result<NodeSnapshot, Error>) {
+        switch result {
+        case .success(let snapshot):
+            node = snapshot
+            nodeRefreshFailed = false
+            nodeRefreshedAt = Date()
+            nodeUpdateState = .notLoaded
+            nodeOutdatedCheckedAt = nil
+        case .failure(let error):
+            nodeRefreshFailed = true
+            errorMessages.append("Node：\(error.localizedDescription)")
+        }
     }
 
     func prepareBatch(_ intent: BatchIntent) async throws -> BatchPlan {

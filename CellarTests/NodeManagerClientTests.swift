@@ -9,8 +9,10 @@ final class NodeManagerClientTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: manager) }
 
         let script = manager.appending(path: "main.sh")
+        let log = manager.appending(path: "calls.log")
         let contents = #"""
         #!/bin/bash
+        printf '%s\n' "$2" >> '\#(log.path)'
         case "$2" in
           summary)
             printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"/test/node","npmPath":"/test/npm","nodeVersion":"v24.0.0","npmVersion":"11.0.0","nvmLoaded":false,"globalPrefix":"/test","globalRoot":"/test/lib/node_modules","registry":"https://registry.npmjs.org/"}}'
@@ -37,7 +39,28 @@ final class NodeManagerClientTests: XCTestCase {
         try Data(contents.utf8).write(to: script)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
 
-        let client = NodeManagerClient(runner: ProcessRunner())
+        let client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: NodeEnvironmentResolver(homeDirectory: manager))
+        let core = try await client.loadSnapshot(managerDirectory: manager, includingOutdated: false)
+        XCTAssertEqual(core.summary.nodeVersion, "v24.0.0")
+        XCTAssertEqual(core.packages.count, 1)
+        let before = try String(contentsOf: log, encoding: .utf8)
+        XCTAssertFalse(before.contains("outdated"))
+        let changedEnvironment = NodeSummary(nodePath: "/different/node", npmPath: core.summary.npmPath,
+                                            nodeVersion: core.summary.nodeVersion, npmVersion: core.summary.npmVersion,
+                                            nvmLoaded: false, globalPrefix: core.summary.globalPrefix,
+                                            globalRoot: core.summary.globalRoot, registry: core.summary.registry)
+        do {
+            _ = try await client.loadOutdatedPackages(managerDirectory: manager, summary: changedEnvironment)
+            XCTFail("A stale environment must not reach npm outdated")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-environment-changed") }
+        let afterMismatch = try String(contentsOf: log, encoding: .utf8)
+        XCTAssertFalse(afterMismatch.contains("outdated"))
+        do {
+            _ = try await client.loadOutdatedPackages(managerDirectory: manager, summary: core.summary)
+            XCTFail("Expected isolated outdated failure")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-outdated-failed") }
+        XCTAssertEqual(core.summary.npmVersion, "11.0.0")
+        XCTAssertEqual(core.packages.first?.installedVersion, "1.0.0")
         let snapshot = try await client.loadSnapshot(managerDirectory: manager)
 
         XCTAssertEqual(snapshot.summary.nodeVersion, "v24.0.0")

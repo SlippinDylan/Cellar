@@ -73,12 +73,15 @@
 |---|---|---|
 | Homebrew 官方安装文档提供 macOS `.pkg` 安装器；该安装器仅支持 Apple Silicon，并安装到默认 `/opt/homebrew` prefix | Homebrew 官方 | [Installation](https://docs.brew.sh/Installation) |
 | Homebrew 当前版本和 `.pkg` 资产由官方 `Homebrew/brew` releases 发布 | Homebrew 官方 | [Homebrew/brew Releases](https://github.com/Homebrew/brew/releases) |
-| macOS Installer package 必须交给系统安装机制执行，Cellar 不应自行解包来跳过 installer scripts、receipts 或授权 | Homebrew 官方与项目决策 | [Installation](https://docs.brew.sh/Installation) |
+| Apple 文档说明 `xcode-select --install` 会请求安装，并由随后出现的系统对话框完成 Install、许可同意与结束步骤 | Apple 官方 | [Installing the command-line tools](https://developer.apple.com/documentation/xcode/installing-the-command-line-tools) |
+| 对从网络取得的 package file，Apple 指引用户打开 package 并按照 Installer 屏幕说明操作；该文档没有承诺每次会出现哪一种认证或权限提示 | Apple 官方 | [Install and uninstall apps from the internet or a disc](https://support.apple.com/guide/mac-help/install-and-uninstall-other-apps-mh35835/mac) |
 | Gatekeeper 会检查从 App Store 外下载的软件，并结合 Developer ID/notarization 识别已知恶意内容 | Apple 官方 | [Safely open apps on your Mac](https://support.apple.com/102445) |
 
-由此确定 1.0 setup 边界：Cellar 只接受 Homebrew 官方 release metadata 与适用于当前平台的 `.pkg`，验证来源、发布元数据中可用的摘要/签名及 macOS 信任结果，再交给系统 Installer 打开。Cellar 不执行远端 shell installer、不实现 package 内部步骤、不运行自己的 `sudo`，也不收集管理员密码。摘要/签名的具体可用字段属于实现时必须验证的外部契约；官方元数据未提供时不能伪造“已校验摘要”的结论。
+基于上述资料，1.0 采用更严格的项目决策：Cellar 只接受 Homebrew 官方 latest stable Release 中适用于当前平台的精确 `Homebrew.pkg`，而且该 Release 必须提供该资产的有效官方 SHA-256。Cellar 验证 digest 完整匹配、package signature 和 Gatekeeper assessment；digest 缺失/无效/不匹配，或任一 trust check 无法完成、结果缺失、无效或失败时一律 fail closed，不打开 package，并显示原因和 Homebrew 官方网站链接。这个 SHA-256 必需条件是 Cellar 安全契约，不是对 Homebrew Release 永远提供 digest 的事实声明。
 
-Command Line Tools 的安装由 macOS 系统流程拥有。Cellar 只做状态检测和系统请求，不下载或封装 CLT payload；实际系统提示、授权和完成状态必须人工验收。nvm 只链接其官方项目安装说明，1.0 不在 App 中执行远端安装脚本。
+通过全部验证后，Cellar 按 Apple 对网络 package 的指引请求系统打开，并将后续屏幕说明留给 Installer。Cellar 不执行远端 shell installer、不实现 package 内部步骤、不运行自己的 `sudo`，也不收集管理员密码。“Cellar 不处理认证、许可或权限提示”是项目权限边界；Apple 资料只证明系统 Installer 的屏幕流程，不保证具体提示必然出现。
+
+Command Line Tools 则直接采用 Apple 文档中的 `xcode-select --install` 和系统对话框。Cellar 只做状态检测和发起请求，不下载或封装 CLT payload；系统对话框、许可、完成与取消状态进入人工验收。nvm 只链接其官方项目安装说明，1.0 不在 App 中执行远端安装脚本。
 
 ## 平台和架构
 
@@ -139,7 +142,7 @@ Command Line Tools 的安装由 macOS 系统流程拥有。Cellar 只做状态�
 - 首次窗口尺寸、窗口恢复和用户调整。
 - `Command-Q`、关闭最后窗口和活动任务组合。
 - Finder 启动下对 `/opt/homebrew` 和默认 nvm Node 的发现。
-- macOS Command Line Tools 系统请求与 Homebrew 官方 `.pkg` 的信任提示、授权和完成状态。
+- `xcode-select --install` 系统对话框，以及 Homebrew 官方 `.pkg` 经三项验证后由 Installer 实际显示的屏幕流程和完成状态。
 - 官方 release metadata、npm Registry search 与 Node/nvm 线上版本在离线、超时和限流场景下的表现。
 - `npm outdated` 在离线、registry 超时、认证失败和代理环境下的表现。
 - App 退出后是否存在遗留的 bash、npm 或 brew 子进程。

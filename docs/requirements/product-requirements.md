@@ -186,12 +186,13 @@ Cask 图标仅在本机已有、来源明确且读取成本低时使用；否则
 
 ### 7.3 环境安装
 
-- Command Line Tools：只请求 macOS 提供的系统安装流程。Cellar 不下载、不打包、不模拟 CLT 安装器，也不代替系统授权。
-- Homebrew：只下载 Homebrew 官方发布渠道提供、适用于当前平台的官方安装包，完成来源、摘要/签名与 macOS 信任检查后交给系统 Installer 打开。系统 Installer 负责权限说明和授权；Cellar 不重写 Homebrew 安装逻辑、不运行网络脚本、不收集管理员密码，也不提供自己的 `sudo` 或 Privileged Helper。
+- Command Line Tools：只调用 `xcode-select --install` 请求 Apple 文档定义的系统安装对话框。Cellar 不下载、不打包、不模拟 CLT 安装器，也不代替系统处理许可或安装。
+- Homebrew：只接受 Homebrew 官方仓库 latest stable Release 中适用于当前平台的精确 `Homebrew.pkg`，并要求同一官方 Release 提供该资产的有效 SHA-256。Cellar 必须依次验证官方来源、SHA-256 完整匹配、package signature 和 Gatekeeper assessment；任一验证缺失、无效、不匹配或失败时都不得打开安装包，而是显示具体原因和 Homebrew 官方网站链接。
+- 通过全部验证后，Cellar 只把 package 交给 macOS 系统 Installer 打开。Cellar 不保证 Installer 将显示哪一种提示；后续可能出现的权限说明、许可、认证和安装均由系统界面处理。Cellar 不重写 Homebrew 安装逻辑、不运行网络脚本、不收集管理员密码，也不提供自己的 `sudo` 或 Privileged Helper。
 - 已有但损坏或来源不明的 Homebrew 不被覆盖、删除或“自动修复”；界面说明检测结果并引导用户采用 Homebrew 官方恢复方式。
 - nvm：1.0 提供状态、官方安装指引和已有 nvm 环境管理；不在 App 内执行远端安装脚本。
 
-下载、元数据、摘要、签名/Gatekeeper 检查和打开 Installer 必须可替换，以便自动测试只使用本地 fixture，绝不打开真实 Installer。
+release metadata、下载、SHA-256、package signature、Gatekeeper assessment 和打开 Installer 必须是可替换边界，以便自动测试覆盖每一种 fail-closed 结果，只使用本地 fixture，绝不打开真实 Installer。
 
 ### 7.4 明确禁止
 

@@ -28,7 +28,7 @@ Activity 固定在主窗口侧边栏底部。Settings 使用标准 macOS 窗口�
 - Formula/Cask 卸载禁止 Homebrew 自动更新和 autoremove。Cellar 不执行 Homebrew cleanup，不自行删除 Cask artifact 或孤儿依赖。
 - Cellar 不运行自己的 `sudo` 或 Privileged Helper，不收集管理员密码，不修改 `.zprofile`，不运行 `chsh`。
 
-缺少 Command Line Tools 时，Cellar 只请求 macOS 系统安装流程。缺少 Homebrew 时，只从 Homebrew 官方发布渠道取得适用于 Apple Silicon 的 `.pkg`，完成来源和系统信任检查后交给 macOS Installer；Cellar 不重写安装器或执行远端安装脚本。nvm 提供官方安装指引，不在 App 内运行远端脚本。
+缺少 Command Line Tools 时，Cellar 只通过 `xcode-select --install` 请求 macOS 系统安装对话框。缺少 Homebrew 时，只接受官方 latest stable Release 的 `Homebrew.pkg` 和该精确资产的有效 SHA-256；digest、package signature 与 Gatekeeper assessment 全部通过后才交给系统 Installer。任何验证缺失或失败都会阻止打开并提供原因和 Homebrew 官方链接。Cellar 不重写安装器、不执行远端安装脚本，也不处理系统许可或认证。nvm 提供官方安装指引，不在 App 内运行远端脚本。
 
 ## 数据与网络
 

@@ -40,7 +40,7 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 - Hosted tests 通过 `XCTestConfigurationFilePath` 识别测试进程，禁止根视图自动刷新。
 - Shell adapter 测试复制 Bundle Manager 到临时目录并注入临时 HOME，只允许修改测试 `.zshrc`、Oh My Zsh fixture 和 adapter runtime；不得访问用户真实 Shell 配置或网络。
 - Catalog、线上版本和 npm Registry search 测试注入本地 fake transport，覆盖有界结果、ETag/cache、取消、超时、无效响应和独立部分失败；不得访问真实 endpoint。
-- CLT/Homebrew setup 测试注入状态探测、下载、摘要/签名/trust check 和 system opener。只使用 fixture 与临时目录，不请求系统 CLT UI，不打开 Installer，不写 `/opt/homebrew`。
+- CLT/Homebrew setup 测试注入状态探测、latest stable Release metadata、下载、SHA-256、package signature、Gatekeeper assessment 和 system opener。必须分别断言 digest 缺失/无效/不匹配及两项 trust check 失败均不调用 opener，并返回原因和官方链接。只使用 fixture 与临时目录，不请求系统 CLT UI，不打开 Installer，不写 `/opt/homebrew`。
 - Batch coordinator 测试使用 fake typed operations，断言同 provider/type、顺序执行、项目失败后继续、取消后停止未开始项、无回滚声明和正确 post-refresh。
 - Activity 持久化测试注入临时 Application Support，断言最多 100 条、结构化本地化数据、凭证/原始输出不落盘和损坏数据隔离。
 - Localization 检查必须覆盖 String Catalog 中 English、简体中文和繁体中文的缺失项，并搜索新增的非本地化用户字符串。

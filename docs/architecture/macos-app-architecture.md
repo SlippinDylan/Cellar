@@ -135,11 +135,11 @@ Activity store 保存最多 100 条结构化、可本地化的用户摘要。持
 
 ### Homebrew setup
 
-Setup service 把职责拆开且可注入：官方 release/installer metadata client、bounded downloader、digest/signature/trust validator、临时文件 owner 与 system opener。它只接受 Homebrew 官方发布渠道和适用于当前平台的安装包，检查失败即停止，不降级为 shell installer。
+Setup service 把职责拆开且可注入：Homebrew 官方 latest stable Release metadata client、bounded downloader、SHA-256 validator、package-signature validator、Gatekeeper assessor、临时文件 owner 与 system opener。metadata 必须给出精确 `Homebrew.pkg` 的有效官方 SHA-256；digest 缺失/无效/不匹配、package signature 无法完成或无效、Gatekeeper assessment 无法完成或失败时一律 fail closed，不打开 package，并返回具体原因与 Homebrew 官方网站链接。不得降级为 shell installer。
 
-通过系统 Installer 打开包不等于 Cellar 获得提权能力。身份验证、权限说明和实际安装由 macOS Installer 完成；Cellar 不运行 `sudo`、不收集密码、不实现安装步骤。已检测到异常 Homebrew 时只提供诊断和官方恢复入口，不覆盖或删除现有目录。
+通过系统 Installer 打开包不等于 Cellar 获得提权能力。Cellar 只请求系统打开已验证 package；系统随后实际显示的许可、认证或权限提示不属于 Cellar 契约。Cellar 不运行 `sudo`、不收集密码、不实现安装步骤。已检测到异常 Homebrew 时只提供诊断和官方恢复入口，不覆盖或删除现有目录。
 
-Command Line Tools service 只检测状态并请求 macOS 自带安装流程；自动测试替换该边界，不弹系统 UI。nvm setup 只提供官方指引，不执行远端脚本。
+Command Line Tools service 只检测状态并执行 Apple 文档规定的 `xcode-select --install`，由系统显示安装对话框；自动测试替换该边界，不弹系统 UI。nvm setup 只提供官方指引，不执行远端脚本。
 
 ## Node、npm 与 nvm
 

@@ -38,7 +38,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 
 - Homebrew 可以查询、搜索和管理 Formula/Cask、诊断、配置和 Tap；支持 typed batch install/update/uninstall。批量一次只处理一个 provider/type，顺序执行并保留逐项结果。
 - 单项安装/更新从卡片直接开始；批量、卸载、zap、清理和配置修改按产品矩阵进行一次任务专用确认。内部计划、状态指纹和 post-refresh 继续作为安全边界。写操作不是事务，界面和 Activity 必须保留部分完成结果。
-- Command Line Tools 只请求 macOS 系统安装流程。Homebrew 只使用官方 Apple Silicon `.pkg`，验证来源和系统信任后交给系统 Installer；Cellar 不执行远端安装脚本、不收集密码、不调用自己的 `sudo` 或 Helper。
+- Command Line Tools 只通过 `xcode-select --install` 请求系统对话框。Homebrew 只接受官方 latest stable Release 的精确 `Homebrew.pkg` 及其有效官方 SHA-256；digest、package signature 和 Gatekeeper assessment 任一缺失或失败都必须 fail closed、不得打开，并报告原因及 Homebrew 官方链接。全部通过后才交给系统 Installer；Cellar 不执行远端安装脚本、不收集密码、不调用自己的 `sudo` 或 Helper。
 - 不修改 `.zprofile`，不执行 Homebrew cleanup，不自动删除孤儿依赖，也不由 App 自行 `rm` Cask 残留。
 - Formula/Cask 卸载必须显式禁止 Homebrew 自动更新和 autoremove。Cask artifact 只用于卸载前展示和执行后报告，不由 App 单独删除。
 - Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。

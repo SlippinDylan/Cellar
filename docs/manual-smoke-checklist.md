@@ -70,15 +70,16 @@
 ### Command Line Tools
 
 - [ ] 已安装 CLT 时显示可用，不提供重复安装动作。
-- [ ] 缺少 CLT 时只触发 macOS 系统提供的安装请求；Cellar 不下载 payload、不模拟授权。
+- [ ] 缺少 CLT 时只执行 `xcode-select --install` 并出现 Apple 文档所述系统安装对话框；Cellar 不下载 payload、不模拟许可或安装。
 - [ ] 用户取消或系统失败时显示真实状态，不继续假定 CLT 已安装。
 
 ### Homebrew
 
 - [ ] 已安装且可用的 Apple Silicon Homebrew 显示 `/opt/homebrew` 和正确版本，不提供覆盖安装。
-- [ ] 缺失时只从 Homebrew 官方 release metadata 选择适用于当前平台的 `.pkg`。
-- [ ] 下载进度可取消；来源、可用摘要/签名和 macOS trust/Gatekeeper 检查失败时不打开包。
-- [ ] 通过系统 Installer 打开后，由系统显示发布者、权限和授权；Cellar 不请求或保存密码，不运行自己的 `sudo`。
+- [ ] 缺失时只从 Homebrew 官方 latest stable Release 选择精确 `Homebrew.pkg`，并取得该资产的有效官方 SHA-256。
+- [ ] 官方 SHA-256 缺失、格式无效或与下载文件不匹配时 fail closed：不打开 package，显示具体原因和 Homebrew 官方网站链接。
+- [ ] package signature 或 Gatekeeper assessment 无法完成、结果缺失、无效或失败时同样 fail closed，不允许用户绕过检查继续打开。
+- [ ] 全部验证通过后只交给系统 Installer 打开；Cellar 不承诺系统将显示哪种提示，不请求或保存密码，也不运行自己的 `sudo`。
 - [ ] 用户取消 Installer 或安装失败后重新探测真实状态，不显示假成功。
 - [ ] 已有但损坏/来源异常的 Homebrew 不被删除或覆盖，只提供官方恢复说明。
 - [ ] Cellar 不降级执行 `curl | bash` 或其他远端安装脚本。

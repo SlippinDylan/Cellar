@@ -44,6 +44,7 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 - Batch coordinator 测试使用 fake typed operations，断言同 provider/type、顺序执行、项目失败后继续、取消后停止未开始项、无回滚声明和正确 post-refresh。
 - Activity 持久化测试注入临时 Application Support，断言最多 100 条、结构化本地化数据、凭证/原始输出不落盘和损坏数据隔离。
 - Localization 检查必须覆盖 String Catalog 中 English、简体中文和繁体中文的缺失项，并搜索新增的非本地化用户字符串。
+- `node .github/scripts/validate-localizations.mjs` 无需启动 App，检查全部 catalog 翻译、格式占位与当前可达 shell/Settings 源码。后续页面接入主窗口时同步扩展脚本的 `presentationSources`；保留但不可达的旧 provider 页面不代表完成本地化。
 - 测试结束后不得留下 `~/Library/Application Support/Cellar/`、npm cache 变更或全局包变更。
 
 需要验证真实环境时，使用[人工验收清单](manual-smoke-checklist.md)，并先向用户说明会读取的工具、网络和目录。真实环境检查不属于普通单元测试。

@@ -3,6 +3,7 @@ import Sparkle
 
 @MainActor
 final class ApplicationUpdateController: NSObject, SPUUpdaterDelegate {
+    let updateChannel: String
     private let allowedUpdateChannels: Set<String>
     private var updaterController: SPUStandardUpdaterController?
 
@@ -14,6 +15,7 @@ final class ApplicationUpdateController: NSObject, SPUUpdaterDelegate {
             forInfoDictionaryKey: "CellarUpdateChannel"
         ) as? String ?? "stable"
     ) {
+        self.updateChannel = updateChannel
         allowedUpdateChannels = Self.allowedChannels(for: updateChannel)
         super.init()
         if updaterEnabled {

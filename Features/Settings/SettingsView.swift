@@ -2,117 +2,126 @@ import AppKit
 import SwiftUI
 
 struct SettingsView: View {
-    private enum Pane: String, CaseIterable, Identifiable {
-        case general = "通用"
-        case about = "关于"
-        var id: Self { self }
-    }
-
     let updateController: ApplicationUpdateController
-    @State private var pane: Pane = .general
-    @Namespace private var paneNamespace
+    let relaunchController: ApplicationRelaunchController
+    @ObservedObject var operationStore: OperationStore
+    private let defaults: UserDefaults
+    @AppStorage("settings.pane") private var pane: SettingsPane = .general
+    @State private var pendingLanguage: ApplicationLanguage
+    @State private var showsRestartConfirmation = false
+    @State private var showsRestartBlocked = false
+
+    init(updateController: ApplicationUpdateController, relaunchController: ApplicationRelaunchController,
+         operationStore: OperationStore, defaults: UserDefaults = .standard) {
+        self.updateController = updateController
+        self.relaunchController = relaunchController
+        self.operationStore = operationStore
+        self.defaults = defaults
+        _pane = AppStorage(wrappedValue: .general, "settings.pane", store: defaults)
+        _pendingLanguage = State(initialValue: ApplicationLanguage.selected(in: defaults))
+    }
 
     var body: some View {
-        selectedPane
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    paneSelector
-                }
-                .sharedBackgroundVisibility(.hidden)
+        TabView(selection: $pane) {
+            Tab("General", systemImage: "gearshape", value: .general) { generalPane }
+            Tab("Sources", systemImage: "network", value: .sources) {
+                ContentUnavailableView("Sources", systemImage: "network", description: Text("Source settings are not available yet."))
             }
-    }
-
-    @ViewBuilder
-    private var selectedPane: some View {
-        switch pane {
-        case .general: generalPane
-        case .about: AboutView(updateController: updateController)
+            Tab("Terminal", systemImage: "terminal", value: .terminal) {
+                ContentUnavailableView("Terminal", systemImage: "terminal", description: Text("Terminal settings are not available yet."))
+            }
+            Tab("About", systemImage: "info.circle", value: .about) {
+                AboutView(updateController: updateController)
+            }
         }
-    }
-
-    private var paneSelector: some View {
-        GlassEffectContainer(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(Pane.allCases) { item in
-                    Button {
-                        withAnimation(.smooth(duration: 0.25)) { pane = item }
-                    } label: {
-                        Text(item.rawValue)
-                            .font(.callout.weight(pane == item ? .semibold : .medium))
-                            .padding(.horizontal, 16)
-                            .frame(minWidth: 80, minHeight: 32)
-                            .contentShape(Capsule())
-                    }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(pane == item ? Color.white : Color.primary)
-                        .background {
-                            if pane == item {
-                                Color.clear
-                                    .glassEffect(.regular.tint(.accentColor).interactive(), in: Capsule())
-                                    .glassEffectID("settings-pane-selection", in: paneNamespace)
-                            }
-                        }
-                        .accessibilityAddTraits(pane == item ? .isSelected : [])
+        .scenePadding()
+        .frame(width: 560, height: 400)
+        .alert("Restart Cellar to Change Language?", isPresented: $showsRestartConfirmation) {
+            Button("Restart Now") {
+                if !relaunchController.changeLanguage(pendingLanguage, in: defaults) {
+                    pendingLanguage = ApplicationLanguage.selected(in: defaults)
+                    showsRestartBlocked = true
                 }
             }
-            .padding(3)
-            .glassEffect(.regular.interactive(), in: Capsule())
+            .disabled(operationStore.hasActiveOperations)
+            Button("Cancel", role: .cancel) { pendingLanguage = ApplicationLanguage.selected(in: defaults) }
+        } message: {
+            Text("Cellar will quit and reopen using the selected language.")
         }
-        .frame(maxWidth: 200)
+        .alert("Unable to Restart", isPresented: $showsRestartBlocked) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Finish or cancel the current task before changing the language.")
+        }
     }
 
     private var generalPane: some View {
         Form {
-            Section("运行方式") {
-                LabeledContent("应用类型", value: "普通前台窗口")
-                LabeledContent("最低系统", value: "macOS 26.0")
-                LabeledContent("架构", value: "Apple Silicon")
+            Picker("Language", selection: languageSelection) {
+                ForEach(ApplicationLanguage.allCases) { language in
+                    Text(language.title).tag(language)
+                }
             }
-            Section("数据") {
-                LabeledContent("Manager 运行副本", value: "~/Library/Application Support/Cellar/Managers")
-                Text("操作记录只保留在本次 App 会话。Cellar 不包含账户、遥测或自己的服务端。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
+            .disabled(operationStore.hasActiveOperations)
+            Text(operationStore.hasActiveOperations
+                 ? LocalizedStringResource("Finish or cancel the current task before changing the language.")
+                 : LocalizedStringResource("Changing the language restarts Cellar."))
+                .foregroundStyle(.secondary)
         }
         .formStyle(.grouped)
-        .padding(.horizontal, 24)
+    }
+
+    private var languageSelection: Binding<ApplicationLanguage> {
+        Binding(get: { pendingLanguage }, set: { language in
+            pendingLanguage = language
+            showsRestartConfirmation = language != ApplicationLanguage.selected(in: defaults)
+        })
     }
 }
 
 struct AboutView: View {
     let updateController: ApplicationUpdateController
 
+    private var sourceCodeURL: URL {
+        guard let url = URL(string: "https://github.com/SlippinDylan/Cellar") else {
+            preconditionFailure("The source code URL must be valid")
+        }
+        return url
+    }
+
     private var version: String {
-        let info = Bundle.main.infoDictionary
-        let marketing = info?["CFBundleShortVersionString"] as? String ?? "—"
-        let build = info?["CFBundleVersion"] as? String ?? "—"
+        guard let marketing = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
+              let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String else {
+            preconditionFailure("The app bundle must include version metadata")
+        }
         return "\(marketing) (\(build))"
     }
 
+    private var updateChannel: LocalizedStringResource {
+        switch updateController.updateChannel {
+        case "stable": LocalizedStringResource("Stable")
+        case "beta": LocalizedStringResource("Beta")
+        case "alpha": LocalizedStringResource("Alpha")
+        default: preconditionFailure("Unsupported update channel")
+        }
+    }
+
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
+        VStack(spacing: 16) {
             Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
-                .frame(width: 112, height: 112)
-
-            VStack(spacing: 8) {
-                Text("Cellar").font(.largeTitle.bold())
-                Text("版本 \(version)")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Button("检查更新…") { updateController.checkForUpdates() }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.capsule)
+                .frame(width: 72, height: 72)
+                .accessibilityHidden(true)
+            Text("Cellar").font(.title.bold())
+            Text("Version \(version)").foregroundStyle(.secondary)
+            LabeledContent("Update Channel") { Text(updateChannel) }
+                .fixedSize()
+            Button("Check for Updates…") { updateController.checkForUpdates() }
                 .disabled(!updateController.canCheckForUpdates)
-
+            Link("Open Source", destination: sourceCodeURL)
             Text("Copyright © 2026 SlippinDylan Studio")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

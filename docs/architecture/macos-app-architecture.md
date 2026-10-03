@@ -16,14 +16,16 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 
 当前源码已经实现：
 
-- Overview/Homebrew/Node/Shell/Activity 的技术模块导航和主窗口内 Settings 页面；
+- Home/Library/Discover/Updates/Tools 与底部 Activity 的原生任务导航、独立 Settings scene 和 General/Sources/Terminal/About 四个 pane；
+- 主导航内容、Sources 与 Terminal 目前显示明确的未开放占位；既有 provider 页面和业务实现保留供后续任务接入，不再作为主窗口路由；
+- shell/Settings 的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条诊断 Activity；
 - typed batch prepare/execute、可取消任务与最多 100 条结构化 Activity 持久摘要；
 - Homebrew 直接 Bridge、Node Manager schema v1、Shell schema v1 adapter；
 - 强类型计划、确认、单写操作、post-refresh、部分失败和进程组取消基础；
 - Manager 版本化安装、Sparkle、arm64/macOS 26 构建边界。
 
-1.0 要把这些能力组合为 Home/Library/Discover/Updates/Tools、底部 Activity 与标准 Settings scene，并将目录/setup、batch、取消和持久 Activity 接入任务页面，完成 String Catalog 与卡片展示。完成前，目标架构不能被描述为当前已交付实现。
+1.0 仍需将目录/setup、batch、持久 Activity 和 provider 设置接入任务页面，并完成这些页面的 String Catalog 与卡片展示。完成前，目标架构不能被描述为当前已交付实现。
 
 ## 分层与依赖
 
@@ -61,6 +63,8 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 - App 退出后不得留下由 Cellar 启动的子进程。
 
 菜单命令与 toolbar 动作共享同一 intent，不复制业务执行路径。
+
+当前 shell 的刷新、Activity 导航和取消共同进入 `AppModel.performShellAction`；系统 `SidebarCommands` 提供侧边栏显隐。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
 
 ## 状态与刷新
 
@@ -189,6 +193,8 @@ Manager 从只读 Bundle 快照安装到版本化 Application Support：
 ## 本地化与可访问性
 
 所有用户可见静态字符串进入 String Catalog，支持 English、简体中文和繁体中文。Follow System 不覆盖系统首选语言；显式选择只影响 Cellar。持久 Activity 保存语义数据而不是已渲染句子，以便按当前语言显示。
+
+应用语言偏好写入 App 自有 UserDefaults：Follow System 删除 App 域内 `AppleLanguages`，显式选择写入单一受支持语言。确认后通过受控退出和 `applicationWillTerminate` 中的一次新实例请求重启，使 Bundle 与系统菜单在新进程中使用一致语言。有活动操作时不提交语言变更；退出复验拒绝时清除待重启标记。测试注入独立 defaults suite、终止与重开闭包，生产重开入口另有 hosted XCTest 保护。
 
 卡片、scope、状态、进度、错误和确认使用语义 label/value/hint，键盘顺序与视觉顺序一致。实现遵守系统 contrast、Reduce Motion 和 Reduce Transparency，不用颜色作为唯一信号。
 

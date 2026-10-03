@@ -10,6 +10,7 @@
 		C00000000000000000000001 /* CellarApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000002 /* CellarApp.swift */; };
 		C00000000000000000000003 /* Managers in Resources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000004 /* Managers */; };
 		C00000000000000000000026 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = C00000000000000000000028 /* Sparkle */; };
+		C00000000000000000000031 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000032 /* Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -28,6 +29,7 @@
 		C00000000000000000000008 /* Cellar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cellar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C00000000000000000000009 /* CellarTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CellarTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C00000000000000000000029 /* Config/Generated/Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/Generated/Version.xcconfig; sourceTree = SOURCE_ROOT; };
+		C00000000000000000000032 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -96,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				C00000000000000000000004 /* Managers */,
+				C00000000000000000000032 /* Localizable.xcstrings */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -182,12 +185,13 @@
 				};
 			};
 			buildConfigurationList = C0000000000000000000001C /* Build configuration list for PBXProject "Cellar" */;
-			developmentRegion = "zh-Hans";
+			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
 				Base,
 				"zh-Hans",
+				"zh-Hant",
 			);
 			mainGroup = C00000000000000000000011;
 			minimizedProjectReferenceProxies = 1;
@@ -211,6 +215,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C00000000000000000000003 /* Managers in Resources */,
+				C00000000000000000000031 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

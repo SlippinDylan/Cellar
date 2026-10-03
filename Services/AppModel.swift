@@ -3,7 +3,7 @@ import Foundation
 
 @MainActor
 final class AppModel: ObservableObject {
-    @Published var selectedDestination: AppDestination = .overview
+    @Published var selectedDestination: AppDestination = .home
     @Published var homebrew: HomebrewStatus?
     @Published var node: NodeSnapshot?
     @Published var shell: ShellStatus?
@@ -53,7 +53,7 @@ final class AppModel: ObservableObject {
         let client = NodeManagerClient(runner: runner)
         let shellClient = ShellManagerClient(runner: runner)
         let activityStore: ActivityStore?
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+        if !AppRuntime.isRunningTests {
             let store = ActivityStore(applicationSupportRoot: .applicationSupportDirectory)
             store.restore()
             activityStore = store
@@ -95,6 +95,19 @@ final class AppModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    func refreshOnLaunch(environment: [String: String] = ProcessInfo.processInfo.environment) async {
+        guard AppRuntime.shouldRefreshOnLaunch(refreshedAt: refreshedAt, environment: environment) else { return }
+        await refresh()
+    }
+
+    func performShellAction(_ action: AppShellAction) async {
+        switch action {
+        case .refresh: await refresh()
+        case .show(let destination): selectedDestination = destination
+        case .cancel: operationStore.cancelActiveTask()
+        }
     }
 
     func refresh() async {

@@ -73,6 +73,7 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(commands.contains(".keyboardShortcut(\"r\", modifiers: .command)"))
         XCTAssertTrue(settings.contains("@AppStorage(\"settings.pane\")"))
         XCTAssertTrue(settings.contains("store: defaults"))
-        XCTAssertTrue(settings.contains("changeLanguage(pendingLanguage, in: defaults)"))
+        XCTAssertTrue(settings.contains("changeLanguage(pendingLanguage)"))
+        XCTAssertTrue(settings.contains(".onReceive(relaunchController.$selectedLanguage)"))
     }
 }

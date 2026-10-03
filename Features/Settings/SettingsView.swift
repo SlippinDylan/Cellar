@@ -3,9 +3,8 @@ import SwiftUI
 
 struct SettingsView: View {
     let updateController: ApplicationUpdateController
-    let relaunchController: ApplicationRelaunchController
+    @ObservedObject var relaunchController: ApplicationRelaunchController
     @ObservedObject var operationStore: OperationStore
-    private let defaults: UserDefaults
     @AppStorage("settings.pane") private var pane: SettingsPane = .general
     @State private var pendingLanguage: ApplicationLanguage
     @State private var showsRestartConfirmation = false
@@ -16,9 +15,8 @@ struct SettingsView: View {
         self.updateController = updateController
         self.relaunchController = relaunchController
         self.operationStore = operationStore
-        self.defaults = defaults
         _pane = AppStorage(wrappedValue: .general, "settings.pane", store: defaults)
-        _pendingLanguage = State(initialValue: ApplicationLanguage.selected(in: defaults))
+        _pendingLanguage = State(initialValue: relaunchController.selectedLanguage)
     }
 
     var body: some View {
@@ -36,15 +34,18 @@ struct SettingsView: View {
         }
         .scenePadding()
         .frame(width: 560, height: 400)
+        .onReceive(relaunchController.$selectedLanguage) { language in
+            pendingLanguage = language
+        }
         .alert("Restart Cellar to Change Language?", isPresented: $showsRestartConfirmation) {
             Button("Restart Now") {
-                if !relaunchController.changeLanguage(pendingLanguage, in: defaults) {
-                    pendingLanguage = ApplicationLanguage.selected(in: defaults)
+                if !relaunchController.changeLanguage(pendingLanguage) {
+                    pendingLanguage = relaunchController.selectedLanguage
                     showsRestartBlocked = true
                 }
             }
             .disabled(operationStore.hasActiveOperations)
-            Button("Cancel", role: .cancel) { pendingLanguage = ApplicationLanguage.selected(in: defaults) }
+            Button("Cancel", role: .cancel) { pendingLanguage = relaunchController.selectedLanguage }
         } message: {
             Text("Cellar will quit and reopen using the selected language.")
         }
@@ -74,7 +75,7 @@ struct SettingsView: View {
     private var languageSelection: Binding<ApplicationLanguage> {
         Binding(get: { pendingLanguage }, set: { language in
             pendingLanguage = language
-            showsRestartConfirmation = language != ApplicationLanguage.selected(in: defaults)
+            showsRestartConfirmation = language != relaunchController.selectedLanguage
         })
     }
 }

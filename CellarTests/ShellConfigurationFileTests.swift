@@ -3,6 +3,21 @@ import XCTest
 @testable import Cellar
 
 final class ShellConfigurationFileTests: XCTestCase {
+    func testProjectDirectoryReaderRejectsSpecialFilesWithoutLeakingDescriptors() async throws {
+        let fixture = try FileReadProbe()
+        defer { fixture.remove() }
+        let fifo = fixture.root.appending(path: "fifo")
+        XCTAssertEqual(mkfifo(fifo.path, 0o600), 0)
+        let regular = fixture.root.appending(path: "file")
+        try Data().write(to: regular)
+        let link = fixture.root.appending(path: "link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: fixture.root)
+        for file in [fifo, regular, link, URL(filePath: "/dev/null")] {
+            let result = try await fixture.run(mode: "project-read", source: file)
+            XCTAssertEqual(result.terminationStatus, 0, result.errorText)
+        }
+    }
+
     func testNodeFingerprintReaderBoundsAndRefusesSpecialFilesWithoutLeakingDescriptors() async throws {
         let fixture = try FileReadProbe()
         defer { fixture.remove() }
@@ -95,7 +110,8 @@ private struct FileReadProbe {
             close(available)
             for _ in 0..<100 {
                 do {
-                    if arguments[1].hasPrefix("node-") { _ = try NodeConfigurationFile.read(at: candidate, maximumBytes: 4096) }
+                    if arguments[1] == "project-read" { _ = try NodeProjectDirectory.read(selectedPath: candidate.path) }
+                    else if arguments[1].hasPrefix("node-") { _ = try NodeConfigurationFile.read(at: candidate, maximumBytes: 4096) }
                     else if arguments[1] != "restore" { _ = try ShellConfigurationFile.read(at: candidate) }
                     else {
                         let original = try ShellConfigurationFile.read(at: URL(filePath: arguments[2]))
@@ -115,6 +131,7 @@ private struct FileReadProbe {
             let compile = try await runner.run(ProcessRequest(executableURL: URL(filePath: "/usr/bin/xcrun"),
                                                               arguments: ["swiftc", repository.appending(path: "Bridge/ShellConfigurationFile.swift").path,
                                                                           repository.appending(path: "Bridge/NodeConfigurationFile.swift").path,
+                                                                          repository.appending(path: "Bridge/NodeProjectDirectory.swift").path,
                                                                           repository.appending(path: "Bridge/BridgeError.swift").path, main.path, "-target", "arm64-apple-macos26.0", "-o", executable.path],
                                                               environment: environment, currentDirectoryURL: root, timeout: .seconds(60)))
             XCTAssertEqual(compile.terminationStatus, 0, compile.errorText)

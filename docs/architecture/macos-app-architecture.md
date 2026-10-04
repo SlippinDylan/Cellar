@@ -197,6 +197,8 @@ Tools 的 Runtime 从官方 Node 发布索引读取最多 100 个支持 macOS ar
 
 Node 配置指纹通过 `O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开普通文件，读取前后核对 metadata、路径与 inode；`.nvmrc`/alias 上限 4 KiB，npm 配置上限 64 KiB，`package.json` 上限 1 MiB。FIFO、设备、目录、符号链接、超限、替换和读取期间变化均拒绝，文件描述符在所有路径关闭。Registry 包含默认安装的 global config 及显式引用的 userconfig/globalconfig/prefix 配置，引用集合最多 16 个文件。
 
+Project 确认还在会话内绑定用户选择目录的 canonical URL、device/inode、owner/group/mode 与 birthtime，即使两个子文件都不存在也保留目录身份。目录通过 `O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开，canonical 路径由已打开 FD 的 `F_GETPATH` 取得；最终目录为 symlink、`.`/`..` 路径或非目录时拒绝。初始祖先 symlink（包括系统路径别名）可以使用，但确认后重新打开原选择路径必须仍对应同一 canonical 目录和身份。执行前重计划之前及紧邻 project-write gate 再次复验，Manager 实际收到的是已捕获 canonical 路径，保留原确认时效和单次消费。执行后再核对目录及有界读取的精确 `.nvmrc`；目录漂移或结果不能复验时记为 unknown，使用有限的 stateChanged/stateUnavailable 原因，不宣称回滚、不把路径写入 Activity 摘要。
+
 普通 npm install 与 update 都把已确认的 packageName 和 targetVersion 组成精确安装参数；名称和标签只保留为请求身份。执行前仍复验原目标版本、安装状态、有效 Registry、精确 Node/npm 入口和全局目录；执行后核对该目标的实际版本，无法复验为 unknown，版本不匹配为 failed。
 
 npm 目录能力只针对全局包：

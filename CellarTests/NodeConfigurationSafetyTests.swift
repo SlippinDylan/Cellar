@@ -1,7 +1,125 @@
+import Darwin
 import XCTest
 @testable import Cellar
 
 final class NodeConfigurationSafetyTests: XCTestCase {
+    func testProjectConfirmationKeepsOriginalExpiryAndFailedVerificationIsUnknown() async throws {
+        for expired in [true, false] {
+            let fixture = try NodeConfigurationFixture()
+            defer { fixture.remove() }
+            let project = fixture.root.appending(path: "project")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            let prepared = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
+            if expired {
+                let plan = NodeActionPlan(id: prepared.id, request: prepared.request, payload: prepared.payload, generatedAt: Date().addingTimeInterval(-301))
+                do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Directory revalidation must not renew confirmation") }
+                catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-expired") }
+                XCTAssertFalse(try fixture.calls().contains("execute|1|1"))
+            } else {
+                try Data().write(to: fixture.root.appending(path: "wrong-project-version"))
+                let result = try await fixture.client.execute(prepared, managerDirectory: fixture.root)
+                XCTAssertEqual(result.batchItemStatus, .unknown)
+                XCTAssertEqual(result.activityReason, .stateUnavailable)
+                XCTAssertEqual(result.detail, "project-verification-unavailable")
+            }
+        }
+    }
+
+    func testProjectReplacementDuringFinalPlanningIsRejectedBeforeWriteGate() async throws {
+        let fixture = try NodeConfigurationFixture()
+        defer { fixture.remove() }
+        let project = fixture.root.appending(path: "project")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
+        try Data().write(to: fixture.root.appending(path: "replace-during-plan"))
+        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Final planning must not replace the selected directory") }
+        catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
+        XCTAssertFalse(try fixture.calls().contains("execute|1|1"))
+        for name in ["project", "project-during-plan"] {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "\(name)/.nvmrc").path))
+        }
+    }
+
+    func testProjectFinalSymlinksAndDotTraversalRefuseBeforePlanning() async throws {
+        let fixture = try NodeConfigurationFixture()
+        defer { fixture.remove() }
+        let actual = fixture.root.appending(path: "actual")
+        let link = fixture.root.appending(path: "selected")
+        try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        for path in [link.path, link.path + "/", actual.path + "/../actual"] {
+            do { _ = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: path, value: "v24.0.0"), managerDirectory: fixture.root); XCTFail("Unsafe selected path must refuse") }
+            catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "calls.log").path))
+    }
+
+    func testEmptyProjectDirectoryReplacementCannotOpenWriteGate() async throws {
+        for replacement in ["project-symlink", "ancestor-symlink", "recreated-directory"] {
+            let fixture = try NodeConfigurationFixture()
+            defer { fixture.remove() }
+            let parent = fixture.root.appending(path: "selected")
+            let project = parent.appending(path: "project")
+            let otherParent = fixture.root.appending(path: "other")
+            let other = otherParent.appending(path: "project")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+            let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
+            let moved = fixture.root.appending(path: "original")
+            if replacement == "ancestor-symlink" {
+                try FileManager.default.moveItem(at: parent, to: moved)
+                try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: otherParent)
+            } else {
+                try FileManager.default.moveItem(at: project, to: moved)
+                if replacement == "project-symlink" { try FileManager.default.createSymbolicLink(at: project, withDestinationURL: other) }
+                else { try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false) }
+            }
+            do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Directory identity changed: \(replacement)") }
+            catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
+            XCTAssertFalse(try fixture.calls().contains("execute|1|1"))
+            for directory in [project, other, moved, moved.appending(path: "project")] {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appending(path: ".nvmrc").path), replacement)
+            }
+        }
+    }
+
+    func testEmptyProjectUsesCapturedCanonicalDirectoryAndVerifiesWrittenVersion() async throws {
+        let fixture = try NodeConfigurationFixture()
+        defer { fixture.remove() }
+        let actual = fixture.root.appending(path: "actual/project")
+        try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
+        let alias = fixture.root.appending(path: "alias")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: actual.deletingLastPathComponent())
+        let selected = alias.appending(path: "project")
+        let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: selected.path, value: "v24.0.0"), managerDirectory: fixture.root)
+        XCTAssertEqual(plan.request.subject, selected.path)
+        let result = try await fixture.client.execute(plan, managerDirectory: fixture.root)
+        XCTAssertEqual(result.batchItemStatus, .succeeded)
+        XCTAssertEqual(try String(contentsOf: actual.appending(path: ".nvmrc"), encoding: .utf8), "v24.0.0\n")
+        let canonical = try XCTUnwrap(realpath(actual.path, nil))
+        defer { free(canonical) }
+        XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: "executed-project"), encoding: .utf8), String(cString: canonical))
+        XCTAssertEqual(try fixture.calls().split(separator: "\n").filter { $0.hasPrefix("execute|1|1") }.count, 1)
+        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Confirmation must be consumed once") }
+        catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
+    }
+
+    func testProjectPostWriteDirectoryDriftCannotReportSuccess() async throws {
+        let fixture = try NodeConfigurationFixture()
+        defer { fixture.remove() }
+        let project = fixture.root.appending(path: "project")
+        let other = fixture.root.appending(path: "other")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
+        let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
+        try Data().write(to: fixture.root.appending(path: "redirect-after-write"))
+        let result = try await fixture.client.execute(plan, managerDirectory: fixture.root)
+        XCTAssertEqual(result.batchItemStatus, .unknown)
+        XCTAssertEqual(result.activityReason, .stateChanged)
+        XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: "project-after-write/.nvmrc"), encoding: .utf8), "v24.0.0\n")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: other.appending(path: ".nvmrc").path))
+    }
+
     func testRegistryReferencedConfigurationAndSameContentReplacementInvalidatePlans() async throws {
         let fixture = try NodeConfigurationFixture()
         defer { fixture.remove() }
@@ -152,10 +270,22 @@ private struct NodeConfigurationFixture {
         printf '%s|%s|%s|%s\n' "$2" "$NODE_MANAGER_ALLOW_JSON_EXECUTE" "${NODE_MANAGER_ALLOW_PROJECT_WRITE:-0}" "$3" >> "$HOME/calls.log"
         case "$2" in
           plan)
+            if [ "$3" = project-nvmrc ] && [ -f "$HOME/replace-during-plan" ]; then
+              /bin/mv "$4" "$HOME/project-during-plan"
+              /bin/mkdir "$4"
+            fi
             printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","effectiveRegistry":"http://registry.example.test/","userRegistry":"","projectRegistry":"","globalRegistry":"","executeSupported":true,"executable":true}}\n' "$3"
             ;;
           execute)
-            if [ "$3" = project-nvmrc ]; then printf '%s\n' "$5" > "$4/.nvmrc"; fi
+            if [ "$3" = project-nvmrc ]; then
+              printf '%s' "$4" > "$HOME/executed-project"
+              printf '%s\n' "$5" > "$4/.nvmrc"
+              [ ! -f "$HOME/wrong-project-version" ] || printf 'v25.0.0\n' > "$4/.nvmrc"
+              if [ -f "$HOME/redirect-after-write" ]; then
+                /bin/mv "$4" "$HOME/project-after-write"
+                /bin/ln -s "$HOME/other" "$4"
+              fi
+            fi
             printf '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fixture","action":"%s","subject":"%s","exitCode":0,"status":"ok","logFile":""}}\n' "$3" "$4"
             ;;
           *) exit 2 ;;

@@ -6,6 +6,7 @@ actor NodeManagerClient {
     private let environmentResolver: NodeEnvironmentResolver
     private var registryConfirmations: [UUID: (environment: [String: String], fingerprint: String)] = [:]
     private var configurationConfirmations: [UUID: (environment: [String: String], fingerprint: String)] = [:]
+    private var projectConfirmations: [UUID: (environment: [String: String], fingerprint: String, directory: NodeProjectDirectory)] = [:]
     private var logConfirmations: [UUID: NodeLogMaintenanceState] = [:]
 
     init(runner: ProcessRunner, environmentResolver: NodeEnvironmentResolver = NodeEnvironmentResolver()) {
@@ -127,7 +128,17 @@ actor NodeManagerClient {
             registryConfirmations[plan.id] = (environment, fingerprint)
             return plan
         }
-        if [.writeProjectNVMRC, .setDefaultNode, .uninstallNode].contains(request.action) {
+        if request.action == .writeProjectNVMRC {
+            let directory = try NodeProjectDirectory.read(selectedPath: request.subject)
+            let canonicalRequest = NodeActionRequest(action: request.action, subject: directory.canonicalURL.path, value: request.value)
+            let fingerprint = try configurationFingerprint(canonicalRequest, environment: environment)
+            let plan = try await self.plan(canonicalRequest, managerDirectory: managerDirectory, environment: environment)
+            try directory.requireUnchanged(selectedPath: request.subject)
+            guard fingerprint == (try configurationFingerprint(canonicalRequest, environment: environment)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+            projectConfirmations[plan.id] = (environment, fingerprint, directory)
+            return NodeActionPlan(id: plan.id, request: request, payload: plan.payload, generatedAt: plan.generatedAt)
+        }
+        if [.setDefaultNode, .uninstallNode].contains(request.action) {
             let fingerprint = try configurationFingerprint(request, environment: environment)
             let plan = try await self.plan(request, managerDirectory: managerDirectory, environment: environment)
             guard fingerprint == (try configurationFingerprint(request, environment: environment)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
@@ -160,10 +171,13 @@ actor NodeManagerClient {
         preferredNodeVersion: String? = nil
     ) async throws -> NodeOperationResult {
         let environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        if plan.request.action == .writeProjectNVMRC {
+            return try await executeProject(plan, managerDirectory: managerDirectory, environment: environment)
+        }
         if plan.request.action == .cleanup, plan.request.subject == NodeMaintenanceAction.logs.rawValue {
             guard let state = logConfirmations.removeValue(forKey: plan.id), state == (try NodeLogMaintenanceState.read(managerDirectory: managerDirectory)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
         }
-        if [.writeProjectNVMRC, .setDefaultNode, .uninstallNode].contains(plan.request.action) {
+        if [.setDefaultNode, .uninstallNode].contains(plan.request.action) {
             guard let baseline = configurationConfirmations.removeValue(forKey: plan.id), baseline.environment == environment,
                   baseline.fingerprint == (try configurationFingerprint(plan.request, environment: environment)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
             let current = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: environment)
@@ -201,6 +215,40 @@ actor NodeManagerClient {
         }
     }
 
+    private func executeProject(_ plan: NodeActionPlan, managerDirectory: URL, environment: [String: String]) async throws -> NodeOperationResult {
+        guard let baseline = projectConfirmations.removeValue(forKey: plan.id), baseline.environment == environment else {
+            throw BridgeError.managerFailure(code: "project-changed", detail: nil)
+        }
+        try baseline.directory.requireUnchanged(selectedPath: plan.request.subject)
+        let request = NodeActionRequest(action: .writeProjectNVMRC, subject: baseline.directory.canonicalURL.path, value: plan.request.value)
+        guard baseline.fingerprint == (try configurationFingerprint(request, environment: environment)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+        let current = try await self.plan(request, managerDirectory: managerDirectory, environment: environment)
+        guard current.canExecute, current.payload.currentNvmrc == plan.payload.currentNvmrc,
+              current.payload.enginesNode == plan.payload.enginesNode,
+              baseline.fingerprint == (try configurationFingerprint(request, environment: environment)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+        // Keep the original confirmation/expiry; only its execution path becomes canonical.
+        let execution = NodeActionPlan(id: plan.id, request: request, payload: plan.payload, generatedAt: plan.generatedAt)
+        let result = try await execute(execution, managerDirectory: managerDirectory, environment: environment,
+                                       project: (baseline.directory, plan.request.subject))
+        guard result.exitCode == 0, result.status == "ok" else { return result }
+        var detail: String?
+        do {
+            try baseline.directory.requireUnchanged(selectedPath: plan.request.subject)
+            let written = try NodeConfigurationFile.read(at: baseline.directory.canonicalURL.appending(path: ".nvmrc"), maximumBytes: 4096)
+            guard let version = plan.request.value, written?.contents == Data((version + "\n").utf8),
+                  result.action == request.action.rawValue, result.subject == request.subject else {
+                throw BridgeError.managerFailure(code: "project-verification-unavailable", detail: nil)
+            }
+            try baseline.directory.requireUnchanged(selectedPath: plan.request.subject)
+        } catch BridgeError.managerFailure(let code, _) {
+            detail = code == "project-changed" ? code : "project-verification-unavailable"
+        } catch {
+            detail = "project-verification-unavailable"
+        }
+        return NodeOperationResult(operationId: result.operationId, action: result.action, subject: plan.request.subject,
+                                   exitCode: result.exitCode, status: detail == nil ? result.status : "unknown", logFile: result.logFile, detail: detail ?? result.detail, residues: result.residues)
+    }
+
     private func registryFingerprint(environment: [String: String], managerDirectory: URL) throws -> String {
         guard let home = environment["HOME"] else { throw BridgeError.managerFailure(code: "registry-home-unavailable", detail: nil) }
         var files = [URL(filePath: home).appending(path: ".npmrc"), managerDirectory.appending(path: ".npmrc")]
@@ -234,7 +282,6 @@ actor NodeManagerClient {
         var files = [URL(filePath: home).appending(path: ".nvm/alias/default")]
         if request.action == .writeProjectNVMRC {
             let project = URL(filePath: request.subject)
-            guard project.path.hasPrefix("/") else { throw BridgeError.managerFailure(code: "invalid-project-path", detail: nil) }
             files += [project.appending(path: ".nvmrc"), project.appending(path: "package.json")]
         }
         var material = Data()
@@ -262,7 +309,8 @@ actor NodeManagerClient {
     private func execute(
         _ plan: NodeActionPlan,
         managerDirectory: URL,
-        environment: [String: String]
+        environment: [String: String],
+        project: (directory: NodeProjectDirectory, selectedPath: String)? = nil
     ) async throws -> NodeOperationResult {
         guard plan.canExecute else {
             throw BridgeError.managerFailure(
@@ -274,6 +322,10 @@ actor NodeManagerClient {
             throw BridgeError.managerFailure(code: "plan-expired", detail: "Node 操作计划已过期，请重新生成")
         }
 
+        if plan.request.action == .writeProjectNVMRC {
+            guard let project else { preconditionFailure("Project execution requires its confirmed directory") }
+            try project.directory.requireUnchanged(selectedPath: project.selectedPath)
+        }
         var environment = environment
         environment["NODE_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
         if plan.request.action == .writeProjectNVMRC {

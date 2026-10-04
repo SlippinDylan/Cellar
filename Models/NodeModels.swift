@@ -265,7 +265,7 @@ struct NodeOperationResult: Decodable, Sendable {
             return verification == .partiallySucceeded && exitCode != 0 ? .failed : verification
         }
         guard exitCode == 0 else { return .failed }
-        if [NodeAction.installPackage.rawValue, NodeAction.updatePackage.rawValue].contains(action), status == "unknown" { return .unknown }
+        if [NodeAction.installPackage.rawValue, NodeAction.updatePackage.rawValue, NodeAction.writeProjectNVMRC.rawValue].contains(action), status == "unknown" { return .unknown }
         if status == "ok" { return .succeeded }
         if action == NodeAction.uninstallPackage.rawValue, status == "warn", detail == "residue-detected" {
             return .partiallySucceeded
@@ -277,7 +277,7 @@ struct NodeOperationResult: Decodable, Sendable {
         switch batchItemStatus {
         case .succeeded: nil
         case .cancelled: .cancelledByUser
-        case .unknown: .stateUnavailable
+        case .unknown: detail == "project-changed" ? .stateChanged : .stateUnavailable
         case .partiallySucceeded: detail == "residue-detected" ? .residueDetected : .stateUnavailable
         case .failed: .init(error: BridgeError.managerFailure(code: detail ?? "provider-failure", detail: nil))
         }

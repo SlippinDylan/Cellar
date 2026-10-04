@@ -193,7 +193,7 @@ extension BatchItemStatus {
 extension ActivityItemReason {
     static func verificationStatus(code: String) -> BatchItemStatus? {
         switch code {
-        case "post-install-state-unavailable", "post-uninstall-state-unavailable", "update-verification-unavailable", "update-result-unavailable": .unknown
+        case "post-install-state-unavailable", "post-uninstall-state-unavailable", "update-verification-unavailable", "update-result-unavailable", "project-verification-unavailable": .unknown
         case "latest-verification-unavailable": .partiallySucceeded
         default: nil
         }

@@ -3,6 +3,30 @@ import XCTest
 
 @MainActor
 final class AppModelBatchIntegrationTests: XCTestCase {
+    func testHomebrewUnavailablePackagesReconciliationKeepsPriorInventoryAndTime() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarBatchUnused-\(UUID())")
+        let runner = ProcessRunner()
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root), nodeClient: NodeManagerClient(runner: runner, environmentResolver: .init(homeDirectory: root)), shellClient: ShellManagerClient(runner: runner), environmentResolver: .init(homeDirectory: root))
+        let provider = FakeBatchProvider(homebrewPackagesRefreshFails: true)
+        let model = AppModel(service: service, operationStore: OperationStore(), batchProvider: provider)
+        let identity = HomebrewPackageIdentity(name: "prior", kind: .formula)
+        let package = HomebrewPackage(identity: identity, displayName: "prior", description: nil, homepage: nil, installedVersions: ["1.0.0"], currentVersion: "1.0.0", tap: nil, dependencies: [], pinned: false, deprecated: false, disabled: false, artifacts: [])
+        let snapshot = HomebrewSnapshot(executablePath: "/fake/brew", version: "4.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: [package], outdatedPackages: [], taps: [], sectionErrors: [:], controlledPath: "", commandLineToolsAvailable: true)
+        model.applyHomebrewReadResult(.success(.init(executablePath: snapshot.executablePath, version: snapshot.version, managerAvailable: true, snapshot: snapshot)))
+        model.refreshedAt = Date(timeIntervalSince1970: 100)
+        let providerDate = model.homebrewRefreshedAt
+        let globalDate = model.refreshedAt
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: [.homebrew(.init(name: "one", kind: .formula))]))
+        let plan = try await model.prepareBatch(intent)
+        let result = try await model.executeBatch(plan)
+        XCTAssertEqual(result.refreshStatus, .failed)
+        XCTAssertEqual(model.homebrew?.snapshot?.packages.map(\.identity), [identity])
+        XCTAssertEqual(model.homebrew?.version, "4.0.0")
+        XCTAssertEqual(model.homebrewRefreshedAt, providerDate)
+        XCTAssertEqual(model.refreshedAt, globalDate)
+        XCTAssertTrue(model.homebrewRefreshFailed)
+        XCTAssertFalse(model.isBusy)
+    }
     func testNPMBatchReconciliationPinsFutureExecutionToDisplayedNode() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarAppBatchTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: root) }

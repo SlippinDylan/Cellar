@@ -1,6 +1,8 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Remaining npm Files": {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Remaining npm Files"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"npm 残留文件"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"npm 殘留檔案"}}}},
+    "The package was removed. These paths remain.": {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"The package was removed. These paths remain."}},"zh-Hans":{"stringUnit":{"state":"translated","value":"软件包已移除，以下路径仍然保留。"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"套件已移除，以下路徑仍然保留。"}}}},
     "Finish Managing Library": {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Finish Managing Library"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"结束资料库管理"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"結束資料庫管理"}}}},
     "Uninstall Node %@": {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Uninstall Node %@"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"卸载 Node %@"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"解除安裝 Node %@"}}}},
     "Remaining Artifacts": {"extractionState":"manual","localizations":{"en":{"stringUnit":{"state":"translated","value":"Remaining Artifacts"}},"zh-Hans":{"stringUnit":{"state":"translated","value":"残留文件"}},"zh-Hant":{"stringUnit":{"state":"translated","value":"殘留檔案"}}}},

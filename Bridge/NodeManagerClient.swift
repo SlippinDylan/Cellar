@@ -168,8 +168,11 @@ actor NodeManagerClient {
             throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
         }
         let validated = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
-        return try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
-                              environment: validated.environment)
+        let plan = try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
+                                  environment: validated.environment)
+        guard action == .uninstallPackage else { return plan }
+        return NodeActionPlan(id: plan.id, request: plan.request, payload: plan.payload, generatedAt: plan.generatedAt,
+                              confirmedPackageDestination: try packageDestination(validated.summary))
     }
 
     func executePackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeOperationResult {
@@ -183,8 +186,24 @@ actor NodeManagerClient {
                   currentPlan.canExecute, currentPlan.payload.packageName == plan.payload.packageName,
                   currentPlan.payload.installedVersion == plan.payload.installedVersion
             else { throw BridgeError.managerFailure(code: "npm-uninstall-state-changed", detail: nil) }
+            // Re-read the destination after planning, immediately before opening the write gate.
+            let finalEnvironment = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+            guard let confirmed = plan.confirmedPackageDestination,
+                  confirmed == (try packageDestination(finalEnvironment.summary))
+            else { throw BridgeError.managerFailure(code: "npm-uninstall-state-changed", detail: nil) }
+            return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
         }
         return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
+    }
+
+    private func packageDestination(_ summary: NodeSummary) throws -> NodePackageDestination {
+        guard [summary.nodePath, summary.npmPath, summary.globalPrefix, summary.globalRoot].allSatisfy({ $0.hasPrefix("/") })
+        else { throw BridgeError.invalidOutput("npm package destination must use absolute paths") }
+        func canonical(_ path: String) -> String {
+            URL(filePath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        }
+        return NodePackageDestination(nodeExecutable: canonical(summary.nodePath), npmExecutable: canonical(summary.npmPath),
+                                      globalPrefix: canonical(summary.globalPrefix), globalRoot: canonical(summary.globalRoot))
     }
 
     func planRuntimeUninstall(_ identity: NodeRuntimeIdentity, managerDirectory: URL) async throws -> NodeActionPlan {

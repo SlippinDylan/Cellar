@@ -3,6 +3,20 @@ import XCTest
 
 @MainActor
 final class LibraryTests: XCTestCase {
+    func testNPMResidueWarningShowsCopyablePathsAndPartialManagementResult() async throws {
+        let management = LibraryManagementModel(model: fixtureModel(FakeBatchProvider(npmWarningNames: ["one"])))
+        let item = BatchItem.npm(.init(name: "one", environment: context))
+        await management.prepare([item])
+        await management.confirmUninstall()
+        let result = try XCTUnwrap(management.result)
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        let view = LibraryResultView(result: result)
+        XCTAssertEqual(view.residualPaths(for: item), ["/private/fake/lib/node_modules/one", "/private/fake/bin/one"])
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appending(path: "Features/Library/LibraryUninstallConfirmation.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains(".textSelection(.enabled)"))
+        XCTAssertFalse(source.contains("removeItem"))
+    }
     func testLocalScopeFilterRetainsTypeAndSearchesCaseAndDiacritics() throws {
         let formula = card("café", kind: .formula)
         let cask = card("café", kind: .cask)

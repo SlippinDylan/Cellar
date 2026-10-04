@@ -2,6 +2,59 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    func testUninstallRefusesChangedGlobalPrefixOrRootBeforeOpeningWriteGate() async throws {
+        for changed in ["global-prefix-changed", "global-root-changed"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .uninstallPackage, managerDirectory: fixture.root)
+            try Data().write(to: fixture.root.appending(path: changed))
+            do {
+                _ = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+                XCTFail("Changed global destination must invalidate confirmation: \(changed)")
+            } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-uninstall-state-changed") }
+            let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+            XCTAssertFalse(calls.contains("execute|"), changed)
+            XCTAssertFalse(calls.contains("|1|"), changed)
+        }
+    }
+
+    func testUninstallAcceptsEquivalentCanonicalGlobalDestinations() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .uninstallPackage, managerDirectory: fixture.root)
+        try Data().write(to: fixture.root.appending(path: "global-destination-alias"))
+        let result = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+        XCTAssertEqual(result.status, "ok")
+    }
+
+    func testUninstallRechecksDestinationAfterItsFinalPackagePlan() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .uninstallPackage, managerDirectory: fixture.root)
+        try Data().write(to: fixture.root.appending(path: "change-root-during-plan"))
+        do {
+            _ = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+            XCTFail("The final plan must not change the confirmed destination")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-uninstall-state-changed") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
+
+    func testUninstallDestinationBindingPreservesOriginalPlanExpiry() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .uninstallPackage, managerDirectory: fixture.root)
+        let expired = NodeActionPlan(id: plan.id, request: plan.request, payload: plan.payload,
+                                     generatedAt: Date().addingTimeInterval(-301), confirmedPackageDestination: plan.confirmedPackageDestination)
+        do {
+            _ = try await fixture.client.executePackage(expired, environment: fixture.context, managerDirectory: fixture.root)
+            XCTFail("Revalidation must not extend the confirmation lifetime")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-expired") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
     func testAbsoluteEnvironmentIdentityRejectsAnotherInstallationWithSameVersion() async throws {
         let fixture = try PackageManagerFixture()
         defer { fixture.remove() }
@@ -226,8 +279,14 @@ private struct PackageManagerFixture {
             npm_path='\#(root.path)/.nvm/versions/node/v20.0.0/bin/npm'
           fi
           [ ! -e '\#(root.path)/remove-node-during-summary' ] || /bin/rm '\#(selectedBin.path)/node'
-          printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(selectedBin.path)/node","npmPath":"%s","nodeVersion":"v22.0.0","npmVersion":"%s","nvmLoaded":false,"globalPrefix":"/fake","globalRoot":"/fake","registry":"https://registry.npmjs.org"}}\n' "$npm_path" "$npm_version"
+          global_prefix=/fake
+          global_root=/fake
+          [ ! -e '\#(root.path)/global-prefix-changed' ] || global_prefix=/other-prefix
+          [ ! -e '\#(root.path)/global-root-changed' ] || global_root=/other-root
+          [ ! -e '\#(root.path)/global-destination-alias' ] || { global_prefix=/fake/../fake; global_root=/fake/../fake; }
+          printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(selectedBin.path)/node","npmPath":"%s","nodeVersion":"v22.0.0","npmVersion":"%s","nvmLoaded":false,"globalPrefix":"%s","globalRoot":"%s","registry":"https://registry.npmjs.org"}}\n' "$npm_path" "$npm_version" "$global_prefix" "$global_root"
         elif [ "$2" = plan ]; then
+          [ ! -e '\#(root.path)/change-root-during-plan' ] || /usr/bin/touch '\#(root.path)/global-root-changed'
           if [ "$3" = node-uninstall ]; then
             executable=true
             current=false

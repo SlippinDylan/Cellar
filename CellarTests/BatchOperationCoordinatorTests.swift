@@ -4,6 +4,34 @@ import XCTest
 
 @MainActor
 final class BatchOperationCoordinatorTests: XCTestCase {
+    func testNPMUninstallResidueWarningIsPartialAndDiagnosticsAreSessionOnly() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarWarningActivity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        let provider = FakeBatchProvider(npmWarningNames: ["one"])
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
+        let plan = try await coordinator.prepare(npmIntent(.uninstall))
+        let result = try await coordinator.execute(plan)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.partiallySucceeded, .succeeded, .succeeded])
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        guard case .npm(let diagnostic) = result.providerResults[0] else { return XCTFail("Expected npm diagnostic") }
+        XCTAssertEqual(diagnostic.status, "warn")
+        XCTAssertEqual(diagnostic.residues?.directories, ["/private/fake/lib/node_modules/one"])
+        XCTAssertEqual(activity.summaries.first?.status, .partiallySucceeded)
+        let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
+        XCTAssertFalse(persisted.contains("/private/fake"))
+        XCTAssertFalse(persisted.contains("residue-detected"))
+    }
+
+    func testHomebrewFailedPackagesSectionMakesBatchReconciliationFail() async throws {
+        let provider = FakeBatchProvider(homebrewPackagesRefreshFails: true)
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore())
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: [.homebrew(.init(name: "one", kind: .formula))]))
+        let result = try await coordinator.execute(coordinator.prepare(intent))
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded])
+        XCTAssertEqual(result.refreshStatus, .failed)
+        XCTAssertNil(result.refreshedState)
+    }
     func testIntentRejectsEmptyDuplicateMixedProviderTypeAndEnvironment() {
         let formula = BatchItem.homebrew(.init(name: "one", kind: .formula))
         let cask = BatchItem.homebrew(.init(name: "two", kind: .cask))
@@ -286,6 +314,8 @@ actor FakeBatchProvider: BatchOperationProviding {
     let unknownNames: Set<String>
     let partialNames: Set<String>
     let protectedNames: Set<String>
+    let npmWarningNames: Set<String>
+    let homebrewPackagesRefreshFails: Bool
     let pauseRefresh: Bool
     let onRefresh: @Sendable () -> Void
     var refreshContinuation: AsyncStream<Void>.Continuation?
@@ -299,7 +329,8 @@ actor FakeBatchProvider: BatchOperationProviding {
     init(failingNames: Set<String> = [], refreshFails: Bool = false,
          pausedName: String? = nil, onPaused: @escaping @Sendable () -> Void = {}, planFails: Bool = false,
          unknownNames: Set<String> = [], partialNames: Set<String> = [], pauseRefresh: Bool = false,
-         onRefresh: @escaping @Sendable () -> Void = {}, protectedNames: Set<String> = []) {
+         onRefresh: @escaping @Sendable () -> Void = {}, protectedNames: Set<String> = [],
+         npmWarningNames: Set<String> = [], homebrewPackagesRefreshFails: Bool = false) {
         self.failingNames = failingNames
         self.refreshFails = refreshFails
         self.pausedName = pausedName
@@ -308,6 +339,8 @@ actor FakeBatchProvider: BatchOperationProviding {
         self.unknownNames = unknownNames
         self.partialNames = partialNames
         self.protectedNames = protectedNames
+        self.npmWarningNames = npmWarningNames
+        self.homebrewPackagesRefreshFails = homebrewPackagesRefreshFails
         self.pauseRefresh = pauseRefresh
         self.onRefresh = onRefresh
     }
@@ -340,6 +373,10 @@ actor FakeBatchProvider: BatchOperationProviding {
     func refreshHomebrew() throws -> HomebrewStatus {
         refreshes += 1
         if refreshFails { throw Failure.refresh }
+        if homebrewPackagesRefreshFails {
+            let snapshot = HomebrewSnapshot(executablePath: "/fake/brew", version: "5.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: [], outdatedPackages: [], taps: [], sectionErrors: [.packages: "fixture unavailable"], controlledPath: "", commandLineToolsAvailable: true)
+            return HomebrewStatus(executablePath: snapshot.executablePath, version: snapshot.version, managerAvailable: true, snapshot: snapshot)
+        }
         return HomebrewStatus(executablePath: "/fake/brew", version: "5.0.0", managerAvailable: true, snapshot: nil)
     }
 
@@ -370,6 +407,11 @@ actor FakeBatchProvider: BatchOperationProviding {
             try Task.checkCancellation()
         }
         if failingNames.contains(plan.request.subject) { throw Failure.provider }
+        if npmWarningNames.contains(plan.request.subject) {
+            let envelope = try JSONDecoder().decode(ManagerEnvelope<NodeOperationResult>.self, from: Data(nodeUninstallResidueResponse.utf8))
+            guard let result = envelope.data else { throw Failure.provider }
+            return result
+        }
         return NodeOperationResult(operationId: UUID().uuidString, action: plan.request.action.rawValue,
                                    subject: plan.request.subject, exitCode: 0, status: "ok",
                                    logFile: "/private/secret-path", detail: "TOKEN=secret stdout", residues: nil)

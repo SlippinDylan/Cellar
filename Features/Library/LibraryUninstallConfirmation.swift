@@ -69,7 +69,14 @@ struct LibraryResultView: View {
                                 }
                                 let paths = residualPaths(for: outcome.item)
                                 if !paths.isEmpty {
-                                    Text("Remaining Artifacts").foregroundStyle(.secondary)
+                                    if case .npm = outcome.item {
+                                        Text("Remaining npm Files").foregroundStyle(.secondary)
+                                        if outcome.status == .partiallySucceeded {
+                                            Text("The package was removed. These paths remain.").foregroundStyle(.secondary)
+                                        }
+                                    } else {
+                                        Text("Remaining Artifacts").foregroundStyle(.secondary)
+                                    }
                                     ForEach(paths, id: \.self) { Text($0).textSelection(.enabled) }
                                 }
                             }
@@ -82,11 +89,15 @@ struct LibraryResultView: View {
         }
     }
 
-    private func residualPaths(for item: BatchItem) -> [String] {
-        guard let index = result.outcome.intent.items.firstIndex(of: item),
-              case .homebrew(let providerResult) = result.providerResults[index]
-        else { return [] }
-        return providerResult.remainingResidualPaths.map(\.path)
+    func residualPaths(for item: BatchItem) -> [String] {
+        guard let index = result.outcome.intent.items.firstIndex(of: item) else { return [] }
+        switch result.providerResults[index] {
+        case .homebrew(let providerResult): return providerResult.remainingResidualPaths.map(\.path)
+        case .npm(let providerResult):
+            guard let residues = providerResult.residues else { return [] }
+            return residues.directories + residues.bins
+        case .nodeRuntime, nil: return []
+        }
     }
 }
 

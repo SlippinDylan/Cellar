@@ -3,6 +3,19 @@ import XCTest
 
 final class HomebrewClientTests: XCTestCase {
     @MainActor
+    func testFormulaBatchWithUnavailablePackagesFailsFinalReconciliation() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let coordinator = BatchOperationCoordinator(provider: HomebrewFixtureBatchProvider(client: fixture.client), operationStore: OperationStore())
+        let intent = try XCTUnwrap(BatchIntent(operation: .uninstall, items: [.homebrew(.init(name: "acme/tools/demo", kind: .formula))]))
+        let plan = try await coordinator.prepare(intent)
+        try Data().write(to: fixture.directoryURL.appending(path: "postflight-packages-fail"))
+        let result = try await coordinator.execute(plan)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.unknown])
+        XCTAssertEqual(result.refreshStatus, .failed)
+        XCTAssertNil(result.refreshedState)
+    }
+    @MainActor
     func testCaskStandardBatchUsesConservativeFlagsAndNeverDeletesArtifacts() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }

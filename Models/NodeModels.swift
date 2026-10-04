@@ -164,10 +164,28 @@ struct NodeActionPlan: Identifiable, Sendable {
     let request: NodeActionRequest
     let payload: NodeActionPlanPayload
     let generatedAt: Date
+    // Session-only confirmation state, never part of the Manager JSON or Activity storage.
+    let confirmedPackageDestination: NodePackageDestination?
+
+    init(id: UUID, request: NodeActionRequest, payload: NodeActionPlanPayload, generatedAt: Date,
+         confirmedPackageDestination: NodePackageDestination? = nil) {
+        self.id = id
+        self.request = request
+        self.payload = payload
+        self.generatedAt = generatedAt
+        self.confirmedPackageDestination = confirmedPackageDestination
+    }
 
     var canExecute: Bool {
         payload.executeSupported != false && payload.executable != false && payload.alreadyInstalled != true
     }
+}
+
+struct NodePackageDestination: Equatable, Sendable {
+    let nodeExecutable: String
+    let npmExecutable: String
+    let globalPrefix: String
+    let globalRoot: String
 }
 
 struct NodeOperationResult: Decodable, Sendable {
@@ -184,6 +202,15 @@ struct NodeOperationResult: Decodable, Sendable {
     let logFile: String
     let detail: String?
     let residues: Residues?
+
+    var batchItemStatus: BatchItemStatus {
+        guard exitCode == 0 else { return .failed }
+        if status == "ok" { return .succeeded }
+        if action == NodeAction.uninstallPackage.rawValue, status == "warn", detail == "residue-detected" {
+            return .partiallySucceeded
+        }
+        return .failed
+    }
 }
 
 struct NodeActionResult: Sendable {

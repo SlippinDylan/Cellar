@@ -17,6 +17,7 @@ enum BatchOperationError: Error, Equatable {
     case invalidPlan
     case planUnavailable
     case protectedNode
+    case reconciliationUnavailable
 }
 
 struct BatchPlan: Identifiable, Sendable {
@@ -155,7 +156,7 @@ final class BatchOperationCoordinator: ObservableObject {
                     case .npm(let providerPlan, let environment):
                         let result = try await self.provider.executeNPM(providerPlan, environment: environment)
                         results.append(.npm(result))
-                        status = result.status == "ok" && result.exitCode == 0 ? .succeeded : .failed
+                        status = result.batchItemStatus
                     case .nodeRuntime(let providerPlan, let environment):
                         let result = try await self.provider.executeNodeUninstall(providerPlan, environment: environment)
                         results.append(.nodeRuntime(result))
@@ -203,9 +204,14 @@ final class BatchOperationCoordinator: ObservableObject {
 
     private func refresh(_ scope: BatchScope) async throws -> BatchRefreshedState {
         switch scope {
-        case .homebrew: .homebrew(try await provider.refreshHomebrew())
-        case .npm(let environment): .npm(try await provider.refreshNPM(environment))
-        case .nodeRuntime(let environment): .nodeRuntime(try await provider.refreshNPM(environment))
+        case .homebrew:
+            let status = try await provider.refreshHomebrew()
+            guard status.snapshot?.sectionErrors[.packages] == nil else {
+                throw BatchOperationError.reconciliationUnavailable
+            }
+            return .homebrew(status)
+        case .npm(let environment): return .npm(try await provider.refreshNPM(environment))
+        case .nodeRuntime(let environment): return .nodeRuntime(try await provider.refreshNPM(environment))
         }
     }
 }

@@ -131,6 +131,14 @@ final class ActivityPresentationTests: XCTestCase {
         XCTAssertNil(store.currentOperation)
     }
 
+    func testCancellationDoesNotClaimVerificationBeforeReconciliationAndProgressAdaptsToWidth() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appending(path: "Features/Activity/ActivityView.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains("Cancellation Requested · Verifying Completed Changes"))
+        XCTAssertTrue(source.contains("ViewThatFits(in: .horizontal)"))
+        XCTAssertTrue(source.contains("Text(current.context.stage.title)"))
+    }
+
     private var environment: NodeEnvironmentContext { .init(identifier: "/private/node", nodeVersion: "v22.0.0", npmVersion: "10.0.0") }
     private func summary(scope: ActivityScope?, status: ActivityStatus, names: [String] = ["git"], outcomes: [ActivityItemSummary] = []) -> ActivitySummary {
         .init(id: UUID(), operation: .install, scope: scope, targetDisplayNames: names, date: .init(timeIntervalSince1970: 100), status: status, itemOutcomes: outcomes)

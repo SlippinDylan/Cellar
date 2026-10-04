@@ -139,7 +139,11 @@ final class AppModel: ObservableObject {
     }
 
     func showActivity(presentMainWindow: (String, MainWindowIdentity) -> Void) {
-        selectedDestination = .activity
+        showDestination(.activity, presentMainWindow: presentMainWindow)
+    }
+
+    func showDestination(_ destination: AppDestination, presentMainWindow: (String, MainWindowIdentity) -> Void) {
+        selectedDestination = destination
         presentMainWindow(AppScene.mainWindowID, .main)
     }
 

@@ -35,7 +35,7 @@ struct SettingsView: View {
             }
         }
         .scenePadding()
-        .frame(width: 640, height: 520)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .top) {
             if let task = operationStore.activeTask {
                 HStack {

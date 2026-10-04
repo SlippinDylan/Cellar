@@ -148,6 +148,9 @@ final class UpdatesTests: XCTestCase {
         await fulfillment(of: [started], timeout: 3)
         XCTAssertEqual(store.activeOperationCount, 1)
         XCTAssertNil(store.activeTask)
+        XCTAssertEqual(store.currentOperation?.context.stage, .reconciling)
+        XCTAssertEqual(store.currentOperation?.context.targets, try groupIntents().flatMap(\.items).map(\.displayIdentifier))
+        XCTAssertEqual(coordinator.activeIntents, try groupIntents())
         XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: store.hasActiveOperations), .terminateCancel)
         do { _ = try await coordinator.prepare(groupIntents()[0]); XCTFail("Reconciliation retains ownership") }
         catch { XCTAssertEqual(error as? BatchOperationError, .busy) }
@@ -160,6 +163,20 @@ final class UpdatesTests: XCTestCase {
         XCTAssertFalse(store.hasActiveOperations)
     }
 
+    func testUpdatePhasePresentationUsesRegisteredStageThroughReconciliation() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appending(path: "Features/Updates/UpdatesView.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains("updates.isSubmitting, coordinator.activeIntents.isEmpty"))
+        XCTAssertTrue(source.contains("current.context.stage.title"))
+        XCTAssertEqual(source.components(separatedBy: "model.updateCards").count, 2, "Build and filter the catalog once per body evaluation")
+        XCTAssertFalse(source.contains("private var visible"))
+        for (stage, expected) in [(ActivityTaskStage.preparing, "Preparing Task"), (.executing, "Running"), (.reconciling, "Verifying Changes")] {
+            var title = stage.title
+            title.locale = Locale(identifier: "en")
+            XCTAssertEqual(String(localized: title), expected)
+        }
+    }
+
     func testTypedUpdateChunksKeepEveryVisibleTargetOverTheExistingBatchLimit() throws {
         let cards = try (0..<205).map { index in
             try XCTUnwrap(CatalogCardState(identity: .homebrew(.init(name: "item\(index)", kind: .formula)), displayName: "item\(index)", description: nil, currentVersion: "1.0.0", availableVersion: "2.0.0", versionStatus: .behind, websiteURL: nil, progress: .idle, primaryAction: .update))
@@ -168,6 +185,27 @@ final class UpdatesTests: XCTestCase {
         XCTAssertEqual(intents.map { $0.items.count }, [100, 100, 5])
         XCTAssertEqual(intents.flatMap(\.items), cards.map(\.batchItem))
         XCTAssertTrue(intents.allSatisfy { $0.scope == .homebrew(.formula) })
+    }
+
+    func testLargeCatalogKeepsTypedIdentityFilteringAndIndexedProgressDuringFinalVerification() throws {
+        let packages = (0..<10_000).map { index in
+            HomebrewPackage(identity: .init(name: "item\(index)", kind: index.isMultiple(of: 2) ? .formula : .cask), displayName: "item\(index)", description: "Large deterministic fixture", homepage: nil, installedVersions: ["1.0.0"], currentVersion: "2.0.0", tap: nil, dependencies: [], pinned: false, deprecated: false, disabled: false, artifacts: [])
+        }
+        let snapshot = HomebrewSnapshot(executablePath: "/fixture/brew", version: "5.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: packages, outdatedPackages: packages.map { .init(identity: $0.identity, installedVersions: $0.installedVersions, currentVersion: $0.currentVersion) }, taps: [], sectionErrors: [:], controlledPath: "", commandLineToolsAvailable: true)
+        let initial = UpdatesCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded)
+        let intents = UpdatesCatalog.intents(for: initial)
+        XCTAssertEqual(intents.count, 100)
+        XCTAssertEqual(Set(intents.flatMap(\.items)).count, 10_000)
+        let running = try XCTUnwrap(intents.first?.items[50])
+        let executing = UpdatesCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded, activeIntents: intents, runningItem: running, stage: .executing)
+        XCTAssertEqual(executing.count { $0.progress == .running }, 1)
+        let verifying = UpdatesCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded, activeIntents: intents, stage: .reconciling)
+        XCTAssertEqual(verifying.count, 10_000)
+        XCTAssertTrue(verifying.allSatisfy { $0.progress == .verifying })
+        XCTAssertEqual(UpdatesCatalog.visible(verifying, scope: .homebrew, subtype: .cask).count, 5_000)
+        let library = LibraryCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded)
+        XCTAssertEqual(LibraryCatalog.contents(library, scope: .homebrew, subtype: .formula, query: "item9998").matching.map(\.batchItem), [.homebrew(.init(name: "item9998", kind: .formula))])
+        XCTAssertEqual(LibraryCatalog.progress(for: running, intent: intents[0], running: nil, stage: .reconciling), .verifying)
     }
 
     func testOutdatedFailureKeepsBothKnownVersionSetsAndDoesNotClaimCurrent() async {

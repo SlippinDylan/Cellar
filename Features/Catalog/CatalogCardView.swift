@@ -45,10 +45,10 @@ struct CatalogCardView: View {
                 }
                 if state.progress == .queued {
                     Label("Queued", systemImage: "clock")
-                } else if state.progress == .running {
+                } else if state.progress == .running || state.progress == .verifying {
                     HStack {
-                        ProgressView().controlSize(.small)
-                        Text("Running")
+                        ProgressView().controlSize(.small).accessibilityHidden(true)
+                        Text(state.progress == .verifying ? ActivityTaskStage.reconciling.title : ActivityTaskStage.executing.title)
                     }
                     .accessibilityElement(children: .combine)
                 }

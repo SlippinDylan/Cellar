@@ -143,18 +143,23 @@ private struct ActivityHistoryView: View {
             Text(renderer.scope(current.context.scope))
             let targets = renderer.targets(current.context.targets, scope: current.context.scope)
             if !targets.isEmpty { Text(targets).lineLimit(2) }
-            HStack {
-                ProgressView().controlSize(.small).accessibilityHidden(true)
-                if current.cancellationRequested { Text("Cancellation Requested · Verifying Completed Changes") }
-                else { Text(current.context.stage.title) }
-                if let completed = current.completed, let total = current.total {
-                    let completedCount = String(completed)
-                    let totalCount = String(total)
-                    Text("\(completedCount) of \(totalCount) Items Processed").monospacedDigit()
-                }
+            ViewThatFits(in: .horizontal) {
+                HStack { taskProgress(current) }
+                VStack(alignment: .leading, spacing: 4) { taskProgress(current) }
             }
         }.padding(16).frame(maxWidth: .infinity, alignment: .leading)
         .background(.background).overlay(alignment: .bottom) { Divider() }.accessibilityElement(children: .contain)
+    }
+
+    @ViewBuilder private func taskProgress(_ current: ActiveOperationState) -> some View {
+        ProgressView().controlSize(.small).accessibilityHidden(true)
+        if current.cancellationRequested { Text("Cancellation Requested") }
+        Text(current.context.stage.title)
+        if let completed = current.completed, let total = current.total {
+            let completedCount = String(completed)
+            let totalCount = String(total)
+            Text("\(completedCount) of \(totalCount) Items Processed").monospacedDigit()
+        }
     }
 
     private func persistenceFeedback(_ error: ActivityStoreError) -> some View {

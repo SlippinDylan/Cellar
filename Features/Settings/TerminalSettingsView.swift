@@ -81,11 +81,15 @@ private struct TerminalApplyConfirmation: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Apply Terminal Changes").font(.title2.bold())
-            Text("Back up .zshrc, update its managed plugin and theme sections, and check syntax. The login shell stays unchanged.")
-            ForEach(plan.plans) { change in
-                LabeledContent(change.request.action == .setPlugins ? LocalizedStringResource("Plugins") : LocalizedStringResource("Local Theme")) { Text(change.request.subject).textSelection(.enabled) }
-            }
-            if !plan.canExecute { Text("This action is blocked by the current environment. Refresh and review the protected target or file type.") }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Back up .zshrc, update its managed plugin and theme sections, and check syntax. The login shell stays unchanged.")
+                    ForEach(plan.plans) { change in
+                        LabeledContent(change.request.action == .setPlugins ? LocalizedStringResource("Plugins") : LocalizedStringResource("Local Theme")) { Text(change.request.subject).textSelection(.enabled) }
+                    }
+                    if !plan.canExecute { Text("This action is blocked by the current environment. Refresh and review the protected target or file type.") }
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.frame(maxHeight: 280)
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)

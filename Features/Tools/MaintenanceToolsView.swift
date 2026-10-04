@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MaintenanceToolsView: View {
     @ObservedObject var model: AppModel
+    @State private var showsDiagnostics = false
     var body: some View {
         Form {
             Section {
@@ -15,7 +16,10 @@ struct MaintenanceToolsView: View {
                     Text("Node Environment: \(node.summary.nodeVersion) · npm \(node.summary.npmVersion)")
                     if let error = node.maintenanceError {
                         Label("Some maintenance information could not be read.", systemImage: "exclamationmark.triangle")
-                        DisclosureGroup("Error Details") { Text(DiagnosticText.sanitized(error)).textSelection(.enabled) }
+                        Button("Session Diagnostics…") {
+                            model.activityDiagnostics.record(operation: .maintenance, scope: node.summary.activityEnvironment.map(ActivityScope.npm), detail: error)
+                            showsDiagnostics = true
+                        }
                     }
                 } else { Text("Node Environment Unavailable") }
                 ForEach(NodeMaintenanceAction.allCases) { action in
@@ -37,5 +41,8 @@ struct MaintenanceToolsView: View {
                     .disabled(model.shell?.zshrcExists != true || model.isBusy)
             } header: { Text("Zsh Files") }
         }.formStyle(.grouped)
+        .sheet(isPresented: $showsDiagnostics) {
+            ActivityDiagnosticsView(store: model.activityDiagnostics, initialSelection: nil, clipboard: .live)
+        }
     }
 }

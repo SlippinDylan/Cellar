@@ -3,6 +3,7 @@ import SwiftUI
 struct LibraryView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var coordinator: BatchOperationCoordinator
+    @ObservedObject private var operationStore: OperationStore
     @StateObject private var management: LibraryManagementModel
     @State private var scope = CatalogScope.all
     @State private var subtype = LibraryHomebrewSubtype.all
@@ -15,13 +16,15 @@ struct LibraryView: View {
     init(model: AppModel) {
         self.model = model
         coordinator = model.batchCoordinator
+        operationStore = model.operationStore
         _management = StateObject(wrappedValue: LibraryManagementModel(model: model))
     }
 
     var body: some View {
         let cards = LibraryCatalog.cards(homebrew: model.homebrew?.snapshot, node: model.node,
                                          homebrewUpdates: model.homebrewUpdateState, nodeUpdates: model.nodeUpdateState,
-                                         activeIntent: coordinator.activeIntent, runningItem: coordinator.runningItem)
+                                         activeIntent: coordinator.activeIntent, runningItem: coordinator.runningItem,
+                                         stage: operationStore.currentOperation?.context.stage)
         let contents = LibraryCatalog.contents(cards, scope: effectiveScope, subtype: effectiveSubtype, query: query)
         let scopedCards = contents.scoped
         let visibleCards = contents.matching
@@ -177,15 +180,19 @@ struct LibraryView: View {
             ForEach(installations) { installation in
                 if let environment = model.node.map({ LibraryCatalog.context($0.summary) }) {
                     let item = BatchItem.nodeRuntime(.init(version: installation.version, environment: environment))
-                    let progress = LibraryCatalog.progress(for: item, intent: coordinator.activeIntent, running: coordinator.runningItem)
+                    let progress = LibraryCatalog.progress(for: item, intent: coordinator.activeIntent, running: coordinator.runningItem,
+                                                           stage: operationStore.currentOperation?.context.stage)
                     GroupBox {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Node \(installation.version)").font(.headline)
                             Text("Node Runtime").foregroundStyle(.secondary)
                             if installation.isActive { Label("Current Cellar Environment", systemImage: "checkmark.circle") }
                             if installation.isDefault { Label("nvm Default", systemImage: "star") }
-                            if progress == .running {
-                                HStack { ProgressView().controlSize(.small); Text("Running") }
+                            if progress == .running || progress == .verifying {
+                                HStack {
+                                    ProgressView().controlSize(.small).accessibilityHidden(true)
+                                    Text(progress == .verifying ? ActivityTaskStage.reconciling.title : ActivityTaskStage.executing.title)
+                                }
                             } else if progress == .queued {
                                 Label("Queued", systemImage: "clock")
                             }

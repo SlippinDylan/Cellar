@@ -22,11 +22,14 @@ struct AppCommands: Commands {
             Button("Check for Updates…") { updateController.checkForUpdates() }
                 .disabled(!updateController.canCheckForUpdates)
         }
+        CommandGroup(replacing: .appSettings) {
+            Button("Settings…") { model.showDestination(.settings) { openWindow(id: $0, value: $1) } }
+                .keyboardShortcut(",", modifiers: .command)
+        }
         CommandMenu("Go") {
             ForEach(AppDestination.allCases) { destination in
                 Button {
-                    if destination == .activity { model.showActivity { openWindow(id: $0, value: $1) } }
-                    else { Task { await model.performShellAction(.show(destination)) } }
+                    model.showDestination(destination) { openWindow(id: $0, value: $1) }
                 } label: { Text(destination.title) }
             }
         }

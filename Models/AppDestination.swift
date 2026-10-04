@@ -12,9 +12,11 @@ enum AppDestination: String, CaseIterable, Identifiable {
     case discover
     case updates
     case tools
+    case settings
     case activity
 
     static let primaryDestinations: [Self] = [.home, .library, .discover, .updates, .tools]
+    static let bottomDestinations: [Self] = [.settings, .activity]
     var id: Self { self }
 
     var title: LocalizedStringResource {
@@ -24,6 +26,7 @@ enum AppDestination: String, CaseIterable, Identifiable {
         case .discover: LocalizedStringResource("Discover")
         case .updates: LocalizedStringResource("Updates")
         case .tools: LocalizedStringResource("Tools")
+        case .settings: LocalizedStringResource("Settings")
         case .activity: LocalizedStringResource("Activity")
         }
     }
@@ -35,6 +38,7 @@ enum AppDestination: String, CaseIterable, Identifiable {
         case .discover: "safari"
         case .updates: "arrow.down.circle"
         case .tools: "wrench.and.screwdriver"
+        case .settings: "gearshape"
         case .activity: "clock.arrow.circlepath"
         }
     }

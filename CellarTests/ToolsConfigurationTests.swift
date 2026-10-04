@@ -2,6 +2,49 @@ import XCTest
 @testable import Cellar
 
 final class ToolsConfigurationTests: XCTestCase {
+    func testMaintenanceRawErrorsAreOnlyAvailableInExplicitSessionDiagnostics() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appending(path: "Features/Tools/MaintenanceToolsView.swift"), encoding: .utf8)
+        XCTAssertFalse(source.contains("DiagnosticText.sanitized(error)"))
+        XCTAssertTrue(source.contains("ActivityDiagnosticsView"))
+    }
+
+    func testProjectReadsHaveViewOwnershipLoadingFeedbackAndRejectLateResults() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appending(path: "Features/Tools/ProjectToolsView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains(".task(id: readRequest)"))
+        XCTAssertTrue(source.contains("isReading"))
+        XCTAssertFalse(source.contains("Task { await readProject"))
+        XCTAssertTrue(source.contains("!Task.isCancelled"))
+    }
+
+    func testTapConfirmationBoundsAssociatedItemsAndKeepsActionsOutsideScrollingContent() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appending(path: "Features/Settings/TapTaskConfirmation.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("ScrollView"))
+        XCTAssertTrue(source.contains("LazyVStack"))
+        XCTAssertTrue(source.contains(".frame(maxHeight: 240)"))
+        XCTAssertTrue(source.contains(".keyboardShortcut(.cancelAction)"))
+        XCTAssertFalse(source.contains(".keyboardShortcut(.defaultAction)"))
+        if source.contains(".frame(maxHeight: 240)") {
+            let scrollEnd = try XCTUnwrap(source.range(of: ".frame(maxHeight: 240)"))
+            let cancel = try XCTUnwrap(source.range(of: "Button(\"Cancel\""))
+            XCTAssertTrue(scrollEnd.lowerBound < cancel.lowerBound)
+        }
+    }
+
+    func testTerminalConfirmationsBoundLongPluginListsAndPathsWithoutScrollingActions() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        for file in ["Features/Settings/TerminalSettingsView.swift", "Features/Settings/ShellTaskConfirmation.swift"] {
+            let source = try String(contentsOf: root.appending(path: file), encoding: .utf8)
+            XCTAssertTrue(source.contains(".frame(maxHeight: 280)"), file)
+            if let scrollEnd = source.range(of: ".frame(maxHeight: 280)"), let cancel = source.range(of: "Button(\"Cancel\"") {
+                XCTAssertTrue(scrollEnd.lowerBound < cancel.lowerBound, file)
+            }
+            XCTAssertFalse(source.contains(".keyboardShortcut(.defaultAction)"), file)
+        }
+    }
+
     @MainActor
     func testRuntimeCatalogErrorsUseActionableMessagesInsteadOfProviderDumps() async {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarRuntimeErrors-\(UUID())")
@@ -80,7 +123,8 @@ final class ToolsConfigurationTests: XCTestCase {
         let rootView = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
         XCTAssertTrue(rootView.contains(".tools { ToolsView(model: model) }"))
         let app = try String(contentsOf: root.appending(path: "CellarApp.swift"), encoding: .utf8)
-        XCTAssertTrue(app.contains("SettingsView(model: model"))
+        XCTAssertTrue(rootView.contains("SettingsView(model: model"))
+        XCTAssertFalse(app.contains("Settings {"))
     }
 
     func testDiagnosticsRedactsCredentialsAndSecrets() {

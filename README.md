@@ -15,7 +15,7 @@ Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理
 | Tools | CLT/Homebrew/nvm setup、Node runtime、项目 `.nvmrc`、诊断与受限维护 |
 | Activity | 当前任务、取消、最近最多 100 条持久摘要、筛选与复制 |
 
-Activity 固定在主窗口侧边栏底部。Settings 使用标准 macOS 窗口，包含 General、Sources、Terminal 和 About。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
+主窗口侧边栏左下方依次为 Settings 和 Activity，Activity 固定在最底部。Settings 是主窗口内的设置页面，包含 General、Sources、Terminal 和 About；App 菜单或 Command-Comma 会前置或重建主窗口并选择 Settings，不打开独立设置窗口。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
 
 目录使用简洁卡片：名称、Formula/Cask/npm 类型、当前/可用版本、语义更新状态、最多两行说明、一个主动作和系统浏览器网站链接。卡片本体不承担跳转。
 

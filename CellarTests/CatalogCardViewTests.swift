@@ -3,6 +3,14 @@ import XCTest
 @testable import Cellar
 
 final class CatalogCardViewTests: XCTestCase {
+    func testVerificationProgressIsExplicitAndDecorativeSpinnerIsHidden() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: root.appending(path: "Features/Catalog/CatalogCardView.swift"), encoding: .utf8)
+        XCTAssertTrue(source.contains("state.progress == .verifying"))
+        XCTAssertTrue(source.contains("ActivityTaskStage.reconciling.title"))
+        XCTAssertTrue(source.contains(".accessibilityHidden(true)"))
+    }
+
     func testProviderStatusAndActionLabelsAreExplicitAndLocalized() {
         XCTAssertEqual(localized(CatalogProviderScope.homebrewFormula.cardTitle), "Homebrew · Formula")
         XCTAssertEqual(localized(CatalogProviderScope.homebrewCask.cardTitle), "Homebrew · Cask")

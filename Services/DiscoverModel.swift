@@ -132,6 +132,7 @@ final class DiscoverInstallationModel: ObservableObject {
     @Published private(set) var result: BatchExecutionResult?
     @Published private(set) var error: DiscoverInputError?
     @Published private(set) var isPreparing = false
+    @Published private(set) var isSubmitting = false
     private let model: AppModel
     private var previewRequest: UUID?
     private var preparationTask: Task<BatchPlan, Error>?
@@ -139,7 +140,7 @@ final class DiscoverInstallationModel: ObservableObject {
     init(model: AppModel) { self.model = model }
 
     func preview(_ input: String, scope: CatalogProviderScope) async {
-        guard !model.isBusy else { error = .installationFailed; return }
+        guard !isSubmitting, !isPreparing, !model.isBusy else { return }
         let request = UUID()
         previewRequest = request
         preview = nil
@@ -173,7 +174,9 @@ final class DiscoverInstallationModel: ObservableObject {
     }
 
     func confirmInstall() async {
-        guard let preview else { return }
+        guard !isSubmitting, !model.isBusy, let preview else { return }
+        isSubmitting = true
+        defer { isSubmitting = false }
         self.preview = nil
         // The confirmation consumes only the plans and destinations already shown.
         let currentContextMatches = switch preview.intent.scope {
@@ -187,14 +190,22 @@ final class DiscoverInstallationModel: ObservableObject {
     }
 
     func install(_ card: CatalogCardState, context: DiscoverContext) async {
+        // A duplicate cannot replace the active attempt's feedback or prepared plan.
+        guard !isSubmitting, !isPreparing, !model.isBusy, preview == nil else { return }
         guard card.primaryAction == .install, card.progress == .idle,
               let intent = BatchIntent(operation: .install, items: [card.batchItem]) else { return }
         guard valid(intent) else { error = .staleContext; return }
+        isSubmitting = true
+        error = nil
+        result = nil
+        defer { isSubmitting = false }
         do {
             let plan = try await model.prepareBatch(intent)
             try checkBindings(plan)
             if let npm = context.npm, !plan.npmBindings.allSatisfy({ $0.registryURL == npm.registryURL }) { throw DiscoverInputError.sourceMismatch }
             await execute(plan)
+        } catch is CancellationError {
+            // Preparation cancellation has no write outcome to report.
         } catch let error as DiscoverInputError { self.error = error }
         catch { self.error = .installationFailed }
     }

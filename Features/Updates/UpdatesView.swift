@@ -3,6 +3,7 @@ import SwiftUI
 struct UpdatesView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var coordinator: BatchOperationCoordinator
+    @ObservedObject private var operationStore: OperationStore
     @StateObject private var updates: PackageUpdatesModel
     @State private var scope = CatalogScope.all
     @State private var subtype = LibraryHomebrewSubtype.all
@@ -10,12 +11,10 @@ struct UpdatesView: View {
     init(model: AppModel) {
         self.model = model
         coordinator = model.batchCoordinator
+        operationStore = model.operationStore
         _updates = StateObject(wrappedValue: PackageUpdatesModel(model: model))
     }
 
-    private var visible: [CatalogCardState] { UpdatesCatalog.visible(model.updateCards, scope: scope, subtype: subtype) }
-    private var updateCount: Int { visible.count { $0.primaryAction == .update } }
-    private var displayedCount: String { String(updateCount) }
     private var states: [HomePackageUpdateState] {
         switch scope {
         case .all: [brewState, npmState]
@@ -27,6 +26,10 @@ struct UpdatesView: View {
     private var npmState: HomePackageUpdateState { model.nodeRefreshFailed ? .failed : model.nodeUpdateState }
 
     var body: some View {
+        let cards = model.updateCards
+        let visible = UpdatesCatalog.visible(cards, scope: scope, subtype: subtype)
+        let updateCount = visible.count { $0.primaryAction == .update }
+        let displayedCount = String(updateCount)
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 Picker("Update Scope", selection: $scope) {
@@ -50,7 +53,9 @@ struct UpdatesView: View {
                     Button("Check for Package Updates") { Task { await model.retryPackageUpdateChecks() } }
                         .disabled(model.isBusy || model.refreshedAt == nil)
                 }
-                if updates.isSubmitting, coordinator.activeIntents.isEmpty { ProgressView("Preparing Updates…") }
+                if updates.isSubmitting, let current = operationStore.currentOperation {
+                    ProgressView { Text(current.context.stage.title) }
+                }
                 if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
                 if let result = updates.result { UpdatesResultView(result: result) }
                 if !visible.isEmpty {
@@ -58,19 +63,19 @@ struct UpdatesView: View {
                         if action == .update { Task { await updates.update(card) } }
                     }
                 } else {
-                    emptyContent(UpdatesContentState(states: states, totalCount: model.updateCards.count, visibleCount: visible.count))
+                    emptyContent(UpdatesContentState(states: states, totalCount: cards.count, visibleCount: visible.count))
                 }
             }
             .padding(24).frame(maxWidth: .infinity, alignment: .leading)
         }
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Update All…", action: prepareAll)
+                Button("Update All…") { prepareAll(visible) }
                     .disabled(model.isBusy || updates.isSubmitting || updates.confirmation != nil || updateCount == 0)
             }
         }
         .focusedSceneValue(\.packageUpdateActions, PackageUpdateActions(canUpdateAll: updateCount > 0 && !updates.isSubmitting && updates.confirmation == nil,
-                                                                      updateAll: prepareAll, checkUpdates: { Task { await model.retryPackageUpdateChecks() } }))
+                                                                      updateAll: { prepareAll(visible) }, checkUpdates: { Task { await model.retryPackageUpdateChecks() } }))
         .sheet(item: Binding(get: { updates.confirmation }, set: { if $0 == nil { updates.dismissConfirmation() } })) { confirmation in
             UpdatesConfirmationSheet(confirmation: confirmation, updates: updates)
         }
@@ -83,8 +88,7 @@ struct UpdatesView: View {
         scope == .homebrew && subtype != .all ? (subtype == .formula ? LocalizedStringResource("Homebrew · Formula") : LocalizedStringResource("Homebrew · Cask")) : scope.libraryTitle
     }
 
-    private func prepareAll() {
-        let cards = visible
+    private func prepareAll(_ cards: [CatalogCardState]) {
         let capturedScope = scope
         let capturedSubtype = subtype
         Task { await updates.prepareAll(cards, scope: capturedScope, subtype: capturedSubtype) }

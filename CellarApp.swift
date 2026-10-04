@@ -9,7 +9,7 @@ struct CellarApp: App {
 
     var body: some Scene {
         WindowGroup(id: AppScene.mainWindowID, for: MainWindowIdentity.self) { _ in
-            AppRootView(model: model)
+            AppRootView(model: model, updateController: updateController)
         } defaultValue: {
             .main
         }
@@ -17,10 +17,6 @@ struct CellarApp: App {
         .commands {
             SidebarCommands()
             AppCommands(model: model, updateController: updateController)
-        }
-
-        Settings {
-            SettingsView(model: model, updateController: updateController, relaunchController: .shared)
         }
     }
 }

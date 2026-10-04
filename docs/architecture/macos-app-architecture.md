@@ -8,7 +8,7 @@
 
 ## 系统定位
 
-Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗口、页面和 Settings scene；Foundation 负责网络、文件与进程边界；少量 AppKit 负责退出策略、系统打开行为和平台集成。App 没有后台守护进程、菜单栏入口或 Privileged Helper。
+Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责主窗口与页面；Foundation 负责网络、文件与进程边界；少量 AppKit 负责退出策略、系统打开行为和平台集成。App 没有后台守护进程、菜单栏入口或 Privileged Helper。
 
 1.0 使用任务导向的信息架构，但不会把 Homebrew Formula、Homebrew Cask、npm、Node/nvm 和 Shell 压缩成一个通用命令协议。统一发生在展示与编排层；身份、环境、计划和执行仍由 typed model 与 provider client 保留。
 
@@ -16,7 +16,7 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 
 当前源码已经实现：
 
-- Home/Library/Discover/Updates/Tools 与底部 Activity 的原生任务导航、独立 Settings scene 和 General/Sources/Terminal/About 四个 pane；
+- Home/Library/Discover/Updates/Tools 与底部 Settings/Activity 的原生任务导航，Settings 主窗口页面中的 General/Sources/Terminal/About 四个 pane；
 - Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates 已接入可见范围内的直接单项更新与一次确认的批量更新；Tools 已接入环境安装、Runtime、Project、Diagnostics、Maintenance 五类任务，Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；Activity 已接入持久语义历史、当前任务、筛选、搜索、复制与显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - shell/Settings 的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
@@ -52,9 +52,9 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 ## Scene、导航与生命周期
 
-`CellarApp` 提供普通 `WindowGroup` 和标准 SwiftUI `Settings` scene。主窗口首次默认内容尺寸为 1080 × 720 点；不设置 `LSUIElement`，不声明 `MenuBarExtra`。
+`CellarApp` 只提供普通 `WindowGroup`，不声明独立 `Settings` scene。主窗口首次默认内容尺寸为 1080 × 720 点；不设置 `LSUIElement`，不声明 `MenuBarExtra`。
 
-主 `NavigationSplitView` 只包含 Home、Library、Discover、Updates、Tools，Activity 固定在 Sidebar 底部。Settings 由系统菜单和标准快捷键打开，含 General、Sources、Terminal、About panes。
+主 `NavigationSplitView` 的主导航包含 Home、Library、Discover、Updates、Tools；Sidebar 左下方依次为 Settings 和 Activity 导航。两份 Sidebar `List` 的 binding 只返回各自拥有的 selection。Settings 是 `AppDestination.settings`，detail 区域复用 `SettingsView`，共享同一 `AppModel`、`OperationStore` 与 updater controller。App 菜单和 Command-Comma 经 `AppModel.showDestination` 选择 Settings，并以固定主窗口 identity 调用 `openWindow(id:value:)`，复用或重建主窗口。
 
 `OperationStore` 是退出保护的事实来源：
 
@@ -65,7 +65,7 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 菜单命令与 toolbar 动作共享同一 intent，不复制业务执行路径。
 
-当前 shell 的刷新和取消共同进入 `AppModel.performShellAction`；Activity 的跨窗口呈现进入可注入的 `AppModel.showActivity`，先选择 Activity，再以固定的主窗口 identity 调用 `openWindow(id:value:)`。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，Settings-only 时创建主窗口，反馈按钮复用已有窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library、Discover 与 Activity 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Manage、Batch Install 与 Activity 菜单和 toolbar 共用各自的动作。Activity 表格的 Command-C 只复制当前选中的语义摘要，详情和搜索字段保留系统文字复制。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
+当前 shell 的刷新和取消共同进入 `AppModel.performShellAction`；Go、Settings 和 Activity 的主窗口呈现共享可注入的 `AppModel.showDestination`，Activity 反馈保留 `showActivity` 入口。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，主窗口不存在时创建，重复请求不新增窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library、Discover 与 Activity 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Manage、Batch Install 与 Activity 菜单和 toolbar 共用各自的动作。Activity 表格的 Command-C 只复制当前选中的语义摘要，详情和搜索字段保留系统文字复制。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
 
 ## 状态与刷新
 

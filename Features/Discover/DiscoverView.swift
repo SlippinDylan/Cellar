@@ -33,6 +33,9 @@ struct DiscoverView: View {
                 VStack(alignment: .leading, spacing: 8) { searchButton; Text("Search returns up to 50 results.").foregroundStyle(.secondary) }
             }
             if let error = installation.error { Label { Text(error.discoverMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
+            if installation.isSubmitting, let current = operationStore.currentOperation {
+                ProgressView { Text(current.context.stage.title) }
+            }
             if let result = installation.result { DiscoverInstallResultView(result: result) }
             ScrollView {
                 if search.state == .available, let context = search.resultContext {
@@ -69,7 +72,8 @@ struct DiscoverView: View {
     private var cards: [CatalogCardState] {
         search.results.map { result in
             result.card(homebrew: model.homebrew?.snapshot, node: model.node, activeIntent: coordinator.activeIntent,
-                        running: coordinator.runningItem, canInstall: scope == .npm ? !model.nodeRefreshFailed : !model.homebrewRefreshFailed)
+                        running: coordinator.runningItem, canInstall: scope == .npm ? !model.nodeRefreshFailed : !model.homebrewRefreshFailed,
+                        stage: operationStore.currentOperation?.context.stage)
         }
     }
 

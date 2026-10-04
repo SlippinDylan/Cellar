@@ -3,30 +3,34 @@ import SwiftUI
 struct AppRootView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
+    private let updateController: ApplicationUpdateController
     @Environment(\.openWindow) private var openWindow
 
-    init(model: AppModel) {
+    init(model: AppModel, updateController: ApplicationUpdateController) {
         self.model = model
+        self.updateController = updateController
         operationStore = model.operationStore
     }
 
     var body: some View {
         NavigationSplitView {
             VStack(spacing: 0) {
-                List(AppDestination.primaryDestinations, selection: sidebarSelection) { destination in
+                List(AppDestination.primaryDestinations, selection: sidebarSelection(for: AppDestination.primaryDestinations)) { destination in
                     destinationLabel(destination)
                         .tag(destination)
                 }
                 .listStyle(.sidebar)
 
                 // Activity is navigation; critical task controls stay in the toolbar and menu.
-                List(selection: sidebarSelection) {
+                List(selection: sidebarSelection(for: AppDestination.bottomDestinations)) {
+                    destinationLabel(.settings)
+                        .tag(AppDestination.settings)
                     destinationLabel(.activity)
                         .tag(AppDestination.activity)
                 }
                 .listStyle(.sidebar)
                 .scrollDisabled(true)
-                .frame(height: 52)
+                .frame(height: 104)
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
@@ -78,13 +82,15 @@ struct AppRootView: View {
         else if model.selectedDestination == .discover { DiscoverView(model: model) }
         else if model.selectedDestination == .updates { UpdatesView(model: model) }
         else if model.selectedDestination == .tools { ToolsView(model: model) }
+        else if model.selectedDestination == .settings { SettingsView(model: model, updateController: updateController, relaunchController: .shared) }
         else if model.selectedDestination == .activity { ActivityView(model: model) }
         else { ShellPlaceholderView(destination: model.selectedDestination) }
     }
 
-    private var sidebarSelection: Binding<AppDestination?> {
-        Binding(get: { model.selectedDestination }, set: { destination in
-            if let destination { model.selectedDestination = destination }
+    func sidebarSelection(for destinations: [AppDestination]) -> Binding<AppDestination?> {
+        // Each native List must own its selection, while navigation has one source of truth.
+        Binding(get: { destinations.contains(model.selectedDestination) ? model.selectedDestination : nil }, set: { destination in
+            if let destination, destinations.contains(destination) { model.selectedDestination = destination }
         })
     }
 

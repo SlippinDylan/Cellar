@@ -90,7 +90,8 @@ extension AppModel {
         UpdatesCatalog.cards(homebrew: homebrew?.snapshot, node: node,
                              homebrewUpdates: homebrewRefreshFailed ? .failed : homebrewUpdateState,
                              nodeUpdates: nodeRefreshFailed ? .failed : nodeUpdateState,
-                             activeIntents: batchCoordinator.activeIntents, runningItem: batchCoordinator.runningItem)
+                             activeIntents: batchCoordinator.activeIntents, runningItem: batchCoordinator.runningItem,
+                             stage: operationStore.currentOperation?.context.stage)
     }
 
     func prepareUpdateBatch(_ intents: [BatchIntent]) async throws -> BatchUpdatePlan {

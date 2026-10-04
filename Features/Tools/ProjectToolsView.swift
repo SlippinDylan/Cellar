@@ -8,6 +8,8 @@ struct ProjectToolsView: View {
     @State private var currentVersion: String?
     @State private var readError: String?
     @State private var choosingDirectory = false
+    @State private var isReading = false
+    @State private var readRequest = UUID()
     var body: some View {
         Form {
             Section {
@@ -15,14 +17,15 @@ struct ProjectToolsView: View {
                 Button("Choose Project…") { choosingDirectory = true }.disabled(model.isBusy)
                 if let selectedDirectory {
                     LabeledContent("Selected Project") { Text(selectedDirectory.path).lineLimit(2).truncationMode(.middle).textSelection(.enabled).help(selectedDirectory.path) }
-                    if let currentVersion { LabeledContent("Current .nvmrc", value: currentVersion) }
+                    if isReading { ProgressView("Reading Project Configuration…") }
+                    else if let currentVersion { LabeledContent("Current .nvmrc", value: currentVersion) }
                     else if readError == nil { Text("This project has no .nvmrc.") }
                     if let readError { Label(readError, systemImage: "exclamationmark.triangle") }
                     TextField("Node Version", text: $version, prompt: Text("For example, v24.0.0"))
                     Button("Save .nvmrc…") {
                         let request = NodeActionRequest(action: .writeProjectNVMRC, subject: selectedDirectory.path, value: version.trimmingCharacters(in: .whitespacesAndNewlines))
                         Task { await model.prepareNodeAction(request) }
-                    }.disabled(version.isEmpty || readError != nil || model.isBusy)
+                    }.disabled(version.isEmpty || readError != nil || isReading || model.isBusy)
                 }
             } header: { Text("Project Node Version") }
         }
@@ -32,22 +35,34 @@ struct ProjectToolsView: View {
                 let urls = try result.get()
                 guard let url = urls.first else { return }
                 selectedDirectory = url
+                currentVersion = nil
+                version = ""
+                isReading = true
+                readRequest = UUID()
                 model.dismissNodePlan()
-                Task { await readProject(url) }
             } catch { readError = model.failureMessage(error) }
         }
         .onChange(of: model.nodeActionResult?.operation.operationId) { _, _ in
-            if let selectedDirectory { Task { await readProject(selectedDirectory) } }
+            if selectedDirectory != nil { isReading = true; readRequest = UUID() }
+        }
+        .task(id: readRequest) {
+            if let selectedDirectory { await readProject(selectedDirectory) }
         }
     }
     private func readProject(_ url: URL) async {
+        let request = readRequest
+        isReading = true
+        defer { if readRequest == request { isReading = false } }
         readError = nil
         currentVersion = nil
         do {
             let value = try await ProjectConfigurationService().readNVMRC(in: url)
-            guard selectedDirectory == url else { return }
+            guard selectedDirectory == url, readRequest == request, !Task.isCancelled else { return }
             currentVersion = value
             version = value ?? ""
-        } catch { readError = model.failureMessage(error) }
+        } catch {
+            guard selectedDirectory == url, readRequest == request, !Task.isCancelled else { return }
+            readError = model.failureMessage(error)
+        }
     }
 }

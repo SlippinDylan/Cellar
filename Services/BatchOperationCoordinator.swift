@@ -256,10 +256,8 @@ final class BatchOperationCoordinator: ObservableObject {
             return executions
         }
         runningItem = nil
-        activeIntent = nil
-        activeIntents = []
         operationStore.updateContext(.init(operation: plans[0].intent.activityOperation, scope: plans.count == 1 ? plans[0].intent.scope.activityScope : nil,
-                                          targets: [], stage: .reconciling))
+                                          targets: plans.flatMap { $0.intent.items.map(\.displayIdentifier) }, stage: .reconciling))
         // Formula and Cask share one inventory. Reconcile it once after all typed groups.
         var reconciliations: [BatchReconciliationKey: (BatchRefreshStatus, BatchRefreshedState?)] = [:]
         for (plan, execution) in zip(plans, executions) where execution.2 {

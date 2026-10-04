@@ -26,7 +26,7 @@ Cellar 是面向 Apple Silicon Mac 的原生开发环境管理工具。它把 Ho
 | G-02 | 真实且清楚 | 卡片显示 provider/type、版本、状态和目标环境；未知状态不伪装为最新 |
 | G-03 | 安全写入 | 写操作有明确范围、适当确认、取消和 post-refresh，并保留部分完成结果 |
 | G-04 | 可恢复读取 | 一个 provider 或线上检查失败时，其他本地数据继续可用 |
-| G-05 | 原生体验 | 支持键盘、VoiceOver、系统外观、窄窗口和标准 macOS Settings/菜单行为 |
+| G-05 | 原生体验 | 支持键盘、VoiceOver、系统外观、窄窗口和标准 macOS 菜单快捷键 |
 | G-06 | 国际化 | 英文、简体中文和繁体中文覆盖所有用户可见字符串，默认跟随系统 |
 | G-07 | 低资源占用 | 空闲时无轮询；独立 IO 只使用有界并发；大列表和状态更新无持续高频工作 |
 
@@ -42,7 +42,7 @@ Cellar 是面向 Apple Silicon Mac 的原生开发环境管理工具。它把 Ho
 4. Updates
 5. Tools
 
-Activity 固定在侧边栏底部。Settings 使用标准 SwiftUI `Settings` scene，不作为主窗口页面。App 是普通前台应用，不提供 `MenuBarExtra`，不在关闭最后窗口后后台驻留。
+侧边栏左下方依次为 Settings 和 Activity，Activity 固定在最底部。Settings 是主窗口内的真实导航页面，选择后在 detail 区域显示设置内容，不打开独立设置窗口。App 菜单和 Command-Comma 通过共享导航意图前置或重建主窗口并选择 Settings；重复调用复用同一主窗口。App 是普通前台应用，不提供 `MenuBarExtra`，不在关闭最后窗口后后台驻留。
 
 无活动任务时，关闭最后窗口和 `Command-Q` 退出 App。有活动任务时，本次退出请求被拒绝；界面提供取消入口，任务结束后用户可再次退出。
 
@@ -109,7 +109,7 @@ Activity 展示当前任务与最近最多 100 条结构化摘要，并跨 App �
 
 ### 4.7 Settings
 
-Settings 使用标准窗口和四个 pane：
+Settings 在主窗口内使用原生控件和四个 pane：
 
 - General：语言，默认 Follow System，可显式选择 English、简体中文或繁体中文。
 - Sources：Homebrew Tap 与 npm 默认/scope Registry。

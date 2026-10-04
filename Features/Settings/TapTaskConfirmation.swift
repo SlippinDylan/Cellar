@@ -11,7 +11,16 @@ struct TapTaskConfirmation: View {
             Text(plan.action == .addTap ? LocalizedStringResource("Homebrew will download this Tap’s metadata and use it as a software source.") : LocalizedStringResource("Remove this Tap’s metadata. Installed software is checked again before removal."))
             if !plan.associatedPackages.isEmpty {
                 Text("This Tap is required by installed software and cannot be removed.")
-                ForEach(plan.associatedPackages, id: \.self) { Text($0.name) }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(plan.associatedPackages, id: \.self) { package in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(package.name).textSelection(.enabled)
+                                Text(CatalogProviderScope.homebrew(package.kind).cardTitle).foregroundStyle(.secondary)
+                            }.accessibilityElement(children: .combine)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.frame(maxHeight: 240)
             }
             HStack {
                 Spacer()

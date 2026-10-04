@@ -26,7 +26,8 @@ enum LibraryContentState: Equatable {
 
 enum LibraryCatalog {
     static func cards(homebrew: HomebrewSnapshot?, node: NodeSnapshot?, homebrewUpdates: HomePackageUpdateState,
-                      nodeUpdates: HomePackageUpdateState, activeIntent: BatchIntent? = nil, runningItem: BatchItem? = nil) -> [CatalogCardState] {
+                      nodeUpdates: HomePackageUpdateState, activeIntent: BatchIntent? = nil, runningItem: BatchItem? = nil,
+                      stage: ActivityTaskStage? = nil) -> [CatalogCardState] {
         let outdated = Dictionary(uniqueKeysWithValues: (homebrew?.outdatedPackages ?? []).map { ($0.identity, $0) })
         let brewCards = (homebrew?.packages ?? []).filter(\.isInstalled).compactMap { package in
             let identity = CatalogItemIdentity.homebrew(package.identity)
@@ -39,7 +40,7 @@ enum LibraryCatalog {
             return CatalogCardState(identity: identity, displayName: package.displayName, description: package.description,
                                     currentVersion: installed, availableVersion: available, versionStatus: status,
                                     websiteURL: package.homepage.flatMap(URL.init(string:)),
-                                    progress: progress(for: .homebrew(package.identity), intent: activeIntent, running: runningItem), primaryAction: .uninstall)
+                                    progress: progress(for: .homebrew(package.identity), intent: activeIntent, running: runningItem, stage: stage), primaryAction: .uninstall)
         }
         let npmCards: [CatalogCardState]
         if let node {
@@ -50,7 +51,7 @@ enum LibraryCatalog {
                 return CatalogCardState(identity: .npm(identity), displayName: package.name, description: nil,
                                         currentVersion: package.installedVersion, availableVersion: available,
                                         versionStatus: SemanticVersionStatus(current: package.installedVersion, available: available),
-                                        websiteURL: nil, progress: progress(for: .npm(identity), intent: activeIntent, running: runningItem), primaryAction: .uninstall)
+                                        websiteURL: nil, progress: progress(for: .npm(identity), intent: activeIntent, running: runningItem, stage: stage), primaryAction: .uninstall)
             }
         } else { npmCards = [] }
         return (brewCards + npmCards).sorted {
@@ -105,8 +106,9 @@ enum LibraryCatalog {
         return BatchIntent(operation: .uninstall, items: items)
     }
 
-    static func progress(for item: BatchItem, intent: BatchIntent?, running: BatchItem?) -> CatalogCardProgress {
+    static func progress(for item: BatchItem, intent: BatchIntent?, running: BatchItem?, stage: ActivityTaskStage? = nil) -> CatalogCardProgress {
         guard let intent, intent.items.contains(item) else { return .idle }
+        if stage == .reconciling { return .verifying }
         if item == running { return .running }
         guard let running, let currentIndex = intent.items.firstIndex(of: running), let itemIndex = intent.items.firstIndex(of: item) else { return .queued }
         return itemIndex > currentIndex ? .queued : .idle

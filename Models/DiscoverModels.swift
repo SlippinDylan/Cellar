@@ -34,7 +34,7 @@ enum DiscoverResult: Sendable {
     }
 
     func card(homebrew: HomebrewSnapshot?, node: NodeSnapshot?, activeIntent: BatchIntent?, running: BatchItem?,
-              canInstall: Bool) -> CatalogCardState {
+              canInstall: Bool, stage: ActivityTaskStage? = nil) -> CatalogCardState {
         let name: String
         let description: String?
         let available: String?
@@ -65,7 +65,7 @@ enum DiscoverResult: Sendable {
         // Discover installs missing software; Updates owns upgrading installed packages.
         guard let card = CatalogCardState(identity: identity, displayName: name, description: description,
                                            currentVersion: installed, availableVersion: available, versionStatus: status,
-                                           websiteURL: website, progress: LibraryCatalog.progress(for: item, intent: activeIntent, running: running),
+                                           websiteURL: website, progress: LibraryCatalog.progress(for: item, intent: activeIntent, running: running, stage: stage),
                                            primaryAction: installed == nil && canInstall ? .install : nil)
         else { preconditionFailure("An install card has no update invariant") }
         return card

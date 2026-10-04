@@ -305,6 +305,28 @@ final class DiscoverTests: XCTestCase {
         }
     }
 
+    func testDuplicateDirectInstallDoesNotOverwritePausedAttemptFeedback() async {
+        for pauseDuringPreparation in [true, false] {
+            let started = expectation(description: "Direct install paused")
+            let provider = FakeBatchProvider(pausedName: pauseDuringPreparation ? nil : "one", onPaused: { started.fulfill() },
+                                             pausedPlanName: pauseDuringPreparation ? "one" : nil, onPlan: { started.fulfill() })
+            let model = fixtureModel(provider)
+            let installation = DiscoverInstallationModel(model: model)
+            let context = model.discoverContext
+            let card = npmResult("one").card(homebrew: nil, node: model.node, activeIntent: nil, running: nil, canInstall: true)
+            let attempt = Task { await installation.install(card, context: context) }
+            await fulfillment(of: [started], timeout: 3)
+            await installation.install(card, context: context)
+            XCTAssertNil(installation.error, "A duplicate must not publish an error for the active attempt")
+            XCTAssertNil(installation.result)
+            let names = await provider.preparedNames()
+            XCTAssertEqual(names, ["one"])
+            model.operationStore.cancelActiveTask()
+            await attempt.value
+            XCTAssertFalse(model.isBusy)
+        }
+    }
+
     func testSingleCardInstallStartsDirectlyAndRefreshFailureKeepsResult() async throws {
         let provider = FakeBatchProvider(refreshFails: true)
         let model = fixtureModel(provider)

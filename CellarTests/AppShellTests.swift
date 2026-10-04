@@ -4,8 +4,8 @@ import XCTest
 
 @MainActor
 final class AppShellTests: XCTestCase {
-    func testActivityIntentPresentsOneMainWindowFromMainClosedAndSettingsOnlyStates() {
-        for (hasMain, hasSettings) in [(true, false), (false, false), (false, true)] {
+    func testSettingsAndActivityIntentsPresentOneMainWindowFromOpenAndClosedStates() {
+        for (destination, hasMain) in [(AppDestination.settings, true), (.settings, false), (.activity, true), (.activity, false)] {
             let model = AppModel.live()
             var mainIsOpen = hasMain
             var created = 0
@@ -13,13 +13,13 @@ final class AppShellTests: XCTestCase {
             let present: (String, MainWindowIdentity) -> Void = { id, identity in
                 XCTAssertEqual(id, AppScene.mainWindowID)
                 XCTAssertEqual(identity, .main)
-                XCTAssertEqual(model.selectedDestination, .activity)
+                XCTAssertEqual(model.selectedDestination, destination)
                 if !mainIsOpen { mainIsOpen = true; created += 1 }
                 presentations += 1
             }
-            model.showActivity(presentMainWindow: present)
-            model.showActivity(presentMainWindow: present)
-            XCTAssertTrue(mainIsOpen, "Settings open: \(hasSettings)")
+            model.showDestination(destination, presentMainWindow: present)
+            model.showDestination(destination, presentMainWindow: present)
+            XCTAssertTrue(mainIsOpen)
             XCTAssertEqual(created, hasMain ? 0 : 1)
             XCTAssertEqual(presentations, 2)
             XCTAssertFalse(model.operationStore.hasActiveOperations)
@@ -28,9 +28,92 @@ final class AppShellTests: XCTestCase {
 
     func testDestinationContractAndDefaultSelection() {
         XCTAssertEqual(AppDestination.primaryDestinations, [.home, .library, .discover, .updates, .tools])
-        XCTAssertEqual(AppDestination.allCases, AppDestination.primaryDestinations + [.activity])
+        XCTAssertEqual(AppDestination.bottomDestinations, [.settings, .activity])
+        XCTAssertEqual(AppDestination.allCases.map(\.rawValue), ["home", "library", "discover", "updates", "tools", "settings", "activity"])
         XCTAssertEqual(AppModel.live().selectedDestination, .home)
         XCTAssertEqual(SettingsPane.allCases, [.general, .sources, .terminal, .about])
+    }
+
+    func testSidebarListsOnlyReceiveOwnedSelectionsAndMenuActionsStayFocused() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let shell = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
+        XCTAssertTrue(shell.contains("selection: sidebarSelection(for: AppDestination.primaryDestinations)"))
+        XCTAssertTrue(shell.contains("selection: sidebarSelection(for: AppDestination.bottomDestinations)"))
+        XCTAssertTrue(shell.contains("destinations.contains(model.selectedDestination)"))
+        let activity = try String(contentsOf: root.appending(path: "Features/Activity/ActivityView.swift"), encoding: .utf8)
+        XCTAssertTrue(activity.contains(".onCopyCommand"))
+        XCTAssertFalse(activity.contains(".keyboardShortcut(\"c\""))
+    }
+
+    func testOwnedSidebarBindingsRetainSharedNavigationAcrossEveryTransition() {
+        let model = AppModel.live()
+        let view = AppRootView(model: model, updateController: ApplicationUpdateController(updaterEnabled: false))
+        let primary = view.sidebarSelection(for: AppDestination.primaryDestinations)
+        let bottom = view.sidebarSelection(for: AppDestination.bottomDestinations)
+        for destination in AppDestination.allCases {
+            model.selectedDestination = destination
+            XCTAssertEqual(primary.wrappedValue, AppDestination.primaryDestinations.contains(destination) ? destination : nil)
+            XCTAssertEqual(bottom.wrappedValue, AppDestination.bottomDestinations.contains(destination) ? destination : nil)
+            primary.wrappedValue = nil
+            bottom.wrappedValue = nil
+            XCTAssertEqual(model.selectedDestination, destination)
+        }
+        primary.wrappedValue = .discover
+        bottom.wrappedValue = .home
+        XCTAssertEqual(model.selectedDestination, .discover)
+        bottom.wrappedValue = .settings
+        XCTAssertEqual(model.selectedDestination, .settings)
+        XCTAssertNil(primary.wrappedValue)
+        bottom.wrappedValue = .activity
+        primary.wrappedValue = .activity
+        XCTAssertEqual(model.selectedDestination, .activity)
+    }
+
+    func testSidebarSettingsPrecedesActivityAsAMainWindowDestination() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let shell = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
+        let settings = try XCTUnwrap(shell.range(of: "destinationLabel(.settings)"))
+        let activity = try XCTUnwrap(shell.range(of: "destinationLabel(.activity)"))
+        XCTAssertTrue(settings.lowerBound < activity.lowerBound)
+        XCTAssertFalse(shell.contains("@Environment(\\.openSettings)"))
+        XCTAssertTrue(shell.contains("SettingsView(model: model"))
+        XCTAssertFalse(shell.contains(".selectionDisabled()"))
+    }
+
+    func testSettingsAndCommandCommaRouteToTheMainWindowWithoutASeparateScene() throws {
+        _ = try XCTUnwrap(AppDestination(rawValue: "settings"))
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let scene = try String(contentsOf: root.appending(path: "CellarApp.swift"), encoding: .utf8)
+        let commands = try String(contentsOf: root.appending(path: "Features/AppCommands.swift"), encoding: .utf8)
+        XCTAssertFalse(scene.contains("Settings {"))
+        XCTAssertTrue(commands.contains("CommandGroup(replacing: .appSettings)"))
+        XCTAssertTrue(commands.contains("model.showDestination(.settings)"))
+        XCTAssertTrue(commands.contains(".keyboardShortcut(\",\", modifiers: .command)"))
+        XCTAssertFalse(commands.contains("openSettings"))
+    }
+
+    func testSettingsAndActivityNavigationShareStateAndHaveNoHostedConstructionSideEffects() async {
+        let model = AppModel.live()
+        let root = AppRootView(model: model, updateController: ApplicationUpdateController(updaterEnabled: false))
+        var presentations = 0
+        for destination in [.settings, .activity, .library] as [AppDestination] {
+            for _ in 0..<2 { model.showDestination(destination) { _, _ in presentations += 1 } }
+            XCTAssertEqual(model.selectedDestination, destination)
+            XCTAssertEqual(root.sidebarSelection(for: AppDestination.bottomDestinations).wrappedValue,
+                           AppDestination.bottomDestinations.contains(destination) ? destination : nil)
+        }
+        await model.refreshOnLaunch()
+        XCTAssertEqual(presentations, 6)
+        XCTAssertNil(model.refreshedAt)
+        XCTAssertNil(model.managers)
+        XCTAssertNil(model.activityStore)
+        XCTAssertTrue(model.activities.isEmpty)
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+        for (language, expected) in [("en", "Settings"), ("zh-Hans", "设置"), ("zh-Hant", "設定")] {
+            var title = AppDestination.settings.title
+            title.locale = Locale(identifier: language)
+            XCTAssertEqual(String(localized: title), expected)
+        }
     }
 
     func testHostedStartupDoesNotRefreshOrCreateActivity() async {
@@ -79,7 +162,7 @@ final class AppShellTests: XCTestCase {
         XCTAssertNil(model.operationStore.activeTask)
     }
 
-    func testSceneAndMenuUseNativeSettingsAndSharedIntents() throws {
+    func testSceneAndMenuUseMainWindowSettingsAndSharedIntents() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let scene = try String(contentsOf: root.appending(path: "CellarApp.swift"), encoding: .utf8)
         let shell = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
@@ -90,11 +173,12 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(scene.contains("defaultValue:"))
         XCTAssertTrue(feedback.contains("model.showActivity { openWindow(id: $0, value: $1) }"))
         XCTAssertTrue(commands.contains("model.showActivity { openWindow(id: $0, value: $1) }"))
-        XCTAssertTrue(commands.contains("if destination == .activity { model.showActivity"))
+        XCTAssertTrue(commands.contains("model.showDestination(destination) { openWindow(id: $0, value: $1) }"))
         XCTAssertTrue(shell.contains("model.showActivity { openWindow(id: $0, value: $1) }"))
-        XCTAssertTrue(scene.contains("Settings {"))
+        XCTAssertFalse(scene.contains("Settings {"))
         XCTAssertTrue(scene.contains("SidebarCommands()"))
-        XCTAssertFalse(shell.contains("SettingsView("))
+        XCTAssertTrue(shell.contains("SettingsView(model: model, updateController: updateController"))
+        XCTAssertTrue(settings.contains(".frame(maxWidth: .infinity, maxHeight: .infinity)"))
         XCTAssertFalse(shell.contains("utilityRow"))
         XCTAssertTrue(shell.contains("performShellAction(.refresh)"))
         XCTAssertTrue(commands.contains("performShellAction(.refresh)"))

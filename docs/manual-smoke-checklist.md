@@ -13,8 +13,8 @@
 
 - [ ] 从 Finder 启动后普通前台窗口立即出现，首次默认内容尺寸为 1080 × 720 点且可调整。
 - [ ] Dock 显示 Cellar；没有 `MenuBarExtra` 或后台常驻。
-- [ ] 侧边栏顺序为 Home、Library、Discover、Updates、Tools；Activity 固定在底部。
-- [ ] Settings 通过标准菜单/快捷键打开独立窗口，含 General、Sources、Terminal、About。
+- [ ] 主侧边栏顺序为 Home、Library、Discover、Updates、Tools；左下方依次为 Settings 和 Activity，Activity 固定在最底部。
+- [ ] Settings 是主窗口 detail 页面，含 General、Sources、Terminal、About；点击侧边栏、App 菜单或 Command-Comma 都选择该页面，不创建独立设置窗口；菜单重复调用复用主窗口，主窗口不存在时正确重建。
 - [ ] 关闭最后窗口和无任务时 `Command-Q` 正常退出。
 - [ ] 活动任务期间退出请求被拒绝；任务取消或结束后可以退出。
 - [ ] App 退出后没有 Cellar 启动后遗留的 brew、npm、bash 或 zsh 进程。

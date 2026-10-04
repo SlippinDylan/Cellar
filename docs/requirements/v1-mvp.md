@@ -10,7 +10,7 @@
 
 | 范围 | 交付结果 |
 |---|---|
-| App shell | Home、Library、Discover、Updates、Tools；底部 Activity；标准 Settings scene |
+| App shell | Home、Library、Discover、Updates、Tools；左下方依次为 Settings 和 Activity；Settings 位于主窗口内 |
 | 目录体验 | Formula、Cask、npm 卡片；本地库、官方搜索、网站链接、语义版本状态 |
 | Home | Homebrew 与 Node/npm/nvm 的本地状态、线上版本、数量、具体更新摘要和内联 setup |
 | Library | 已安装软件的统一查看、搜索、scope、单项与同类型批量卸载 |

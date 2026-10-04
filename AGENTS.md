@@ -44,7 +44,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。
 - Node 通过 Manager schema v1 读取状态，并仅在产品确认规则满足后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`；npm 搜索与操作始终绑定明确 Node 环境。
 - Shell 通过 App 专用 schema v1 adapter 查询和修改 Oh My Zsh、插件、主题及受限 Zsh 文件布局；不得驱动交互菜单或执行协议外的 Shell 命令。
-- 主导航固定为 Home、Library、Discover、Updates、Tools，Activity 固定在侧边栏底部；Settings 使用标准 SwiftUI scene，包含 General、Sources、Terminal、About。
+- 主导航固定为 Home、Library、Discover、Updates、Tools；侧边栏左下方依次为 Settings 和 Activity，Activity 固定在最底部。Settings 是主窗口 detail 页面，包含 General、Sources、Terminal、About；不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
 - 卡片本体不导航，只显示关键信息、一个主动作和系统浏览器网站链接。普通 UI 不显示原始命令或内部计划术语。
 - Activity 最多持久化 100 条去敏结构化摘要；原始输出只保留在当前会话诊断或既有受控日志。底层可取消时必须提供用户取消。
 - 用户可见字符串进入 String Catalog，支持 English、简体中文、繁体中文和默认 Follow System。

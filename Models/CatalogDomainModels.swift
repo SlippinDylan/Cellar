@@ -56,6 +56,7 @@ enum CatalogCardProgress: String, Codable, Sendable {
     case idle
     case queued
     case running
+    case verifying
 }
 
 enum CatalogCardAction: String, Codable, Sendable {

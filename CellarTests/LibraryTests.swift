@@ -195,7 +195,7 @@ final class LibraryTests: XCTestCase {
         XCTAssertTrue(view.contains(".focusedSceneValue"))
         XCTAssertTrue(view.contains("Toggle("))
         XCTAssertTrue(view.contains(".checkbox"))
-        XCTAssertTrue(commands.contains("libraryActions?.focusSearch()"))
+        XCTAssertTrue(commands.contains("catalogSearchAction?()"))
         XCTAssertTrue(commands.contains(".keyboardShortcut(\"f\", modifiers: .command)"))
         let confirmation = try String(contentsOf: root.appending(path: "Features/Library/LibraryUninstallConfirmation.swift"), encoding: .utf8)
         XCTAssertFalse(confirmation.contains(".defaultAction"))

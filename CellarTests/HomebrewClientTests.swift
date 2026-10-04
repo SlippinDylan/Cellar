@@ -76,6 +76,39 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertTrue(results.isEmpty)
     }
 
+    func testScopedSearchKeepsExactTypeDeduplicatesAndBoundsBeforeDetails() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let formula = try await fixture.client.search("same", kind: .formula, limit: 1)
+        let cask = try await fixture.client.search("same", kind: .cask, limit: 1)
+        XCTAssertEqual(formula.map(\.identity), [.init(name: "same", kind: .formula)])
+        XCTAssertEqual(cask.map(\.identity), [.init(name: "same", kind: .cask)])
+        let empty = try await fixture.client.search(" \n", kind: .formula)
+        XCTAssertTrue(empty.isEmpty)
+        do { _ = try await fixture.client.search("same", kind: .formula, limit: 101); XCTFail("Invalid bound") } catch {}
+        let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertEqual(log.split(separator: "\n").count, 2)
+        XCTAssertTrue(log.contains("search --formula -- same"))
+        XCTAssertTrue(log.contains("search --cask -- same"))
+        XCTAssertFalse(log.contains("info"))
+    }
+
+    func testDiscoveryOnlyEnrichesTheBoundedTypedMatches() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let matches = try await fixture.client.discover("bounded", kind: .formula, limit: 1)
+        XCTAssertEqual(matches.map(\.identity), [.init(name: "batchpkg", kind: .formula)])
+        XCTAssertEqual(matches.first?.currentVersion, "2.0.0")
+        XCTAssertEqual(matches.first?.description, "Batch formula")
+        let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertEqual(log.split(separator: "\n").count, 2)
+        XCTAssertTrue(log.contains("search --formula -- bounded"))
+        XCTAssertTrue(log.contains("info --json=v2 --formula batchpkg"))
+        XCTAssertFalse(log.contains("newpkg"))
+        XCTAssertFalse(log.contains("--cask"))
+        XCTAssertFalse(log.contains("install "))
+    }
+
     func testKeepsInstalledPackagesWhenOutdatedSectionFails() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
@@ -421,6 +454,12 @@ private struct FakeBrewFixture {
           "search --formula -- missing"|"search --cask -- missing")
             printf '%s\n' 'No formulae or casks found for "missing".' >&2
             exit 1
+            ;;
+          "search --formula -- same"|"search --cask -- same")
+            printf '%s\n' same same third
+            ;;
+          "search --formula -- bounded")
+            printf '%s\n' newpkg batchpkg batchpkg
             ;;
           "doctor")
             printf '%s\n' 'Warning: Unbrewed dylibs found'

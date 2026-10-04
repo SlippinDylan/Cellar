@@ -2,6 +2,36 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    func testInstallRefusesChangedGlobalDestinationOrRegistryBeforeWriteGate() async throws {
+        for changed in ["global-prefix-changed", "global-root-changed", "registry-changed"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .installPackage, managerDirectory: fixture.root)
+            try Data().write(to: fixture.root.appending(path: changed))
+            do {
+                _ = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+                XCTFail("Changed npm destination or Registry must invalidate install: \(changed)")
+            } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-install-state-changed") }
+            let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+            XCTAssertFalse(calls.contains("execute|"), changed)
+            XCTAssertFalse(calls.contains("|1|"), changed)
+        }
+    }
+
+    func testInstallRefusesChangedInstalledStateAndKeepsOriginalExpiry() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .installPackage, managerDirectory: fixture.root)
+        let expired = NodeActionPlan(id: plan.id, request: plan.request, payload: plan.payload, generatedAt: Date().addingTimeInterval(-301), confirmedPackageDestination: plan.confirmedPackageDestination, confirmedInstallRegistry: plan.confirmedInstallRegistry)
+        do { _ = try await fixture.client.executePackage(expired, environment: fixture.context, managerDirectory: fixture.root); XCTFail("Expired install") }
+        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-expired") }
+        try Data().write(to: fixture.root.appending(path: "package-version-changed"))
+        do { _ = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root); XCTFail("Changed installed state") }
+        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-install-state-changed") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
     func testUninstallRefusesChangedGlobalPrefixOrRootBeforeOpeningWriteGate() async throws {
         for changed in ["global-prefix-changed", "global-root-changed"] {
             let fixture = try PackageManagerFixture()
@@ -136,10 +166,10 @@ final class NodePackageEnvironmentTests: XCTestCase {
         XCTAssertEqual(result.status, "ok")
         let calls = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n").map(String.init)
         let selectedPath = fixture.selectedBin.resolvingSymlinksInPath().path
-        XCTAssertEqual(calls.count, 4)
+        XCTAssertEqual(calls.count, 6)
         let fields = calls.map { $0.components(separatedBy: "|") }
-        XCTAssertEqual(fields.map { $0[0] }, ["summary", "plan", "summary", "execute"])
-        XCTAssertEqual(fields.map { $0[1] }, ["0", "0", "0", "1"])
+        XCTAssertEqual(fields.map { $0[0] }, ["summary", "plan", "summary", "plan", "summary", "execute"])
+        XCTAssertEqual(fields.map { $0[1] }, ["0", "0", "0", "0", "0", "1"])
         for call in fields {
             let firstPath = try XCTUnwrap(call[2].split(separator: ":").first)
             XCTAssertEqual(URL(filePath: String(firstPath)).resolvingSymlinksInPath().path, selectedPath)
@@ -284,7 +314,9 @@ private struct PackageManagerFixture {
           [ ! -e '\#(root.path)/global-prefix-changed' ] || global_prefix=/other-prefix
           [ ! -e '\#(root.path)/global-root-changed' ] || global_root=/other-root
           [ ! -e '\#(root.path)/global-destination-alias' ] || { global_prefix=/fake/../fake; global_root=/fake/../fake; }
-          printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(selectedBin.path)/node","npmPath":"%s","nodeVersion":"v22.0.0","npmVersion":"%s","nvmLoaded":false,"globalPrefix":"%s","globalRoot":"%s","registry":"https://registry.npmjs.org"}}\n' "$npm_path" "$npm_version" "$global_prefix" "$global_root"
+          registry=https://registry.npmjs.org
+          [ ! -e '\#(root.path)/registry-changed' ] || registry=https://other.invalid
+          printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(selectedBin.path)/node","npmPath":"%s","nodeVersion":"v22.0.0","npmVersion":"%s","nvmLoaded":false,"globalPrefix":"%s","globalRoot":"%s","registry":"%s"}}\n' "$npm_path" "$npm_version" "$global_prefix" "$global_root" "$registry"
         elif [ "$2" = plan ]; then
           [ ! -e '\#(root.path)/change-root-during-plan' ] || /usr/bin/touch '\#(root.path)/global-root-changed'
           if [ "$3" = node-uninstall ]; then

@@ -62,7 +62,8 @@ struct LibraryView: View {
         .padding(24)
         .searchable(text: $query, placement: .toolbar, prompt: Text("Search Installed Software"))
         .searchFocused($searchFocused)
-        .focusedSceneValue(\.libraryActions, LibraryActions(isManaging: managing, focusSearch: { searchFocused = true }, toggleManage: toggleManage))
+        .focusedSceneValue(\.catalogSearchAction) { searchFocused = true }
+        .focusedSceneValue(\.libraryActions, LibraryActions(isManaging: managing, toggleManage: toggleManage))
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { toggleManage() } label: { Text(managing ? LocalizedStringResource("Done") : LocalizedStringResource("Manage…")) }
@@ -239,7 +240,6 @@ struct LibraryView: View {
 
 struct LibraryActions {
     let isManaging: Bool
-    let focusSearch: () -> Void
     let toggleManage: () -> Void
 }
 

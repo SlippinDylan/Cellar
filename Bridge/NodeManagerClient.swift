@@ -170,9 +170,10 @@ actor NodeManagerClient {
         let validated = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
         let plan = try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
                                   environment: validated.environment)
-        guard action == .uninstallPackage else { return plan }
+        guard action == .uninstallPackage || action == .installPackage else { return plan }
         return NodeActionPlan(id: plan.id, request: plan.request, payload: plan.payload, generatedAt: plan.generatedAt,
-                              confirmedPackageDestination: try packageDestination(validated.summary))
+                              confirmedPackageDestination: try packageDestination(validated.summary),
+                              confirmedInstallRegistry: action == .installPackage ? try packageRegistry(validated.summary) : nil)
     }
 
     func executePackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeOperationResult {
@@ -193,6 +194,20 @@ actor NodeManagerClient {
             else { throw BridgeError.managerFailure(code: "npm-uninstall-state-changed", detail: nil) }
             return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
         }
+        if plan.request.action == .installPackage {
+            let currentPlan = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: validated.environment)
+            guard currentPlan.canExecute,
+                  currentPlan.payload.packageName == plan.payload.packageName,
+                  currentPlan.payload.targetVersion == plan.payload.targetVersion,
+                  currentPlan.payload.installedVersion == plan.payload.installedVersion
+            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
+            let finalEnvironment = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+            guard let confirmed = plan.confirmedPackageDestination,
+                  confirmed == (try packageDestination(finalEnvironment.summary)),
+                  plan.confirmedInstallRegistry == (try packageRegistry(finalEnvironment.summary))
+            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
+            return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
+        }
         return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
     }
 
@@ -204,6 +219,11 @@ actor NodeManagerClient {
         }
         return NodePackageDestination(nodeExecutable: canonical(summary.nodePath), npmExecutable: canonical(summary.npmPath),
                                       globalPrefix: canonical(summary.globalPrefix), globalRoot: canonical(summary.globalRoot))
+    }
+
+    private func packageRegistry(_ summary: NodeSummary) throws -> URL {
+        guard let registryURL = URL(string: summary.registry) else { throw CatalogSourceError.invalidURL }
+        return try NPMRegistryClient(registryURL: registryURL).registryURL
     }
 
     func planRuntimeUninstall(_ identity: NodeRuntimeIdentity, managerDirectory: URL) async throws -> NodeActionPlan {

@@ -169,6 +169,32 @@ actor HomebrewClient {
         }
     }
 
+    func search(_ query: String, kind: HomebrewPackageKind, limit: Int = 50) async throws -> [HomebrewSearchResult] {
+        try Task.checkCancellation()
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !term.isEmpty else { return [] }
+        guard term.utf8.count <= 512, (1...100).contains(limit) else {
+            throw HomebrewClientError.invalidPlan("Invalid search query or result limit")
+        }
+        try validateExecutable()
+        let results = try await runSearch(term, kind: kind)
+        var seen = Set<HomebrewPackageIdentity>()
+        return Array(results.filter { seen.insert($0.identity).inserted }
+            .sorted { $0.identity.name.localizedStandardCompare($1.identity.name) == .orderedAscending }.prefix(limit))
+    }
+
+    func discover(_ query: String, kind: HomebrewPackageKind, limit: Int = 50) async throws -> [HomebrewPackage] {
+        let matches = try await search(query, kind: kind, limit: limit)
+        var packages: [HomebrewPackage] = []
+        // Enrich only bounded matches, without fetching the full catalog.
+        for match in matches {
+            try Task.checkCancellation()
+            packages.append(try await loadPackage(match.identity))
+        }
+        var seen = Set<HomebrewPackageIdentity>()
+        return packages.filter { seen.insert($0.identity).inserted }
+    }
+
     func loadPackage(_ identity: HomebrewPackageIdentity) async throws -> HomebrewPackage {
         try validateExecutable()
         let validatedIdentity = HomebrewPackageIdentity(

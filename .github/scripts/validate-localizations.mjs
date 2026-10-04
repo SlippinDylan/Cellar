@@ -10,6 +10,9 @@ export const presentationSources = [
   'Features/ShellPlaceholderView.swift',
   'Features/Home/HomeView.swift',
   'Features/Catalog/CatalogCardView.swift',
+  'Features/Catalog/CatalogPageActions.swift',
+  'Features/Discover/DiscoverView.swift',
+  'Features/Discover/DiscoverBatchInstallSheet.swift',
   'Features/Library/LibraryView.swift',
   'Features/Library/LibraryUninstallConfirmation.swift',
   'Features/Settings/SettingsView.swift',
@@ -20,6 +23,7 @@ export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant'];
 
 const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
 const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
+const discoverPresentationLiteral = /\b(?:guidance\s*\(|message:)\s*"((?:\\.|[^"\\])*)"/g;
 const signature = value => value.match(/%(?:\d+\$)?(?:[-+0 #]*)(?:\d+|\*)?(?:\.\d+)?(?:hh|ll|[hlz])?[@diuoxXfFeEgGcCs]/g) ?? [];
 
 export function validateLocalizations(catalog, sources) {
@@ -41,7 +45,7 @@ export function validateLocalizations(catalog, sources) {
     }
   }
   for (const [file, source] of Object.entries(sources)) {
-    for (const match of [...source.matchAll(presentationLiteral), ...source.matchAll(homePresentationLiteral)]) {
+    for (const match of [...source.matchAll(presentationLiteral), ...source.matchAll(homePresentationLiteral), ...source.matchAll(discoverPresentationLiteral)]) {
       // SwiftUI's String interpolation uses %@ for these shell metadata values.
       const key = match[1].replace(/\\\([^)]*\)/g, '%@').replace(/\\n/g, '\n').replace(/\\"/g, '"');
       if (!catalog.strings?.[key]) errors.push(`${file}: uncatalogued presentation string ${JSON.stringify(key)}`);

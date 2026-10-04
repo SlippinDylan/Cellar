@@ -148,7 +148,7 @@ enum ActivitySummarySanitizer {
         case .nodeRuntime:
             return validVersion(name)
         case .npm:
-            guard name.hasPrefix("@") ? components.count == 2 : components.count == 1 else { return false }
+            return DiscoverBatchInput.validNPMSpec(name)
         case .homebrew:
             guard !name.hasPrefix("@"), components.count == 1 || components.count == 3 else { return false }
         case nil:

@@ -58,6 +58,10 @@ actor SystemProbeService {
         try await requireHomebrewClient().search(query)
     }
 
+    func discoverHomebrew(_ query: String, kind: HomebrewPackageKind, limit: Int = 50) async throws -> [HomebrewPackage] {
+        try await requireHomebrewClient().discover(query, kind: kind, limit: limit)
+    }
+
     func diagnoseHomebrew() async throws -> HomebrewDiagnosticReport {
         try await requireHomebrewClient().diagnose()
     }

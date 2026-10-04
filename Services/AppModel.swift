@@ -250,9 +250,15 @@ final class AppModel: ObservableObject {
             nodeRefreshedAt = Date()
             nodeUpdateState = snapshot.outdatedError == nil ? .available : .failed
         case nil:
-            if result.refreshStatus == .failed, case .homebrew = plan.intent.scope {
-                homebrewRefreshFailed = true
-                homebrewUpdateState = .failed
+            if result.refreshStatus == .failed {
+                switch plan.intent.scope {
+                case .homebrew:
+                    homebrewRefreshFailed = true
+                    homebrewUpdateState = .failed
+                case .npm, .nodeRuntime:
+                    nodeRefreshFailed = true
+                    nodeUpdateState = .failed
+                }
             }
         }
         if result.refreshedState != nil { refreshedAt = Date() }

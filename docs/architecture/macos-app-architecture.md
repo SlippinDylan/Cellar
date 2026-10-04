@@ -17,7 +17,7 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 当前源码已经实现：
 
 - Home/Library/Discover/Updates/Tools 与底部 Activity 的原生任务导航、独立 Settings scene 和 General/Sources/Terminal/About 四个 pane；
-- Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover/Updates/Tools/Activity、Sources 与 Terminal 仍显示明确的未开放占位；既有 provider 页面和业务实现保留供后续任务接入，不再作为主窗口路由；
+- Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates/Tools/Activity、Sources 与 Terminal 仍显示明确的未开放占位；既有 provider 页面和业务实现保留供后续任务接入，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - shell/Settings 的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条诊断 Activity；
@@ -65,7 +65,7 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 菜单命令与 toolbar 动作共享同一 intent，不复制业务执行路径。
 
-当前 shell 的刷新、Activity 导航和取消共同进入 `AppModel.performShellAction`；系统 `SidebarCommands` 提供侧边栏显隐。Library 使用原生 toolbar search，通过 focused scene intent 将 Find in Library（Command-F）与实际搜索焦点绑定；Manage 菜单与 toolbar 共用模式切换。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
+当前 shell 的刷新、Activity 导航和取消共同进入 `AppModel.performShellAction`；系统 `SidebarCommands` 提供侧边栏显隐。Library 与 Discover 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Manage 和 Batch Install 菜单与 toolbar 共用各自的动作。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
 
 ## 状态与刷新
 
@@ -105,6 +105,8 @@ Local library 从本机 provider 状态派生。Discover 通过官方 Homebrew �
 
 Library 的 All/Homebrew/npm 与 Homebrew All/Formula/Cask 筛选只处理已有快照，不发起网络或完整目录请求。npm identity 保留当前受控 Node executable 身份和 Node/npm 版本；未完成或失败的 enrichment 显示 unknown。Manage 一次只选择 Formula、Cask、npm 或独立 Node runtime 范围，最多 100 项；单项和批量都复用 typed coordinator，在唯一的任务专用确认之后执行。Library 的 Cask 卸载仅提供 standard；artifact 在确认前展示、执行后报告，不由 App 删除。
 
+Discover 固定显示互斥的 Formula、Cask、npm 范围，以 Return 或 Search 发起查询。空输入不请求；默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。npm 使用当前快照中的有效默认 Registry 与精确 Node context，不合并其他安装。输入、范围或页面生命周期变化取消旧搜索；替换查询等待旧任务清理后才登记新 owner，菜单取消同时撤销等待中的替换。已安装卡片不提供重复安装，更新由 Updates 负责。批量输入只做本地规范化与预览，最终确认一次消费后才准备和执行 typed batch；执行或复查失败分别呈现，搜索结果保留。
+
 ## Operation 与 batch coordinator
 
 现有 provider plan 继续作为内部安全机制。普通 UI 不呈现通用“计划”页面；Feature 按产品确认矩阵决定直接提交或显示任务专用确认。
@@ -132,6 +134,8 @@ Batch coordinator 只组合现有单项 typed operation：
 Node runtime 卸载批次与 npm 包批次使用不同 identity 和 scope，但均绑定确认中显示的受控 Node 环境。Bridge 执行前重新读取 Node runtime 计划，复验当前/default、精确目标目录及其全局包摘要；provider 对当前、默认或无法可靠读取的版本的拒绝仍生效。批次完成后只进行一次最终 Node 环境复查；Activity 保存独立的 Node runtime scope，清除环境路径后只保留版本语义。
 
 npm 卸载的确认状态在当前会话中保存规范化的 Node/npm executable、globalPrefix 和 globalRoot。打开单次写入 gate 前重新读取同一环境的包计划及最终 summary，确认 package identity、installedVersion 和精确全局目标目录没有变化；变化后拒绝旧确认，不把同版本的其他 Node executable 当作已确认环境。原计划的有效期和 token 不因复验而延长。Manager 的 uninstall `warn`/零退出/`residue-detected` 表示移除成功但有残留，协调器保留为 partiallySucceeded；路径仅在当前会话 Library 结果中以可复制文字展示，不写入 Activity，也不由 App 删除。
+
+npm 安装同样保存会话内的目标目录与默认 Registry，执行前复验原包名、已安装版本、解析目标版本、Node/npm 入口与最终 summary；旧计划的有效期不延长。Discover 还核对准备时读到的 Registry 与用户预览来源一致。安装完成但最终复查失败时保留原快照与逐项结果，标记对应 provider 状态未知，停止从该旧清单提供安装动作，直到显式刷新成功。
 
 Homebrew 整批最终复查遇到 packages 分区错误时视为 reconciliation failed，不发布空安装清单作为新快照。AppModel 保留先前成功的 Homebrew 快照与刷新时间，同时发布失败状态；Library 显示复查失败提示，逐项执行结果仍保留。
 

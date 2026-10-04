@@ -166,14 +166,16 @@ struct NodeActionPlan: Identifiable, Sendable {
     let generatedAt: Date
     // Session-only confirmation state, never part of the Manager JSON or Activity storage.
     let confirmedPackageDestination: NodePackageDestination?
+    let confirmedInstallRegistry: URL?
 
     init(id: UUID, request: NodeActionRequest, payload: NodeActionPlanPayload, generatedAt: Date,
-         confirmedPackageDestination: NodePackageDestination? = nil) {
+         confirmedPackageDestination: NodePackageDestination? = nil, confirmedInstallRegistry: URL? = nil) {
         self.id = id
         self.request = request
         self.payload = payload
         self.generatedAt = generatedAt
         self.confirmedPackageDestination = confirmedPackageDestination
+        self.confirmedInstallRegistry = confirmedInstallRegistry
     }
 
     var canExecute: Bool {

@@ -28,6 +28,10 @@ struct BatchPlan: Identifiable, Sendable {
     var homebrewImpacts: [HomebrewActionPlan] {
         plans.compactMap { if case .homebrew(let plan) = $0 { plan } else { nil } }
     }
+
+    var npmRegistryURLs: [URL] {
+        plans.compactMap { if case .npm(let plan, _) = $0 { plan.confirmedInstallRegistry } else { nil } }
+    }
 }
 
 private enum BatchProviderPlan: Sendable {

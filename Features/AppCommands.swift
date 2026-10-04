@@ -2,6 +2,8 @@ import SwiftUI
 
 struct AppCommands: Commands {
     @FocusedValue(\.libraryActions) private var libraryActions
+    @FocusedValue(\.catalogSearchAction) private var catalogSearchAction
+    @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
     let updateController: ApplicationUpdateController
@@ -25,9 +27,11 @@ struct AppCommands: Commands {
             }
         }
         CommandGroup(after: .toolbar) {
-            Button("Find in Library") { libraryActions?.focusSearch() }
+            Button("Find") { catalogSearchAction?() }
                 .keyboardShortcut("f", modifiers: .command)
-                .disabled(model.selectedDestination != .library || libraryActions == nil)
+                .disabled(catalogSearchAction == nil)
+            Button("Batch Install…") { discoverBatchAction?() }
+                .disabled(model.selectedDestination != .discover || discoverBatchAction == nil || model.isBusy)
             Button { libraryActions?.toggleManage() } label: {
                 Text(libraryActions?.isManaging == true ? LocalizedStringResource("Finish Managing Library") : LocalizedStringResource("Manage Library…"))
             }

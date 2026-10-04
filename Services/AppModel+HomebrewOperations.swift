@@ -1,6 +1,13 @@
 import Foundation
 
 extension AppModel {
+    func performHomebrewMetadataUpdate() async {
+        do {
+            let plan = try await createHomebrewPlan { try await self.service.planHomebrewUpdate() }
+            await executeHomebrewAction(plan)
+        } catch { homebrewOperationError = error.localizedDescription }
+    }
+
     func searchHomebrew(_ query: String) async {
         guard !isBusy else { return }
         isHomebrewWorking = true
@@ -88,9 +95,14 @@ extension AppModel {
     }
 
     func executeHomebrewPlan(confirmed: HomebrewActionPlan? = nil) async {
-        if let confirmed, homebrewPlan?.id != confirmed.id { return }
+        if let confirmed, homebrewPlan?.id != confirmed.id || homebrewPlan?.action != confirmed.action { return }
         guard let plan = homebrewPlan, plan.canExecute, !isBusy else { return }
         homebrewPlan = nil
+        await executeHomebrewAction(plan)
+    }
+
+    private func executeHomebrewAction(_ plan: HomebrewActionPlan) async {
+        guard !isBusy, plan.canExecute else { return }
         isHomebrewWorking = true
         homebrewOperationError = nil
         homebrewActionResult = nil
@@ -173,7 +185,7 @@ extension AppModel {
     }
 
     func dismissHomebrewPlan(confirmed: HomebrewActionPlan? = nil) {
-        if let confirmed, homebrewPlan?.id != confirmed.id { return }
+        if let confirmed, homebrewPlan?.id != confirmed.id || homebrewPlan?.action != confirmed.action { return }
         homebrewPlan = nil
     }
 
@@ -185,7 +197,12 @@ extension AppModel {
     private func prepareHomebrewPlan(
         operation: @escaping @Sendable () async throws -> HomebrewActionPlan
     ) async {
-        guard !isBusy else { return }
+        do { homebrewPlan = try await createHomebrewPlan(operation: operation) }
+        catch { homebrewOperationError = error.localizedDescription }
+    }
+
+    private func createHomebrewPlan(operation: @escaping @Sendable () async throws -> HomebrewActionPlan) async throws -> HomebrewActionPlan {
+        guard !isBusy else { throw BatchOperationError.busy }
         isHomebrewWorking = true
         homebrewOperationError = nil
         homebrewActionResult = nil
@@ -194,10 +211,11 @@ extension AppModel {
             isHomebrewWorking = false
             operationStore.end(operationID)
         }
-        do {
-            homebrewPlan = try await operationStore.performCancellable(operationID: operationID) { try await operation() }
-        } catch {
-            homebrewOperationError = error.localizedDescription
+        return try await operationStore.performCancellable(operationID: operationID) {
+            try Task.checkCancellation()
+            let plan = try await operation()
+            try Task.checkCancellation()
+            return plan
         }
     }
 

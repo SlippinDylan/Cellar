@@ -69,7 +69,7 @@ struct TerminalSettingsView: View {
     private func pluginNames(_ shell: ShellStatus) -> [String] {
         Array(Set(shell.defaultPluginNames + shell.installedCustomPlugins)).sorted().filter { pluginSearch.isEmpty || $0.localizedStandardContains(pluginSearch) }
     }
-    private func hasChanges(_ shell: ShellStatus) -> Bool { plugins != Set(shell.activePlugins).union(["git"]) || theme != shell.currentTheme }
+    private func hasChanges(_ shell: ShellStatus) -> Bool { TerminalConfigurationSelection.hasChanges(plugins: plugins, theme: theme, snapshot: shell) }
 }
 
 private struct TerminalApplyConfirmation: View {

@@ -4,7 +4,7 @@ actor ShellManagerClient {
     private let runner: ProcessRunner
     private let environmentResolver: ShellEnvironmentResolver
     private var consumedConfigurations = Set<UUID>()
-    private var tidyConfirmations: [UUID: [String]] = [:]
+    private var tidyConfirmations: [UUID: (candidates: [String], file: ShellConfigurationFile)] = [:]
 
     init(
         runner: ProcessRunner,
@@ -54,7 +54,7 @@ actor ShellManagerClient {
         var plan = ShellActionPlan(id: UUID(), request: request, payload: payload, generatedAt: Date())
         if request.action == .tidy {
             plan.candidates = try tidyCandidates()
-            tidyConfirmations[plan.id] = plan.candidates
+            tidyConfirmations[plan.id] = (plan.candidates, try ShellConfigurationFile.read(at: zshrcURL))
         }
         return plan
     }
@@ -99,7 +99,7 @@ actor ShellManagerClient {
         }
         let original = try regularZshrcContents()
         var plans: [ShellActionPlan] = []
-        if Set(snapshot.activePlugins).union(["git"]) != selected {
+        if Set(snapshot.activePlugins) != selected {
             plans.append(try await plan(.init(action: .setPlugins, subject: selected.sorted().joined(separator: ",")), managerDirectory: managerDirectory))
         }
         if snapshot.currentTheme != theme {
@@ -116,14 +116,19 @@ actor ShellManagerClient {
 
     func executeConfiguration(_ configuration: ShellConfigurationPlan, managerDirectory: URL) async -> ShellConfigurationResult {
         var operations: [ShellOperationResult] = []
+        var outcomes = configuration.plans.map { ShellStepOutcome(step: .init(action: $0.request.action), status: .unknown) }
+        var activeStep: Int?
         do {
             guard configuration.canExecute, consumedConfigurations.insert(configuration.id).inserted,
                   configuration.originalContents == (try regularZshrcContents()) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
-            for plan in configuration.plans {
+            for (index, plan) in configuration.plans.enumerated() {
+                activeStep = index
                 let current = try await self.plan(plan.request, managerDirectory: managerDirectory)
-                guard current.payload.planToken == plan.payload.planToken else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+                guard current.canExecute, current.payload.planToken == plan.payload.planToken else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
             }
+            activeStep = nil
             for (index, originalPlan) in configuration.plans.enumerated() {
+                activeStep = index
                 try Task.checkCancellation()
                 let expectedBefore = index == 0 ? configuration.originalContents : configuration.expectedContents[index - 1]
                 guard expectedBefore == (try regularZshrcContents()), Date().timeIntervalSince(originalPlan.generatedAt) <= 300 else {
@@ -132,19 +137,23 @@ actor ShellManagerClient {
                 let currentPlan = index == 0 ? originalPlan : try await self.plan(originalPlan.request, managerDirectory: managerDirectory)
                 guard expectedBefore == (try regularZshrcContents()) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
                 operations.append(try await execute(currentPlan, managerDirectory: managerDirectory))
+                outcomes[index] = .init(step: outcomes[index].step, status: operations[index].status == "ok" ? .succeeded : .partiallySucceeded)
                 guard configuration.expectedContents[index] == (try regularZshrcContents()) else { throw BridgeError.managerFailure(code: "terminal-state-changed", detail: nil) }
+                activeStep = nil
             }
-            return .init(operations: operations, failure: nil)
+            return .init(operations: operations, failure: nil, stepOutcomes: outcomes)
         } catch {
-            return .init(operations: operations, failure: error.localizedDescription, wasCancelled: error is CancellationError || Task.isCancelled)
+            let cancelled = error is CancellationError || Task.isCancelled
+            if let index = activeStep {
+                outcomes[index] = .init(step: outcomes[index].step, status: outcomes[index].status == .succeeded ? .partiallySucceeded : cancelled ? .cancelled : .failed)
+            }
+            if cancelled { outcomes = outcomes.map { $0.status == .unknown ? .init(step: $0.step, status: .cancelled) : $0 } }
+            return .init(operations: operations, failure: error.localizedDescription, wasCancelled: cancelled, stepOutcomes: outcomes)
         }
     }
 
     private func regularZshrcContents() throws -> Data {
-        let path = zshrcURL
-        let attributes = try FileManager.default.attributesOfItem(atPath: path.path)
-        guard attributes[.type] as? FileAttributeType == .typeRegular else { throw BridgeError.managerFailure(code: "zshrc-not-regular-file", detail: nil) }
-        return try Data(contentsOf: path)
+        try ShellConfigurationFile.read(at: zshrcURL).contents
     }
 
     private var zshrcURL: URL {
@@ -160,6 +169,7 @@ actor ShellManagerClient {
         switch request.action {
         case .setPlugins: kind = "plugins"; value = "plugins=(\(request.subject.replacingOccurrences(of: ",", with: " ")))"
         case .switchTheme: kind = "theme"; value = "ZSH_THEME=\"\(request.subject)\""
+        case .tidy: kind = "compdump"; value = "export ZSH_COMPDUMP=\"$HOME/.zsh/zcompdump\""
         default: throw BridgeError.managerFailure(code: "unsupported-configuration", detail: nil)
         }
         let start = "# >>> omz-manager \(kind) >>>"
@@ -193,9 +203,11 @@ actor ShellManagerClient {
             throw BridgeError.managerFailure(code: "plan-expired", detail: "Shell 操作计划已过期，请重新生成")
         }
         if plan.request.action == .tidy {
-            guard let candidates = tidyConfirmations.removeValue(forKey: plan.id), candidates == (try tidyCandidates()) else {
+            guard let confirmation = tidyConfirmations.removeValue(forKey: plan.id), confirmation.candidates == (try tidyCandidates()),
+                  confirmation.file.matches(try ShellConfigurationFile.read(at: zshrcURL)) else {
                 throw BridgeError.managerFailure(code: "plan-stale", detail: nil)
             }
+            return try await executeTidy(plan, original: confirmation.file, managerDirectory: managerDirectory)
         }
         var environment = environmentResolver.environment()
         environment["SHELL_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
@@ -232,6 +244,32 @@ actor ShellManagerClient {
                 }
             }
             throw error
+        }
+    }
+
+    private func executeTidy(_ plan: ShellActionPlan, original: ShellConfigurationFile, managerDirectory: URL) async throws -> ShellOperationResult {
+        var environment = environmentResolver.environment()
+        environment["SHELL_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
+        let operation: ShellOperationResult = try await request("execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
+                                                               managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
+        let validation = Task { try await self.runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", self.zshrcURL.path],
+                                                                        environment: self.environmentResolver.environment(), currentDirectoryURL: managerDirectory)) }
+        let expected = try Self.expectedConfiguration(original.contents, request: plan.request)
+        do {
+            let current = try ShellConfigurationFile.read(at: zshrcURL)
+            guard current.contents == expected else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
+            if try await validation.value.terminationStatus != 0 {
+                try original.restore(at: zshrcURL, replacing: expected)
+                return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
+                             logFile: operation.logFile, backupPath: operation.backupPath,
+                             detail: String(localized: "Zsh files were moved, but syntax validation failed. The previous shell configuration and attributes were restored."))
+            }
+            return operation
+        } catch {
+            _ = await validation.result
+            return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
+                         logFile: operation.logFile, backupPath: operation.backupPath,
+                         detail: String(localized: "Zsh files may have moved, but the shell configuration changed unexpectedly. It was not overwritten. Review diagnostics before trying again."))
         }
     }
 

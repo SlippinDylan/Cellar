@@ -28,14 +28,22 @@ extension AppModel {
             result = try await operationStore.performCancellable(operationID: operationID) {
                 await self.service.executeTerminalConfiguration(confirmed, snapshot: managers)
             }
-        } catch { result = .init(operations: [], failure: error.localizedDescription, wasCancelled: error is CancellationError) }
+        } catch {
+            let cancelled = error is CancellationError
+            result = .init(operations: [], failure: error.localizedDescription, wasCancelled: cancelled,
+                           stepOutcomes: confirmed.plans.map { .init(step: .init(action: $0.request.action), status: cancelled ? .cancelled : .unknown) })
+        }
         terminalConfigurationResult = result
         shellOperationError = result.failure
         let refresh = Task { try await service.loadShell(snapshot: managers) }
         do { shell = try await refresh.value; refreshedAt = Date() }
         catch { shellOperationError = error.localizedDescription }
-        let status: ActivityStatus = result.wasCancelled ? .cancelled : shellOperationError == nil ? result.status : result.operations.isEmpty ? .failed : .partiallySucceeded
-        activityStore?.append(.init(id: UUID(), operation: .configuration, scope: nil, targetDisplayNames: [], date: Date(), status: status, itemOutcomes: []))
+        var summary = result.activitySummary()
+        if shellOperationError != nil && summary.status == .succeeded {
+            summary = .init(id: summary.id, operation: summary.operation, scope: summary.scope, targetDisplayNames: [], date: summary.date,
+                            status: .partiallySucceeded, itemOutcomes: summary.itemOutcomes)
+        }
+        activityStore?.append(summary)
     }
 
     func openRuntimeTools() {

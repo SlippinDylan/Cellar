@@ -1,8 +1,26 @@
 import Foundation
 
 extension AppModel {
+    func performDirectNodeAction(_ request: NodeActionRequest) async {
+        guard [.installNode, .useNode].contains(request.action) || request == NodeMaintenanceAction.verify.request else { return }
+        do {
+            let prepared = try await createNodePlan(request)
+            let plan = prepared.plan
+            guard plan.canExecute else { nodeOperationError = String(localized: plan.blockingMessage); return }
+            await executeNodeAction(plan, snapshot: prepared.snapshot)
+        } catch { nodeOperationError = error.localizedDescription }
+    }
+
     func prepareNodeAction(_ request: NodeActionRequest) async {
-        guard !isBusy, let managers else { return }
+        do {
+            let plan = try await createNodePlan(request).plan
+            nodePlan = plan
+            if !plan.canExecute { nodeOperationError = String(localized: plan.blockingMessage) }
+        } catch { nodeOperationError = error.localizedDescription }
+    }
+
+    private func createNodePlan(_ request: NodeActionRequest) async throws -> (plan: NodeActionPlan, snapshot: SnapshotStatus) {
+        guard !isBusy, let managers else { throw BatchOperationError.busy }
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
@@ -11,20 +29,24 @@ extension AppModel {
             isNodeWorking = false
             operationStore.end(operationID)
         }
-        do {
-            nodePlan = try await operationStore.performCancellable(operationID: operationID) {
-                try await self.service.planNode(request, snapshot: managers, preferredNodeVersion: self.preferredNodeVersion)
-            }
-            if let plan = nodePlan, !plan.canExecute { nodeOperationError = String(localized: plan.blockingMessage) }
-        } catch {
-            nodeOperationError = error.localizedDescription
+        let plan = try await operationStore.performCancellable(operationID: operationID) {
+            try Task.checkCancellation()
+            let plan = try await self.service.planNode(request, snapshot: managers, preferredNodeVersion: self.preferredNodeVersion)
+            try Task.checkCancellation()
+            return plan
         }
+        return (plan, managers)
     }
 
     func executeNodePlan(confirmed: NodeActionPlan? = nil) async {
         if let confirmed, nodePlan?.id != confirmed.id { return }
         guard let plan = nodePlan, plan.canExecute, !isBusy, let managers else { return }
         nodePlan = nil
+        await executeNodeAction(plan, snapshot: managers)
+    }
+
+    private func executeNodeAction(_ plan: NodeActionPlan, snapshot managers: SnapshotStatus) async {
+        guard !isBusy, plan.canExecute else { return }
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
@@ -90,7 +112,7 @@ extension AppModel {
     }
 
     func dismissNodePlan(confirmed: NodeActionPlan? = nil) {
-        if let confirmed, nodePlan?.id != confirmed.id { return }
+        if let confirmed, nodePlan?.id != confirmed.id || nodePlan?.request != confirmed.request { return }
         nodePlan = nil
     }
 

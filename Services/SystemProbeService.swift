@@ -15,7 +15,8 @@ actor SystemProbeService {
         nodeClient: NodeManagerClient,
         shellClient: ShellManagerClient,
         environmentResolver: NodeEnvironmentResolver = NodeEnvironmentResolver(),
-        locator: ExecutableLocator = ExecutableLocator()
+        locator: ExecutableLocator = ExecutableLocator(),
+        homebrewClient: HomebrewClient? = nil
     ) {
         self.runner = runner
         self.installer = installer
@@ -23,6 +24,7 @@ actor SystemProbeService {
         self.shellClient = shellClient
         self.environmentResolver = environmentResolver
         self.locator = locator
+        self.homebrewClient = homebrewClient
     }
 
     func installManagers() async throws -> SnapshotStatus {

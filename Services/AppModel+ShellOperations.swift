@@ -21,7 +21,7 @@ extension AppModel {
     }
 
     func executeShellPlan(confirmed: ShellActionPlan? = nil) async {
-        if let confirmed, shellPlan?.id != confirmed.id { return }
+        if let confirmed, shellPlan?.id != confirmed.id || shellPlan?.request != confirmed.request { return }
         guard let plan = shellPlan, plan.canExecute, !isBusy, let managers else { return }
         shellPlan = nil
         isShellWorking = true
@@ -59,6 +59,7 @@ extension AppModel {
                 postflightError: postflightError
             )
             shellActionResult = result
+            if operation.status != "ok" { shellOperationError = operation.detail }
             if let postflightError {
                 shellOperationError = "操作已结束，但无法复查 Shell 状态：\(postflightError)"
             }
@@ -87,7 +88,7 @@ extension AppModel {
     }
 
     func dismissShellPlan(confirmed: ShellActionPlan? = nil) {
-        if let confirmed, shellPlan?.id != confirmed.id { return }
+        if let confirmed, shellPlan?.id != confirmed.id || shellPlan?.request != confirmed.request { return }
         shellPlan = nil
     }
 
@@ -102,8 +103,9 @@ extension AppModel {
         case .tidy: .maintenance
         case .setPlugins, .switchTheme: .configuration
         }
-        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: nil,
-                                             targetDisplayNames: [], date: Date(), status: status, itemOutcomes: []))
+        let step = ShellStepOutcome(step: .init(action: plan.request.action), status: status.itemStatus)
+        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: .shell,
+                                             targetDisplayNames: [], date: Date(), status: status, itemOutcomes: [step.summary]))
     }
 }
 

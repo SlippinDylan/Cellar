@@ -57,9 +57,11 @@ final class AppModel: ObservableObject {
         activityStore: ActivityStore? = nil,
         batchProvider: (any BatchOperationProviding)? = nil,
         homeDashboardDependencies: HomeDashboardDependencies? = nil,
-        homeOutdatedDependencies: HomeOutdatedDependencies? = nil
+        homeOutdatedDependencies: HomeOutdatedDependencies? = nil,
+        managerSnapshot: SnapshotStatus? = nil
     ) {
         self.service = service
+        managers = managerSnapshot
         self.operationStore = operationStore
         self.activityStore = activityStore
         self.homeOutdatedDependencies = homeOutdatedDependencies ?? HomeOutdatedDependencies(service: service)

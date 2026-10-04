@@ -323,8 +323,9 @@ actor HomebrewClient {
         )
     }
 
-    func planUpdate() -> HomebrewActionPlan {
-        plan(action: .update)
+    func planUpdate() throws -> HomebrewActionPlan {
+        try validateExecutable()
+        return plan(action: .update)
     }
 
     func planAddTap(_ name: String) async throws -> HomebrewActionPlan {

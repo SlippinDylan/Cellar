@@ -2,6 +2,153 @@ import XCTest
 @testable import Cellar
 
 final class ShellManagerClientTests: XCTestCase {
+    @MainActor
+    func testPluginSuccessThemeFailurePersistsExactSemanticStepsAfterRestart() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planConfiguration(plugins: ["git", "example"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
+        let adapter = fixture.managerDirectory.appending(path: "app-json.sh")
+        let originalAdapter = fixture.managerDirectory.appending(path: "app-json-real.sh")
+        try FileManager.default.copyItem(at: adapter, to: originalAdapter)
+        let wrapper = """
+        #!/bin/bash
+        /bin/bash '\(originalAdapter.path)' "$@"
+        task_result=$?
+        if [ "$2" = execute ] && [ "$3" = set-plugins ]; then /bin/rm "$HOME/.oh-my-zsh/themes/agnoster.zsh-theme"; fi
+        exit "$task_result"
+        """
+        try Data(wrapper.utf8).write(to: adapter)
+        let runner = ProcessRunner()
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: fixture.root),
+                                         nodeClient: NodeManagerClient(runner: runner, environmentResolver: .init(homeDirectory: fixture.homeDirectory)),
+                                         shellClient: fixture.client, environmentResolver: .init(homeDirectory: fixture.homeDirectory))
+        let store = ActivityStore(applicationSupportRoot: fixture.root)
+        let model = AppModel(service: service, operationStore: OperationStore(), activityStore: store,
+                             managerSnapshot: .init(version: "fixture", location: fixture.root.path, nodeAvailable: false, homebrewAvailable: false, shellAvailable: true))
+        model.terminalConfigurationPlan = plan
+        await model.executeTerminalConfiguration(plan)
+        XCTAssertEqual(model.terminalConfigurationResult?.operations.count, 1)
+        let restored = ActivityStore(applicationSupportRoot: fixture.root)
+        try restored.load()
+        let summary = try XCTUnwrap(restored.summaries.first)
+        XCTAssertNotNil(summary.scope)
+        XCTAssertEqual(summary.status, .partiallySucceeded)
+        XCTAssertEqual(summary.itemOutcomes.map(\.status), [.succeeded, .failed])
+        let json = try String(contentsOf: restored.fileURL, encoding: .utf8)
+        XCTAssertTrue(json.contains("plugins"))
+        XCTAssertTrue(json.contains("theme"))
+        for forbidden in ["example", "agnoster", fixture.homeDirectory.path, "stdout", "stderr", "planToken"] { XCTAssertFalse(json.contains(forbidden), forbidden) }
+    }
+
+    func testMandatoryGitIsAppliedWithoutOtherDraftChangesAndWithThemeOnlyChange() async throws {
+        for theme in ["robbyrussell", "agnoster"] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            try Data("ZSH_THEME=\"robbyrussell\"\nplugins=(example)\n".utf8).write(to: fixture.zshrcURL)
+            let initial = try await fixture.client.loadSnapshot(managerDirectory: fixture.managerDirectory, managerAvailable: true)
+            XCTAssertTrue(TerminalConfigurationSelection.hasChanges(plugins: ["example", "git"], theme: theme, snapshot: initial))
+            let plan = try await fixture.client.planConfiguration(plugins: ["example", "git"], theme: theme, managerDirectory: fixture.managerDirectory)
+            XCTAssertTrue(plan.plans.contains { $0.request.action == .setPlugins })
+            let result = await fixture.client.executeConfiguration(plan, managerDirectory: fixture.managerDirectory)
+            XCTAssertNil(result.failure)
+            let snapshot = try await fixture.client.loadSnapshot(managerDirectory: fixture.managerDirectory, managerAvailable: true)
+            XCTAssertTrue(snapshot.activePlugins.contains("git"))
+        }
+    }
+
+    func testMissingThemeFailsWholeApplyBeforePluginWrite() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        let plan = try await fixture.client.planConfiguration(plugins: ["git", "example"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
+        try FileManager.default.removeItem(at: fixture.homeDirectory.appending(path: ".oh-my-zsh/themes/agnoster.zsh-theme"))
+        let result = await fixture.client.executeConfiguration(plan, managerDirectory: fixture.managerDirectory)
+        XCTAssertTrue(result.operations.isEmpty)
+        XCTAssertNotNil(result.failure)
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+    }
+
+    func testTidyInvalidSyntaxRestoresExactFileAndAttributesButKeepsMovedFiles() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        // The original is valid; replacing this managed block removes the matching fi.
+        try Data("\nif true; then\n# >>> omz-manager compdump >>>\nprint okay\nfi\n# <<< omz-manager compdump <<<\n".utf8).append(to: fixture.zshrcURL)
+        let initialValidation = try await ProcessRunner().run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", fixture.zshrcURL.path],
+                                                                           environment: ShellEnvironmentResolver(homeDirectory: fixture.homeDirectory).environment(), currentDirectoryURL: fixture.root))
+        XCTAssertEqual(initialValidation.terminationStatus, 0)
+        try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: fixture.zshrcURL.path)
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        let originalAttributes = try FileManager.default.attributesOfItem(atPath: fixture.zshrcURL.path)
+        let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+        try Data("cache".utf8).write(to: cache)
+        let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+        let result = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory)
+        XCTAssertEqual(result.status, "partial")
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: fixture.zshrcURL.path)[.posixPermissions] as? Int, 0o640)
+        let restoredAttributes = try FileManager.default.attributesOfItem(atPath: fixture.zshrcURL.path)
+        for key in [FileAttributeKey.creationDate, .modificationDate] { XCTAssertEqual(restoredAttributes[key] as? Date, originalAttributes[key] as? Date) }
+        for key in [FileAttributeKey.ownerAccountID, .groupOwnerAccountID] { XCTAssertEqual(restoredAttributes[key] as? Int, originalAttributes[key] as? Int) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path))
+    }
+
+    @MainActor
+    func testTidySyntaxFailurePublishesPartialResultAndActivity() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        try Data("\nif then\n".utf8).append(to: fixture.zshrcURL)
+        let store = ActivityStore(applicationSupportRoot: fixture.root)
+        let model = fixture.model(activityStore: store)
+        await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
+        let plan = try XCTUnwrap(model.shellPlan)
+        await model.executeShellPlan(confirmed: plan)
+        XCTAssertEqual(model.shellActionResult?.operation.status, "partial")
+        XCTAssertNotNil(model.shellOperationError)
+        XCTAssertEqual(store.summaries.first?.status, .partiallySucceeded)
+        XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.status, .partiallySucceeded)
+        XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.shellStep, .tidy)
+    }
+
+    func testTidyRefusesSymlinkDriftBeforeExecutionAndAfterAdapterResult() async throws {
+        for afterExecution in [false, true] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let outside = fixture.root.appending(path: "outside-zshrc")
+            let protected = Data("if then\n# outside file must remain unchanged\n".utf8)
+            try protected.write(to: outside)
+            let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+            try Data("cache".utf8).write(to: cache)
+            let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+            if afterExecution {
+                let adapter = fixture.managerDirectory.appending(path: "app-json.sh")
+                let original = fixture.managerDirectory.appending(path: "app-json-real.sh")
+                try FileManager.default.copyItem(at: adapter, to: original)
+                let wrapper = """
+                #!/bin/bash
+                /bin/bash '\(original.path)' "$@"
+                task_result=$?
+                if [ "$2" = execute ]; then
+                  /bin/rm "$HOME/.zshrc"
+                  /bin/ln -s '\(outside.path)' "$HOME/.zshrc"
+                fi
+                exit "$task_result"
+                """
+                try Data(wrapper.utf8).write(to: adapter)
+                let result = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory)
+                XCTAssertEqual(result.status, "partial")
+                XCTAssertNotNil(result.detail)
+                XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path))
+            } else {
+                try FileManager.default.removeItem(at: fixture.zshrcURL)
+                try FileManager.default.createSymbolicLink(at: fixture.zshrcURL, withDestinationURL: outside)
+                do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Symlink drift must prevent execution") }
+                catch BridgeError.managerFailure { XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path)) }
+            }
+            XCTAssertEqual(try Data(contentsOf: outside), protected)
+            XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: fixture.zshrcURL.path)[.type] as? FileAttributeType, .typeSymbolicLink)
+        }
+    }
+
     func testTerminalReadsOnlyInstalledPluginsAndAppliesBothChangesOnce() async throws {
         let fixture = try ShellManagerFixture()
         defer { fixture.remove() }
@@ -274,6 +421,16 @@ private struct ShellManagerFixture {
 
     func remove() {
         try? FileManager.default.removeItem(at: root)
+    }
+
+    @MainActor
+    func model(activityStore: ActivityStore) -> AppModel {
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: homeDirectory)
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root),
+                                         nodeClient: NodeManagerClient(runner: runner, environmentResolver: resolver), shellClient: client, environmentResolver: resolver)
+        return AppModel(service: service, operationStore: OperationStore(), activityStore: activityStore,
+                        managerSnapshot: .init(version: "fixture", location: root.path, nodeAvailable: false, homebrewAvailable: false, shellAvailable: true))
     }
 }
 

@@ -2,6 +2,25 @@ import XCTest
 @testable import Cellar
 
 final class ToolsConfigurationTests: XCTestCase {
+    @MainActor
+    func testRuntimeCatalogErrorsUseActionableMessagesInsteadOfProviderDumps() async {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarRuntimeErrors-\(UUID())")
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: root)
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root), nodeClient: NodeManagerClient(runner: runner, environmentResolver: resolver),
+                                         shellClient: ShellManagerClient(runner: runner, environmentResolver: .init(homeDirectory: root)), environmentResolver: resolver)
+        let model = AppModel(service: service, operationStore: OperationStore())
+        for (error, message) in [(URLError(.notConnectedToInternet) as Error, "Node versions could not be loaded while offline. Connect to the internet and try again."),
+                                 (CatalogSourceError.invalidResponse as Error, "The official Node version list could not be verified. Try loading it again."),
+                                 (URLError(.timedOut) as Error, "The official Node service could not be reached. Check the connection and try again."),
+                                 (BridgeError.invalidOutput("secret raw dump") as Error, "The official Node version list is unavailable. Try again later."),
+                                 (CancellationError() as Error, "Loading Node versions was cancelled. You can try again.")] {
+            let runtime = RuntimeToolsModel(loadReleases: { throw error })
+            await runtime.refresh(model: model)
+            XCTAssertEqual(runtime.error.map { String(localized: $0.message) }, String(localized: String.LocalizationValue(message)))
+        }
+    }
+
     func testOfficialRuntimeCatalogIsSeparateFromRegistryAndBoundedToArm64() async throws {
         let payload = (0..<130).map { ["version": "v24.0.\($0)", "files": ["osx-arm64-tar"]] }
             + [["version": "v22.0.0", "files": ["osx-x64-tar"]], ["version": "latest", "files": ["osx-arm64-tar"]]]

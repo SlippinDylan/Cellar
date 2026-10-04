@@ -31,6 +31,8 @@ export const presentationSources = [
   'Features/Tools/NodeTaskConfirmation.swift',
   'Models/ToolsModels.swift',
   'Models/ConfigurationModels.swift',
+  'Models/RuntimeCatalogFailure.swift',
+  'Models/ShellActivityModels.swift',
   'Services/RuntimeToolsModel.swift',
   'Bridge/ShellManagerClient.swift',
   'Bridge/BridgeError.swift',

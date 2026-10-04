@@ -3,6 +3,53 @@ import XCTest
 
 @MainActor
 final class ActivityStoreTests: XCTestCase {
+    func testShellSemanticStepsRoundTripAndRejectUserControlledNames() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        let result = ShellConfigurationResult(operations: [], failure: "private raw diagnostic", stepOutcomes: [.init(step: .plugins, status: .succeeded), .init(step: .theme, status: .failed)])
+        try store.record(result.activitySummary())
+        let restored = ActivityStore(applicationSupportRoot: root)
+        try restored.load()
+        XCTAssertEqual(restored.summaries, store.summaries)
+        XCTAssertEqual(restored.summaries.first?.itemOutcomes.compactMap(\.shellStep), [.plugins, .theme])
+        XCTAssertEqual(restored.summaries.first?.status, .partiallySucceeded)
+        let json = try String(contentsOf: store.fileURL, encoding: .utf8)
+        XCTAssertFalse(json.contains("private raw diagnostic"))
+        let unsafe = ActivitySummary(id: UUID(), operation: .configuration, scope: .shell, targetDisplayNames: ["user-plugin"], date: Date(), status: .failed, itemOutcomes: [])
+        XCTAssertThrowsError(try store.record(unsafe))
+        let unsafeStep = ActivitySummary(id: UUID(), operation: .configuration, scope: .shell, targetDisplayNames: [], date: Date(), status: .failed,
+                                        itemOutcomes: [.init(displayName: "/Users/private/plugin", status: .failed, reason: .providerFailure, shellStep: .plugins)])
+        XCTAssertThrowsError(try store.record(unsafeStep))
+    }
+
+    func testShellCancelledAndPartialStepsRemainDistinct() throws {
+        let cancelled = ShellConfigurationResult(operations: [], failure: "cancelled", wasCancelled: true,
+                                                 stepOutcomes: [.init(step: .plugins, status: .cancelled), .init(step: .theme, status: .cancelled)])
+        XCTAssertEqual(cancelled.activitySummary().status, .cancelled)
+        XCTAssertEqual(cancelled.activitySummary().itemOutcomes.map(\.status), [.cancelled, .cancelled])
+        let partial = ShellConfigurationResult(operations: [], failure: "cancelled", wasCancelled: true,
+                                               stepOutcomes: [.init(step: .plugins, status: .succeeded), .init(step: .theme, status: .cancelled)])
+        XCTAssertEqual(partial.activitySummary().status, .partiallySucceeded)
+        XCTAssertEqual(partial.activitySummary().itemOutcomes.map(\.status), [.succeeded, .cancelled])
+    }
+
+    func testVersionOneActivityLoadsWithoutShellSteps() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        try store.record(summary())
+        let data = try Data(contentsOf: store.fileURL)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json["schemaVersion"] = 1
+        try JSONSerialization.data(withJSONObject: json).write(to: store.fileURL)
+        let restored = ActivityStore(applicationSupportRoot: root)
+        try restored.load()
+        XCTAssertEqual(restored.summaries, store.summaries)
+        XCTAssertTrue(restored.summaries.flatMap(\.itemOutcomes).allSatisfy { $0.shellStep == nil })
+        XCTAssertEqual(PersistedActivityEnvelope.currentSchemaVersion, 2)
+    }
+
     func testRoundTripAndNewestHundredOnly() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

@@ -7,7 +7,7 @@ struct MaintenanceToolsView: View {
             Section {
                 Text("Refresh Homebrew and Tap metadata. Installed software is not upgraded.").foregroundStyle(.secondary)
                 Button("Update Homebrew Metadata") {
-                    Task { await model.prepareHomebrewUpdate(); if let plan = model.homebrewPlan { await model.executeHomebrewPlan(confirmed: plan) } }
+                    Task { await model.performHomebrewMetadataUpdate() }
                 }.disabled(model.homebrew?.isInstalled != true || model.isBusy)
             } header: { Text("Homebrew Metadata") }
             Section {
@@ -23,8 +23,8 @@ struct MaintenanceToolsView: View {
                         Text(action.detail).foregroundStyle(.secondary)
                         Button {
                             Task {
-                                await model.prepareNodeAction(action.request)
-                                if action == .verify, let plan = model.nodePlan { await model.executeNodePlan(confirmed: plan) }
+                                if action == .verify { await model.performDirectNodeAction(action.request) }
+                                else { await model.prepareNodeAction(action.request) }
                             }
                         } label: { Text(action.title) }
                             .disabled(model.node == nil || model.isBusy)

@@ -59,7 +59,7 @@ final class ActivityStore: ObservableObject {
         let envelope: PersistedActivityEnvelope
         do {
             let header = try JSONDecoder().decode(SchemaHeader.self, from: data)
-            guard header.schemaVersion == PersistedActivityEnvelope.currentSchemaVersion else {
+            guard [1, PersistedActivityEnvelope.currentSchemaVersion].contains(header.schemaVersion) else {
                 try isolate(.unsupportedSchema(header.schemaVersion))
             }
             envelope = try JSONDecoder().decode(PersistedActivityEnvelope.self, from: data)
@@ -110,9 +110,15 @@ final class ActivityStore: ObservableObject {
 
 enum ActivitySummarySanitizer {
     static func sanitize(_ summary: ActivitySummary) throws(ActivityStoreError) -> ActivitySummary {
+        if summary.scope == .shell {
+            guard summary.date.timeIntervalSince1970.isFinite, summary.targetDisplayNames.isEmpty,
+                  summary.itemOutcomes.allSatisfy({ $0.displayName.isEmpty && $0.shellStep != nil }),
+                  Set(summary.itemOutcomes.compactMap(\.shellStep)).count == summary.itemOutcomes.count else { throw .invalidSummary }
+            return summary
+        }
         guard summary.date.timeIntervalSince1970.isFinite,
               summary.targetDisplayNames.allSatisfy({ validPackageIdentifier($0, scope: summary.scope) }),
-              summary.itemOutcomes.allSatisfy({ validPackageIdentifier($0.displayName, scope: summary.scope) })
+              summary.itemOutcomes.allSatisfy({ $0.shellStep == nil && validPackageIdentifier($0.displayName, scope: summary.scope) })
         else { throw .invalidSummary }
         let scope: ActivityScope?
         switch summary.scope {
@@ -126,7 +132,7 @@ enum ActivitySummarySanitizer {
             )
             if case .nodeRuntime = summary.scope { scope = .nodeRuntime(sanitizedEnvironment) }
             else { scope = .npm(sanitizedEnvironment) }
-        case .homebrew, nil:
+        case .homebrew, .shell, nil:
             scope = summary.scope
         }
         return ActivitySummary(id: summary.id, operation: summary.operation, scope: scope,
@@ -151,7 +157,7 @@ enum ActivitySummarySanitizer {
             return DiscoverBatchInput.validNPMSpec(name)
         case .homebrew:
             guard !name.hasPrefix("@"), components.count == 1 || components.count == 3 else { return false }
-        case nil:
+        case .shell, nil:
             return false
         }
         for (index, component) in components.enumerated() {

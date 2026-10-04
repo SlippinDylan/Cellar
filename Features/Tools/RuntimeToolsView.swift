@@ -34,7 +34,7 @@ struct RuntimeToolsView: View {
             Section {
                 Button("Load Official Node Versions") { Task { await runtime.refresh(model: model) } }.disabled(model.isBusy)
                 if runtime.isLoading { ProgressView() }
-                if let error = runtime.error { Text(error).textSelection(.enabled) }
+                if let error = runtime.error { Text(error.message) }
                 if !runtime.releases.isEmpty {
                     Picker("Node Version", selection: $selectedRelease) {
                         Text("Choose a Version").tag("")
@@ -42,7 +42,7 @@ struct RuntimeToolsView: View {
                     }
                     Button("Install Node") {
                         let version = selectedRelease
-                        Task { await model.prepareNodeAction(.init(action: .installNode, subject: version)); if let plan = model.nodePlan { await model.executeNodePlan(confirmed: plan) } }
+                        Task { await model.performDirectNodeAction(.init(action: .installNode, subject: version)) }
                     }.disabled(selectedRelease.isEmpty || model.isBusy || model.homeDashboard.nvmInstalled == false)
                 }
                 Link("nvm Installation Guide", destination: CatalogWebsites.nvm)
@@ -55,7 +55,7 @@ struct RuntimeToolsView: View {
         }
     }
     @ViewBuilder private func versionActions(_ item: NodeInstallation) -> some View {
-        Button("Use for Cellar") { Task { await model.prepareNodeAction(.init(action: .useNode, subject: item.version)); if let plan = model.nodePlan { await model.executeNodePlan(confirmed: plan) } } }
+        Button("Use for Cellar") { Task { await model.performDirectNodeAction(.init(action: .useNode, subject: item.version)) } }
             .disabled(item.isActive || model.isBusy)
         Button("Set as Default…") { Task { await model.prepareNodeAction(.init(action: .setDefaultNode, subject: item.version)) } }.disabled(item.isDefault || model.isBusy)
         Button("Uninstall Node…", role: .destructive) { Task { await model.prepareNodeAction(.init(action: .uninstallNode, subject: item.version)) } }

@@ -398,12 +398,14 @@ struct ActivityItemSummary: Equatable, Codable, Sendable {
     let displayName: String
     let status: BatchItemStatus
     let reason: ActivityItemReason?
+    var shellStep: ShellActivityStep? = nil
 }
 
 enum ActivityScope: Hashable, Codable, Sendable {
     case homebrew(HomebrewPackageKind)
     case npm(NodeEnvironmentContext)
     case nodeRuntime(NodeEnvironmentContext)
+    case shell
 }
 
 struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {
@@ -417,7 +419,7 @@ struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {
 }
 
 struct PersistedActivityEnvelope: Equatable, Codable, Sendable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     let schemaVersion: Int
     let summaries: [ActivitySummary]

@@ -61,6 +61,7 @@ struct ShellOperationResult: Decodable, Sendable {
     let exitCode: Int
     let logFile: String
     let backupPath: String
+    var detail: String? = nil
 }
 
 struct ShellActionResult: Sendable {

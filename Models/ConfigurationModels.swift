@@ -48,11 +48,27 @@ struct ShellConfigurationPlan: Identifiable, Sendable {
     var canExecute: Bool { !plans.isEmpty && plans.allSatisfy(\.canExecute) }
 }
 
+enum TerminalConfigurationSelection {
+    static func hasChanges(plugins: Set<String>, theme: String, snapshot: ShellStatus) -> Bool {
+        plugins != Set(snapshot.activePlugins) || theme != snapshot.currentTheme
+    }
+}
+
 struct ShellConfigurationResult: Sendable {
     let operations: [ShellOperationResult]
     let failure: String?
     var wasCancelled = false
-    var status: ActivityStatus { wasCancelled ? .cancelled : failure == nil ? .succeeded : operations.isEmpty ? .failed : .partiallySucceeded }
+    var stepOutcomes: [ShellStepOutcome] = []
+    var status: ActivityStatus {
+        if !stepOutcomes.isEmpty {
+            if stepOutcomes.allSatisfy({ $0.status == .succeeded }), failure == nil { return .succeeded }
+            if stepOutcomes.contains(where: { [.succeeded, .partiallySucceeded].contains($0.status) }) { return .partiallySucceeded }
+            return wasCancelled || stepOutcomes.allSatisfy({ $0.status == .cancelled }) ? .cancelled : .failed
+        }
+        if failure == nil { return .succeeded }
+        if !operations.isEmpty { return .partiallySucceeded }
+        return wasCancelled ? .cancelled : .failed
+    }
 }
 
 extension NodeActionPlan {

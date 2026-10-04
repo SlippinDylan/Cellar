@@ -20,29 +20,37 @@ struct ProviderTaskPresentation: ViewModifier {
             ShellTaskConfirmation(plan: plan, cancel: { model.dismissShellPlan(confirmed: plan) }, confirm: { Task { await model.executeShellPlan(confirmed: plan) } })
         }
     }
-    private var nodeConfirmation: Binding<NodeActionPlan?> {
-        Binding(get: {
-            guard let plan = model.nodePlan, ![.installNode, .useNode].contains(plan.request.action),
-                  surface == (plan.request.action.isRegistryConfiguration ? .sources : .tools),
-                  !(plan.request.action == .cleanup && plan.request.subject == NodeMaintenanceAction.verify.rawValue) else { return nil }
-            return plan
-        }, set: {
-            if $0 == nil, let plan = model.nodePlan, surface == (plan.request.action.isRegistryConfiguration ? .sources : .tools) { model.dismissNodePlan(confirmed: plan) }
+    var nodeConfirmation: Binding<NodeActionPlan?> {
+        let presented = nodePlanForSurface
+        return Binding(get: { nodePlanForSurface }, set: {
+            if $0 == nil, let presented { model.dismissNodePlan(confirmed: presented) }
         })
     }
-    private var homebrewConfirmation: Binding<HomebrewActionPlan?> {
-        Binding(get: {
-            guard surface == .sources, let plan = model.homebrewPlan, [.addTap, .removeTap].contains(plan.action) else { return nil }
-            return plan
-        }, set: { if $0 == nil { model.dismissHomebrewPlan() } })
-    }
-    private var shellConfirmation: Binding<ShellActionPlan?> {
-        Binding(get: {
-            guard let plan = model.shellPlan, surface == (plan.request.action == .tidy ? .tools : .terminal) else { return nil }
-            return plan
-        }, set: {
-            if $0 == nil, let plan = model.shellPlan, surface == (plan.request.action == .tidy ? .tools : .terminal) { model.dismissShellPlan(confirmed: plan) }
+    var homebrewConfirmation: Binding<HomebrewActionPlan?> {
+        let presented = homebrewPlanForSurface
+        return Binding(get: { homebrewPlanForSurface }, set: {
+            if $0 == nil, let presented { model.dismissHomebrewPlan(confirmed: presented) }
         })
+    }
+    var shellConfirmation: Binding<ShellActionPlan?> {
+        let presented = shellPlanForSurface
+        return Binding(get: { shellPlanForSurface }, set: {
+            if $0 == nil, let presented { model.dismissShellPlan(confirmed: presented) }
+        })
+    }
+    private var nodePlanForSurface: NodeActionPlan? {
+        guard let plan = model.nodePlan, ![.installNode, .useNode].contains(plan.request.action),
+              surface == (plan.request.action.isRegistryConfiguration ? .sources : .tools),
+              !(plan.request.action == .cleanup && plan.request.subject == NodeMaintenanceAction.verify.rawValue) else { return nil }
+        return plan
+    }
+    private var homebrewPlanForSurface: HomebrewActionPlan? {
+        guard surface == .sources, let plan = model.homebrewPlan, [.addTap, .removeTap].contains(plan.action) else { return nil }
+        return plan
+    }
+    private var shellPlanForSurface: ShellActionPlan? {
+        guard let plan = model.shellPlan, surface == (plan.request.action == .tidy ? .tools : .terminal) else { return nil }
+        return plan
     }
 }
 

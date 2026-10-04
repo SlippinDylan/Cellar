@@ -3,7 +3,9 @@ import Foundation
 extension AppModel {
     func performHomebrewMetadataUpdate() async {
         do {
-            let plan = try await createHomebrewPlan { try await self.service.planHomebrewUpdate() }
+            let plan = try await createHomebrewPlan(context: .init(operation: .updateHomebrewMetadata, scope: .homebrewMetadata, targets: [], stage: .preparing)) {
+                try await self.service.planHomebrewUpdate()
+            }
             await executeHomebrewAction(plan)
         } catch { homebrewOperationError = failureMessage(error) }
     }
@@ -29,7 +31,7 @@ extension AppModel {
         guard !isBusy else { return }
         isHomebrewWorking = true
         homebrewOperationError = nil
-        let operationID = operationStore.begin(context: .init(operation: .maintenance, scope: .homebrew(.formula), targets: [], stage: .checking))
+        let operationID = operationStore.begin(context: .init(operation: .maintenance, scope: .homebrewDiagnostics, targets: [], stage: .checking))
         defer {
             isHomebrewWorking = false
             operationStore.end(operationID)
@@ -40,9 +42,11 @@ extension AppModel {
             }
             homebrewDiagnosticReport = report
             homebrewDiagnostics = report.diagnostics
-            activityDiagnostics.record(operation: .maintenance, scope: .homebrew(.formula), detail: "", command: report.command)
+            homebrewDiagnosticRecordID = operationID
+            activityDiagnostics.record(id: operationID, operation: .maintenance, scope: .homebrewDiagnostics, detail: "", command: report.command)
         } catch {
             homebrewDiagnosticReport = nil
+            homebrewDiagnosticRecordID = nil
             homebrewDiagnostics = []
             homebrewOperationError = failureMessage(error)
         }
@@ -67,19 +71,21 @@ extension AppModel {
     }
 
     func prepareHomebrewUpdate() async {
-        await prepareHomebrewPlan {
+        await prepareHomebrewPlan(context: .init(operation: .updateHomebrewMetadata, scope: .homebrewMetadata, targets: [], stage: .preparing)) {
             try await self.service.planHomebrewUpdate()
         }
     }
 
     func prepareHomebrewAddTap(_ name: String) async {
-        await prepareHomebrewPlan {
+        guard ActivitySummarySanitizer.validHomebrewTap(name) else { homebrewOperationError = String(localized: ActivityItemReason.preparationFailed.message); return }
+        await prepareHomebrewPlan(context: .init(operation: .addHomebrewTap, scope: .homebrewTaps, targets: [name], stage: .preparing)) {
             try await self.service.planHomebrewAddTap(name)
         }
     }
 
     func prepareHomebrewRemoveTap(_ name: String) async {
-        await prepareHomebrewPlan {
+        guard ActivitySummarySanitizer.validHomebrewTap(name) else { homebrewOperationError = String(localized: ActivityItemReason.preparationFailed.message); return }
+        await prepareHomebrewPlan(context: .init(operation: .removeHomebrewTap, scope: .homebrewTaps, targets: [name], stage: .preparing)) {
             try await self.service.planHomebrewRemoveTap(name)
         }
     }
@@ -198,18 +204,20 @@ extension AppModel {
     }
 
     private func prepareHomebrewPlan(
+        context: ActiveOperationContext = .init(operation: .configuration, scope: nil, targets: [], stage: .preparing),
         operation: @escaping @Sendable () async throws -> HomebrewActionPlan
     ) async {
-        do { homebrewPlan = try await createHomebrewPlan(operation: operation) }
+        do { homebrewPlan = try await createHomebrewPlan(context: context, operation: operation) }
         catch { homebrewOperationError = failureMessage(error) }
     }
 
-    private func createHomebrewPlan(operation: @escaping @Sendable () async throws -> HomebrewActionPlan) async throws -> HomebrewActionPlan {
+    private func createHomebrewPlan(context: ActiveOperationContext = .init(operation: .configuration, scope: nil, targets: [], stage: .preparing),
+                                    operation: @escaping @Sendable () async throws -> HomebrewActionPlan) async throws -> HomebrewActionPlan {
         guard !isBusy else { throw BatchOperationError.busy }
         isHomebrewWorking = true
         homebrewOperationError = nil
         homebrewActionResult = nil
-        let operationID = operationStore.begin(context: .init(operation: .configuration, scope: nil, targets: [], stage: .preparing))
+        let operationID = operationStore.begin(context: context)
         defer {
             isHomebrewWorking = false
             operationStore.end(operationID)
@@ -223,18 +231,11 @@ extension AppModel {
     }
 
     private func recordHomebrewSummary(_ plan: HomebrewActionPlan, id: UUID, status: ActivityStatus, reason: ActivityItemReason? = nil) {
-        let operation: ActivityOperationKind = switch plan.action {
-        case .install: .install
-        case .upgrade: .update
-        case .update: .maintenance
-        case .uninstallFormula, .uninstallCask, .zapCask: .uninstall
-        case .addTap, .removeTap: .configuration
-        }
-        let scope = plan.targets.first.map { ActivityScope.homebrew($0.kind) }
-        activityStore?.append(ActivitySummary(id: id, operation: operation, scope: scope,
-                                             targetDisplayNames: plan.targets.map(\.name), date: Date(),
-                                             status: status, itemOutcomes: plan.targets.map {
-            ActivityItemSummary(displayName: $0.name, status: status.itemStatus, reason: reason ?? status.itemReason)
+        let context = plan.activityContext
+        activityStore?.append(ActivitySummary(id: id, operation: context.operation, scope: context.scope,
+                                             targetDisplayNames: context.targets, date: Date(),
+                                             status: status, itemOutcomes: context.targets.map {
+            ActivityItemSummary(displayName: $0, status: status.itemStatus, reason: reason ?? status.itemReason)
         }, reason: reason ?? status.itemReason))
     }
 }
@@ -244,11 +245,27 @@ private extension HomebrewActionPlan {
         let operation: ActivityOperationKind = switch action {
         case .install: .install
         case .upgrade: .update
-        case .update: .maintenance
+        case .update: .updateHomebrewMetadata
         case .uninstallFormula, .uninstallCask, .zapCask: .uninstall
-        case .addTap, .removeTap: .configuration
+        case .addTap: .addHomebrewTap
+        case .removeTap: .removeHomebrewTap
         }
-        return .init(operation: operation, scope: targets.first.map { .homebrew($0.kind) }, targets: targets.map(\.name), stage: .executing)
+        let scope: ActivityScope
+        let names: [String]
+        switch action {
+        case .addTap, .removeTap:
+            guard let tapName else { preconditionFailure("Tap plans require a validated Tap name") }
+            scope = .homebrewTaps
+            names = [tapName]
+        case .update:
+            scope = .homebrewMetadata
+            names = []
+        case .install, .upgrade, .uninstallFormula, .uninstallCask, .zapCask:
+            guard let target = targets.first else { preconditionFailure("Package plans require typed targets") }
+            scope = .homebrew(target.kind)
+            names = targets.map(\.name)
+        }
+        return .init(operation: operation, scope: scope, targets: names, stage: .executing)
     }
     var activityTitle: String {
         switch action {

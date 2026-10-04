@@ -3,6 +3,7 @@ import SwiftUI
 struct AppRootView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
+    @Environment(\.openWindow) private var openWindow
 
     init(model: AppModel) {
         self.model = model
@@ -44,7 +45,7 @@ struct AppRootView: View {
                     if model.isBusy {
                         ToolbarItem(placement: .status) {
                             Button {
-                                Task { await model.performShellAction(.show(.activity)) }
+                                model.showActivity { openWindow(id: $0, value: $1) }
                             } label: {
                                 HStack {
                                     ProgressView().controlSize(.small)

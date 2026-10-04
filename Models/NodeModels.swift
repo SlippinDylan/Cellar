@@ -12,6 +12,33 @@ struct ManagerErrorPayload: Decodable, Error, Sendable {
     let status: String?
     let logFile: String?
     let causeCode: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case code, message, dependencies, stderr, operationId, action, subject, exitCode, status, logFile, causeCode, detail
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        action = try values.decodeIfPresent(String.self, forKey: .action)
+        exitCode = try values.decodeIfPresent(Int.self, forKey: .exitCode)
+        status = try values.decodeIfPresent(String.self, forKey: .status)
+        if let explicitCode = try values.decodeIfPresent(String.self, forKey: .code) { code = explicitCode }
+        else {
+            // The frozen uninstall adapter returns this operation-shaped error without a code.
+            guard action == NodeAction.uninstallPackage.rawValue, exitCode == 0, status == "failed",
+                  try values.decodeIfPresent(String.self, forKey: .detail) == "post-uninstall-state-unavailable" else {
+                throw DecodingError.keyNotFound(CodingKeys.code, .init(codingPath: values.codingPath, debugDescription: "Provider errors require a code"))
+            }
+            code = "post-uninstall-state-unavailable"
+        }
+        message = try values.decodeIfPresent(String.self, forKey: .message)
+        dependencies = try values.decodeIfPresent([String].self, forKey: .dependencies)
+        stderr = try values.decodeIfPresent(String.self, forKey: .stderr)
+        operationId = try values.decodeIfPresent(String.self, forKey: .operationId)
+        subject = try values.decodeIfPresent(String.self, forKey: .subject)
+        logFile = try values.decodeIfPresent(String.self, forKey: .logFile)
+        causeCode = try values.decodeIfPresent(String.self, forKey: .causeCode)
+    }
 }
 
 struct ManagerEnvelope<Payload: Decodable & Sendable>: Decodable, Sendable {
@@ -224,6 +251,9 @@ struct NodeOperationResult: Decodable, Sendable {
     let residues: Residues?
 
     var batchItemStatus: BatchItemStatus {
+        if let detail, let verification = ActivityItemReason.verificationStatus(code: detail) {
+            return verification == .partiallySucceeded && exitCode != 0 ? .failed : verification
+        }
         guard exitCode == 0 else { return .failed }
         if action == NodeAction.updatePackage.rawValue, status == "unknown" { return .unknown }
         if status == "ok" { return .succeeded }
@@ -231,6 +261,16 @@ struct NodeOperationResult: Decodable, Sendable {
             return .partiallySucceeded
         }
         return .failed
+    }
+
+    var activityReason: ActivityItemReason? {
+        switch batchItemStatus {
+        case .succeeded: nil
+        case .cancelled: .cancelledByUser
+        case .unknown: .stateUnavailable
+        case .partiallySucceeded: detail == "residue-detected" ? .residueDetected : .stateUnavailable
+        case .failed: .init(error: BridgeError.managerFailure(code: detail ?? "provider-failure", detail: nil))
+        }
     }
 }
 

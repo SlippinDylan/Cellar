@@ -49,7 +49,7 @@ final class ActivityPresentationTests: XCTestCase {
         for status in ActivityStatus.allCases { XCTAssertFalse(renderer.status(status).isEmpty); XCTAssertFalse(status.systemImage.isEmpty) }
         for reason in ActivityItemReason.allCases { XCTAssertFalse(renderer.reason(reason).isEmpty) }
         for provider in ActivityProviderFilter.allCases { XCTAssertFalse(renderer.provider(provider).isEmpty) }
-        for scope in [ActivityScope.homebrew(.formula), .homebrew(.cask), .npm(environment), .nodeRuntime(environment), .shell] {
+        for scope in [ActivityScope.homebrew(.formula), .homebrew(.cask), .homebrewTaps, .homebrewMetadata, .homebrewDiagnostics, .npm(environment), .nodeRuntime(environment), .shell] {
             XCTAssertFalse(renderer.scope(scope).isEmpty)
         }
         let shell = ShellConfigurationResult(operations: [], failure: "private", stepOutcomes: [

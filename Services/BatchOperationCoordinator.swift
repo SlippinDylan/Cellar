@@ -334,22 +334,23 @@ final class BatchOperationCoordinator: ObservableObject {
                     let result = try await self.provider.executeNPM(providerPlan, environment: environment)
                     results.append(.npm(result))
                     status = result.batchItemStatus
-                    reason = status == .succeeded ? nil : status == .unknown ? .stateUnavailable : status == .partiallySucceeded ? .residueDetected : .init(error: BridgeError.managerFailure(code: result.detail ?? "provider-failure", detail: nil))
+                    reason = result.activityReason
                     diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope,
                                             detail: [result.detail ?? "", result.logFile].joined(separator: "\n"))
                 case .nodeRuntime(let providerPlan, let environment):
                     let result = try await self.provider.executeNodeUninstall(providerPlan, environment: environment)
                     results.append(.nodeRuntime(result))
-                    status = result.status == "ok" && result.exitCode == 0 ? .succeeded : .failed
-                    reason = status == .succeeded ? nil : .providerFailure
+                    status = result.batchItemStatus
+                    reason = result.activityReason
                     diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope,
                                             detail: [result.detail ?? "", result.logFile].joined(separator: "\n"))
                 case .unavailable: preconditionFailure("Unavailable preparation never enters execution")
                 }
                 outcomes.append(.init(item: item, status: status, userFacingMessage: nil, reason: reason))
             } catch {
-                outcomes.append(.init(item: item, status: error is CancellationError || Task.isCancelled ? .cancelled : .failed,
-                                      userFacingMessage: nil, reason: .init(error: error)))
+                let cancelled = error is CancellationError || Task.isCancelled
+                outcomes.append(.init(item: item, status: cancelled ? .cancelled : ActivityItemReason.postWriteStatus(error: error) ?? .failed,
+                                      userFacingMessage: nil, reason: cancelled ? .cancelledByUser : .init(error: error)))
                 results.append(nil)
                 diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope, detail: error.localizedDescription)
             }

@@ -97,7 +97,7 @@ extension AppModel {
             )
             let itemStatus = operation.batchItemStatus.activityStatus
             let status = itemStatus == .succeeded && postflightError != nil ? ActivityStatus.partiallySucceeded : itemStatus
-            recordNodeSummary(plan, id: activityID, status: status, reason: status == .succeeded ? nil : postflightError != nil ? .stateUnavailable : .init(error: BridgeError.managerFailure(code: operation.detail ?? "provider-failure", detail: nil)))
+            recordNodeSummary(plan, id: activityID, status: status, reason: postflightError != nil ? .stateUnavailable : operation.activityReason)
         } catch {
             nodeOperationError = failureMessage(error)
             let refresh = Task { try await service.loadNode(snapshot: managers, preferredNodeVersion: preferredNodeVersion) }
@@ -111,7 +111,7 @@ extension AppModel {
                 outcome: .failed,
                 detail: error.localizedDescription
             )
-            recordNodeSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : .failed, reason: .init(error: error))
+            recordNodeSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : ActivityItemReason.postWriteStatus(error: error)?.activityStatus ?? .failed, reason: .init(error: error))
         }
     }
 

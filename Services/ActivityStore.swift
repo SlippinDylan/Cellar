@@ -18,7 +18,7 @@ final class ActivityStore: ObservableObject {
     let fileURL: URL
     private var blockedError: ActivityStoreError?
     private var didRestore = false
-    private var pendingSummary: ActivitySummary?
+    private var pendingSummaries: [ActivitySummary] = []
 
     init(applicationSupportRoot: URL) {
         fileURL = applicationSupportRoot.appending(path: "Cellar/Activity/activity.json")
@@ -42,23 +42,21 @@ final class ActivityStore: ObservableObject {
     func append(_ summary: ActivitySummary) {
         do {
             try record(summary)
-            pendingSummary = nil
             persistenceError = nil
         } catch {
-            if error == .writeFailed { pendingSummary = summary }
             persistenceError = error
         }
     }
 
     func retrySaving() {
-        guard let pendingSummary else { return }
-        append(pendingSummary)
+        guard let pending = pendingSummaries.first else { return }
+        append(pending)
     }
 
     func load() throws(ActivityStoreError) {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             blockedError = nil
-            summaries = []
+            summaries = pendingSummaries
             return
         }
         let data: Data
@@ -88,7 +86,7 @@ final class ActivityStore: ObservableObject {
         }
         do {
             let sanitized = try envelope.summaries.map(ActivitySummarySanitizer.sanitize)
-            summaries = Array(sanitized.prefix(100))
+            summaries = Self.boundedUnique(pendingSummaries + sanitized)
             blockedError = nil
         } catch {
             try isolate(.corruptData)
@@ -98,7 +96,7 @@ final class ActivityStore: ObservableObject {
     func record(_ summary: ActivitySummary) throws(ActivityStoreError) {
         if let blockedError { throw blockedError }
         let sanitized = try ActivitySummarySanitizer.sanitize(summary)
-        let updated = Array(([sanitized] + summaries.filter { $0.id != sanitized.id }).prefix(100))
+        let updated = Self.boundedUnique([sanitized] + pendingSummaries + summaries)
         do {
             let data = try JSONEncoder().encode(PersistedActivityEnvelope(summaries: updated))
             guard data.count <= Self.maximumFileBytes else { throw ActivityStoreError.invalidSummary }
@@ -107,13 +105,16 @@ final class ActivityStore: ObservableObject {
         } catch let error as ActivityStoreError {
             throw error
         } catch {
+            pendingSummaries = Self.boundedUnique([sanitized] + pendingSummaries)
+            summaries = updated
             throw .writeFailed
         }
+        pendingSummaries = []
         summaries = updated
     }
 
     private func isolate(_ error: ActivityStoreError) throws(ActivityStoreError) -> Never {
-        summaries = []
+        summaries = pendingSummaries
         let isolatedURL = fileURL.deletingLastPathComponent().appending(path: "activity-\(UUID().uuidString).isolated")
         do {
             try FileManager.default.moveItem(at: fileURL, to: isolatedURL)
@@ -127,6 +128,11 @@ final class ActivityStore: ObservableObject {
 
     private struct SchemaHeader: Decodable {
         let schemaVersion: Int
+    }
+
+    private static func boundedUnique(_ records: [ActivitySummary]) -> [ActivitySummary] {
+        var identifiers: Set<UUID> = []
+        return Array(records.filter { identifiers.insert($0.id).inserted }.prefix(100))
     }
 }
 
@@ -155,7 +161,7 @@ enum ActivitySummarySanitizer {
             )
             if case .nodeRuntime = summary.scope { scope = .nodeRuntime(sanitizedEnvironment) }
             else { scope = .npm(sanitizedEnvironment) }
-        case .homebrew, .shell, nil:
+        case .homebrew, .homebrewTaps, .homebrewMetadata, .homebrewDiagnostics, .shell, nil:
             scope = summary.scope
         }
         return ActivitySummary(id: summary.id, operation: summary.operation, scope: scope,
@@ -174,6 +180,10 @@ enum ActivitySummarySanitizer {
         guard !name.isEmpty, name.utf8.count <= 214 else { return false }
         let components = name.split(separator: "/", omittingEmptySubsequences: false)
         switch scope {
+        case .homebrewTaps:
+            return validHomebrewTap(name)
+        case .homebrewMetadata, .homebrewDiagnostics:
+            return false
         case .nodeRuntime:
             return validVersion(name)
         case .npm:
@@ -199,5 +209,14 @@ enum ActivitySummarySanitizer {
             }
         }
         return true
+    }
+
+    static func validHomebrewTap(_ name: String) -> Bool {
+        guard name.utf8.count <= 214, !name.hasPrefix("-") else { return false }
+        let components = name.split(separator: "/", omittingEmptySubsequences: false)
+        return components.count == 2 && components.allSatisfy { component in
+            !component.isEmpty && component != "." && component != ".."
+                && component.utf8.allSatisfy { (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [43, 45, 46, 95].contains($0) }
+        }
     }
 }

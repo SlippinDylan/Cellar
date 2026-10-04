@@ -2,6 +2,31 @@ import XCTest
 @testable import Cellar
 
 final class NodeManagerClientTests: XCTestCase {
+    func testFrozenUninstallVerificationErrorWithoutCodeKeepsUnknownReason() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarFrozenVerification-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let response = #"{"ok":false,"schemaVersion":1,"command":"execute","error":{"operationId":"fixture","action":"uninstall","subject":"example","exitCode":0,"status":"failed","detail":"post-uninstall-state-unavailable","logFile":"/private/fixture"}}"#
+        let script = "#!/bin/bash\nprintf '%s\\n' '\(response)'\nexit 1\n"
+        try Data(script.utf8).write(to: root.appending(path: "main.sh"))
+        let client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: NodeEnvironmentResolver(homeDirectory: root))
+        do {
+            let _: NodeOperationResult = try await client.request("execute", arguments: ["uninstall", "example"], managerDirectory: root,
+                                                                 environment: ["HOME": root.path, "PATH": "/usr/bin:/bin", "NODE_MANAGER_ALLOW_JSON_EXECUTE": "1"])
+            XCTFail("Expected a finite verification failure")
+        } catch BridgeError.managerFailure(let code, _) {
+            XCTAssertEqual(code, "post-uninstall-state-unavailable")
+            XCTAssertEqual(ActivityItemReason(error: BridgeError.managerFailure(code: code, detail: nil)), .stateUnavailable)
+        }
+        for error in [
+            #"{"action":"uninstall","exitCode":1,"status":"failed","detail":"post-uninstall-state-unavailable"}"#,
+            #"{"action":"uninstall","exitCode":0,"status":"failed","detail":"npm-uninstall-failed"}"#,
+            #"{"message":"missing code"}"#
+        ] {
+            XCTAssertThrowsError(try JSONDecoder().decode(ManagerErrorPayload.self, from: Data(error.utf8)))
+        }
+    }
+
     func testOutdatedUsesOriginalSystemPathsEvenWhenNVMHasTheSameVersion() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarExactNodeTests-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

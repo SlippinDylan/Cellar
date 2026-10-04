@@ -2,6 +2,71 @@ import XCTest
 @testable import Cellar
 
 final class HomebrewClientTests: XCTestCase {
+    @MainActor
+    func testDoctorUsesSharedBoundedRedactedSessionDiagnosticsOnly() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let stdout = "API_KEY=doctor-secret\n" + String(repeating: "out ", count: 530_000)
+        let stderr = "Cookie: session=doctor-cookie\n" + String(repeating: "err ", count: 530_000)
+        try Data(stdout.utf8).write(to: fixture.directoryURL.appending(path: "doctor.stdout"))
+        try Data(stderr.utf8).write(to: fixture.directoryURL.appending(path: "doctor.stderr"))
+        let model = fixture.model(activityStore: ActivityStore(applicationSupportRoot: fixture.directoryURL))
+        await model.diagnoseHomebrew()
+        let diagnostic = try XCTUnwrap(model.activityDiagnostics.records.first)
+        XCTAssertEqual(diagnostic.standardOutput.count, ActivityDiagnosticRecord.textLimit)
+        XCTAssertEqual(diagnostic.standardError.count, ActivityDiagnosticRecord.textLimit)
+        XCTAssertTrue(diagnostic.wasTruncated)
+        let copied = diagnostic.copyText(locale: Locale(identifier: "en"))
+        XCTAssertFalse(copied.contains("doctor-secret"))
+        XCTAssertFalse(copied.contains("doctor-cookie"))
+        XCTAssertTrue(copied.contains("Standard Output"))
+        XCTAssertTrue(copied.contains("Standard Error"))
+        XCTAssertTrue(copied.contains("sensitive information"))
+        XCTAssertTrue(copied.contains("truncated"))
+        let history = try XCTUnwrap(model.activityStore)
+        XCTAssertTrue(history.summaries.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: history.fileURL.path))
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let tools = try String(contentsOf: root.appending(path: "Features/Tools/DiagnosticsToolsView.swift"), encoding: .utf8)
+        let activity = try String(contentsOf: root.appending(path: "Features/Activity/ActivityView.swift"), encoding: .utf8)
+        XCTAssertTrue(tools.contains("ActivityDiagnosticsView("))
+        for raw in ["standardOutput", "standardError", "model.activities"] { XCTAssertFalse(activity.contains(raw), raw) }
+        XCTAssertFalse(tools.contains("report.command.standardOutput"))
+    }
+
+    @MainActor
+    func testTapAndMetadataKeepHomebrewContextTargetsAndRestartFiltering() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let store = ActivityStore(applicationSupportRoot: fixture.directoryURL)
+        let model = fixture.model(activityStore: store)
+        var contexts: [ActiveOperationContext] = []
+        let subscription = model.operationStore.$currentOperation.sink { if let operation = $0 { contexts.append(operation.context) } }
+        await model.prepareHomebrewAddTap("newco/apps")
+        await model.executeHomebrewPlan()
+        let tap = try XCTUnwrap(store.summaries.first)
+        XCTAssertNotNil(tap.scope)
+        XCTAssertEqual(tap.targetDisplayNames, ["newco/apps"])
+        XCTAssertTrue(contexts.contains { $0.targets == ["newco/apps"] && $0.scope != nil })
+        XCTAssertEqual(ActivityFilter(provider: .homebrew).apply(store.summaries, locale: .init(identifier: "en")).count, 1)
+        await model.prepareHomebrewRemoveTap("newco/apps")
+        await model.executeHomebrewPlan()
+        XCTAssertEqual(store.summaries.first?.targetDisplayNames, ["newco/apps"])
+        await model.performHomebrewMetadataUpdate()
+        let metadata = try XCTUnwrap(store.summaries.first)
+        XCTAssertNotNil(metadata.scope)
+        let renderer = ActivityRenderer(locale: .init(identifier: "en"))
+        XCTAssertFalse(renderer.target(metadata).isEmpty)
+        XCTAssertTrue(renderer.scope(metadata.scope).contains("Homebrew"))
+        XCTAssertTrue(contexts.contains { $0.operation == .updateHomebrewMetadata && $0.scope != nil })
+        let restored = ActivityStore(applicationSupportRoot: fixture.directoryURL)
+        restored.restore()
+        XCTAssertEqual(ActivityFilter(provider: .homebrew).apply(restored.summaries, locale: .init(identifier: "en")).count, 3)
+        XCTAssertTrue(renderer.detail(tap).contains("newco/apps"))
+        XCTAssertNotEqual(renderer.detail(metadata), ActivityRenderer(locale: .init(identifier: "zh-Hans")).detail(metadata))
+        withExtendedLifetime(subscription) {}
+    }
+
     func testUpgradeRejectsChangedInstalledOrAvailableVersionBeforeWriting() async throws {
         for marker in ["outdated-current-changed", "outdated-installed-changed"] {
             let fixture = try FakeBrewFixture()
@@ -478,6 +543,11 @@ private struct FakeBrewFixture {
             printf '%s\n' newpkg batchpkg batchpkg
             ;;
           "doctor")
+            if [ -f "$state_dir/doctor.stdout" ]; then
+              /bin/cat "$state_dir/doctor.stdout"
+              /bin/cat "$state_dir/doctor.stderr" >&2
+              exit 1
+            fi
             printf '%s\n' 'Warning: Unbrewed dylibs found'
             printf '%s\n' 'Prefix has a problem' >&2
             exit 1
@@ -556,6 +626,17 @@ private struct FakeBrewFixture {
 
     func remove() {
         try? FileManager.default.removeItem(at: directoryURL)
+    }
+
+    @MainActor
+    func model(activityStore: ActivityStore) -> AppModel {
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: directoryURL)
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: directoryURL),
+                                         nodeClient: NodeManagerClient(runner: runner, environmentResolver: resolver),
+                                         shellClient: ShellManagerClient(runner: runner, environmentResolver: .init(homeDirectory: directoryURL)),
+                                         environmentResolver: resolver, homebrewClient: client)
+        return AppModel(service: service, operationStore: OperationStore(), activityStore: activityStore)
     }
 }
 

@@ -23,6 +23,7 @@ final class AppModel: ObservableObject {
     @Published var homebrewSearchResults: [HomebrewSearchResult] = []
     @Published var homebrewDiagnostics: [HomebrewDiagnostic] = []
     @Published var homebrewDiagnosticReport: HomebrewDiagnosticReport?
+    @Published var homebrewDiagnosticRecordID: UUID?
     @Published var homebrewPlan: HomebrewActionPlan?
     @Published var homebrewActionResult: HomebrewActionResult?
     @Published var homebrewOperationError: String?
@@ -135,6 +136,11 @@ final class AppModel: ObservableObject {
             latestHomeBackgroundRequestID = nil
             operationStore.cancelActiveTask()
         }
+    }
+
+    func showActivity(presentMainWindow: (String, MainWindowIdentity) -> Void) {
+        selectedDestination = .activity
+        presentMainWindow(AppScene.mainWindowID, .main)
     }
 
     func refresh() async {

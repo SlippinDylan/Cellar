@@ -4,6 +4,28 @@ import XCTest
 
 @MainActor
 final class AppShellTests: XCTestCase {
+    func testActivityIntentPresentsOneMainWindowFromMainClosedAndSettingsOnlyStates() {
+        for (hasMain, hasSettings) in [(true, false), (false, false), (false, true)] {
+            let model = AppModel.live()
+            var mainIsOpen = hasMain
+            var created = 0
+            var presentations = 0
+            let present: (String, MainWindowIdentity) -> Void = { id, identity in
+                XCTAssertEqual(id, AppScene.mainWindowID)
+                XCTAssertEqual(identity, .main)
+                XCTAssertEqual(model.selectedDestination, .activity)
+                if !mainIsOpen { mainIsOpen = true; created += 1 }
+                presentations += 1
+            }
+            model.showActivity(presentMainWindow: present)
+            model.showActivity(presentMainWindow: present)
+            XCTAssertTrue(mainIsOpen, "Settings open: \(hasSettings)")
+            XCTAssertEqual(created, hasMain ? 0 : 1)
+            XCTAssertEqual(presentations, 2)
+            XCTAssertFalse(model.operationStore.hasActiveOperations)
+        }
+    }
+
     func testDestinationContractAndDefaultSelection() {
         XCTAssertEqual(AppDestination.primaryDestinations, [.home, .library, .discover, .updates, .tools])
         XCTAssertEqual(AppDestination.allCases, AppDestination.primaryDestinations + [.activity])
@@ -63,6 +85,13 @@ final class AppShellTests: XCTestCase {
         let shell = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
         let commands = try String(contentsOf: root.appending(path: "Features/AppCommands.swift"), encoding: .utf8)
         let settings = try String(contentsOf: root.appending(path: "Features/Settings/SettingsView.swift"), encoding: .utf8)
+        let feedback = try String(contentsOf: root.appending(path: "Features/Tools/ProviderTaskPresentation.swift"), encoding: .utf8)
+        XCTAssertTrue(scene.contains("WindowGroup(id: AppScene.mainWindowID, for: MainWindowIdentity.self)"))
+        XCTAssertTrue(scene.contains("defaultValue:"))
+        XCTAssertTrue(feedback.contains("model.showActivity { openWindow(id: $0, value: $1) }"))
+        XCTAssertTrue(commands.contains("model.showActivity { openWindow(id: $0, value: $1) }"))
+        XCTAssertTrue(commands.contains("if destination == .activity { model.showActivity"))
+        XCTAssertTrue(shell.contains("model.showActivity { openWindow(id: $0, value: $1) }"))
         XCTAssertTrue(scene.contains("Settings {"))
         XCTAssertTrue(scene.contains("SidebarCommands()"))
         XCTAssertFalse(shell.contains("SettingsView("))

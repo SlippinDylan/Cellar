@@ -4,6 +4,40 @@ import XCTest
 
 @MainActor
 final class BatchOperationCoordinatorTests: XCTestCase {
+    func testFrozenPostWriteVerificationCodesRemainUnknownAndLocalizableAfterRestart() async throws {
+        for code in ["post-install-state-unavailable", "post-uninstall-state-unavailable", "update-verification-unavailable"] {
+            let root = FileManager.default.temporaryDirectory.appending(path: "CellarUnknownActivity-\(UUID())")
+            defer { try? FileManager.default.removeItem(at: root) }
+            let store = ActivityStore(applicationSupportRoot: root)
+            let provider = FakeBatchProvider(failingNames: ["two"], failureCode: code)
+            let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: store)
+            let operation: BatchOperation = code == "post-uninstall-state-unavailable" ? .uninstall : .install
+            let result = try await coordinator.execute(coordinator.prepare(npmIntent(operation)))
+            XCTAssertEqual(result.outcome.itemOutcomes[1].status, .unknown, code)
+            XCTAssertEqual(result.outcome.itemOutcomes[1].reason, .stateUnavailable, code)
+            XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+            let restored = ActivityStore(applicationSupportRoot: root)
+            restored.restore()
+            let summary = try XCTUnwrap(restored.summaries.first)
+            XCTAssertEqual(summary.itemOutcomes[1].status, .unknown)
+            let english = ActivityRenderer(locale: .init(identifier: "en")).detail(summary)
+            let chinese = ActivityRenderer(locale: .init(identifier: "zh-Hans")).detail(summary)
+            XCTAssertTrue(english.contains("could not be verified"))
+            XCTAssertTrue(english.contains("Refresh"))
+            XCTAssertNotEqual(english, chinese)
+            XCTAssertFalse(english.contains(code))
+        }
+        let frozen = #"{"operationId":"fixture","action":"uninstall","subject":"example","exitCode":0,"status":"failed","detail":"post-uninstall-state-unavailable","logFile":"/private/diagnostic"}"#
+        let result = try JSONDecoder().decode(NodeOperationResult.self, from: Data(frozen.utf8))
+        XCTAssertEqual(result.batchItemStatus, .unknown)
+        let latest = NodeOperationResult(operationId: "fixture", action: "update-latest", subject: "example", exitCode: 0, status: "warn", logFile: "", detail: "latest-verification-unavailable", residues: nil)
+        XCTAssertEqual(latest.batchItemStatus, .partiallySucceeded)
+        XCTAssertEqual(latest.activityReason, .stateUnavailable)
+        let failed = NodeOperationResult(operationId: "fixture", action: "uninstall", subject: "example", exitCode: 1, status: "failed", logFile: "", detail: "npm-uninstall-failed", residues: nil)
+        XCTAssertEqual(failed.batchItemStatus, .failed)
+        XCTAssertEqual(failed.activityReason, .providerFailure)
+    }
+
     func testStaleProviderFailuresKeepFiniteReasonsAndSessionDiagnostics() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarStaleActivity-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

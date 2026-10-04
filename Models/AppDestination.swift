@@ -1,5 +1,11 @@
 import Foundation
 
+enum MainWindowIdentity: String, Codable, Hashable { case main }
+
+enum AppScene {
+    static let mainWindowID = "main"
+}
+
 enum AppDestination: String, CaseIterable, Identifiable {
     case home
     case library

@@ -3,6 +3,67 @@ import XCTest
 
 @MainActor
 final class ActivityStoreTests: XCTestCase {
+    func testHomebrewNonPackageScopesAcceptOnlySemanticTargets() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        for name in ["newco/apps", "owner/tools+extra"] {
+            store.append(.init(id: UUID(), operation: .addHomebrewTap, scope: .homebrewTaps, targetDisplayNames: [name], date: Date(), status: .succeeded,
+                               itemOutcomes: [.init(displayName: name, status: .succeeded, reason: nil)]))
+        }
+        let safe = store.summaries
+        for name in ["/Users/private/tap", "../repo", "owner/..", "owner/repo/file", "https://user:password@example.com", "TOKEN=secret", "owner/with space", "-option/repo"] {
+            XCTAssertThrowsError(try store.record(.init(id: UUID(), operation: .addHomebrewTap, scope: .homebrewTaps, targetDisplayNames: [name], date: Date(), status: .failed, itemOutcomes: [])))
+        }
+        for scope in [ActivityScope.homebrewMetadata, .homebrewDiagnostics] {
+            XCTAssertThrowsError(try store.record(.init(id: UUID(), operation: .maintenance, scope: scope, targetDisplayNames: ["/private/path"], date: Date(), status: .succeeded, itemOutcomes: [])))
+        }
+        XCTAssertEqual(store.summaries, safe)
+    }
+
+    func testRepeatedFailedWritesKeepBoundedUniqueLiveRecordsAndPersistTogetherOnSuccess() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        let first = summary(date: Date(timeIntervalSince1970: 1))
+        store.append(first)
+        let original = try Data(contentsOf: store.fileURL)
+        let directory = store.fileURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+        let second = summary(date: Date(timeIntervalSince1970: 2))
+        let third = summary(date: Date(timeIntervalSince1970: 3))
+        store.append(second)
+        store.append(third)
+        XCTAssertEqual(store.summaries.map(\.id), [third.id, second.id, first.id])
+        let replaced = ActivitySummary(id: second.id, operation: second.operation, scope: second.scope, targetDisplayNames: second.targetDisplayNames,
+                                       date: Date(timeIntervalSince1970: 4), status: .succeeded, itemOutcomes: [])
+        store.append(replaced)
+        store.retrySaving()
+        XCTAssertEqual(store.summaries.map(\.id), [second.id, third.id, first.id])
+        XCTAssertEqual(try Data(contentsOf: store.fileURL), original)
+        XCTAssertEqual(store.persistenceError, .writeFailed)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        let fourth = summary(date: Date(timeIntervalSince1970: 5))
+        store.append(fourth)
+        XCTAssertNil(store.persistenceError)
+        let restored = ActivityStore(applicationSupportRoot: root)
+        restored.restore()
+        XCTAssertEqual(restored.summaries, store.summaries)
+        XCTAssertEqual(restored.summaries.map(\.id), [fourth.id, second.id, third.id, first.id])
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        for index in 6..<111 { store.append(summary(date: Date(timeIntervalSince1970: Double(index)))) }
+        XCTAssertEqual(store.summaries.count, 100)
+        XCTAssertEqual(store.summaries.first?.date, Date(timeIntervalSince1970: 110))
+        XCTAssertEqual(store.summaries.last?.date, Date(timeIntervalSince1970: 11))
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        store.retrySaving()
+        restored.retryLoading()
+        XCTAssertEqual(restored.summaries, store.summaries)
+        let json = try String(contentsOf: store.fileURL, encoding: .utf8)
+        for raw in ["command", "stdout", "stderr", "registry", "/Users", "TOKEN"] { XCTAssertFalse(json.contains(raw), raw) }
+    }
+
     func testRestoreOnceTerminalOnlyAndStableUpdates() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -57,7 +118,7 @@ final class ActivityStoreTests: XCTestCase {
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
         store.append(failed)
         XCTAssertEqual(store.persistenceError, .writeFailed)
-        XCTAssertEqual(store.summaries.count, 1)
+        XCTAssertEqual(store.summaries.count, 2)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         store.retrySaving()
         XCTAssertNil(store.persistenceError)
@@ -207,7 +268,7 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertThrowsError(try failingStore.record(summary())) { error in
             XCTAssertEqual(error as? ActivityStoreError, .writeFailed)
         }
-        XCTAssertTrue(failingStore.summaries.isEmpty)
+        XCTAssertEqual(failingStore.summaries.count, 1)
     }
 
     func testMissingFileDoesNotCreateRuntimeDirectoryAndLegacyEntryIsNotMigrated() throws {
@@ -268,11 +329,12 @@ final class ActivityStoreTests: XCTestCase {
         let directory = store.fileURL.deletingLastPathComponent()
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
         defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
-        XCTAssertThrowsError(try store.record(summary(date: Date(timeIntervalSince1970: 200)))) { error in
+        let attempted = summary(date: Date(timeIntervalSince1970: 200))
+        XCTAssertThrowsError(try store.record(attempted)) { error in
             XCTAssertEqual(error as? ActivityStoreError, .writeFailed)
         }
         XCTAssertEqual(try Data(contentsOf: store.fileURL), original)
-        XCTAssertEqual(store.summaries, [first])
+        XCTAssertEqual(store.summaries, [attempted, first])
     }
 
     func testFailureIsObservableWithoutBlockingEnvironmentWork() throws {

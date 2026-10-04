@@ -65,7 +65,7 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 菜单命令与 toolbar 动作共享同一 intent，不复制业务执行路径。
 
-当前 shell 的刷新、Activity 导航和取消共同进入 `AppModel.performShellAction`；系统 `SidebarCommands` 提供侧边栏显隐。Library、Discover 与 Activity 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Manage、Batch Install 与 Activity 菜单和 toolbar 共用各自的动作。Activity 表格的 Command-C 只复制当前选中的语义摘要，详情和搜索字段保留系统文字复制。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
+当前 shell 的刷新和取消共同进入 `AppModel.performShellAction`；Activity 的跨窗口呈现进入可注入的 `AppModel.showActivity`，先选择 Activity，再以固定的主窗口 identity 调用 `openWindow(id:value:)`。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，Settings-only 时创建主窗口，反馈按钮复用已有窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library、Discover 与 Activity 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Manage、Batch Install 与 Activity 菜单和 toolbar 共用各自的动作。Activity 表格的 Command-C 只复制当前选中的语义摘要，详情和搜索字段保留系统文字复制。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
 
 ## 状态与刷新
 
@@ -151,7 +151,9 @@ Activity store 保存最多 100 条结构化、可本地化的用户摘要。持
 
 原始输出只在当前 App 会话的内存诊断对象或既有受控 Manager 日志中存在。UI 的“复制诊断”显式组合可公开信息，持久化前执行 sanitizer。Activity 文件位于 Cellar 自有 Application Support 范围，并通过可注入根目录测试；损坏数据作为独立读取错误处理，不阻止环境状态加载。
 
-当前 `ActivityStore` 将 schema v2 摘要（兼容读取 v1 数据）原子写入 `~/Library/Application Support/Cellar/Activity/activity.json`，保留最近 100 条并限制单文件大小为 1 MiB。持久目标使用 provider 包标识；npm 仅保留 Node/npm 版本与由版本派生的标识，不保留原始环境标识或安装路径。损坏或不支持版本的文件移到同一自有目录中的唯一 `.isolated` 文件并公开独立错误；写入失败保留原文件与内存摘要。旧 `ActivityEntry` 不迁移、不持久化。Hosted XCTest 不加载真实 Activity store。 Terminal 的插件/主题 Apply 使用 `.shell` scope 与有限语义步骤，逐项持久化成功、部分完成、失败或取消；不保存插件名、主题名、路径或诊断原文。
+当前 `ActivityStore` 将 schema v2 摘要（兼容读取 v1 数据）原子写入 `~/Library/Application Support/Cellar/Activity/activity.json`，保留最近 100 条并限制单文件大小为 1 MiB。持久目标使用 provider 包标识；npm 仅保留 Node/npm 版本与由版本派生的标识，不保留原始环境标识或安装路径。损坏或不支持版本的文件移到同一自有目录中的唯一 `.isolated` 文件并公开独立错误；写入失败保留原文件，并在内存中保留有序、按 ID 去重、最多 100 条的待保存摘要；这些摘要继续在历史中显示。下一次成功写入原子保存新记录、待保存记录与已有历史的合并结果后，才清空待保存集合；失败重试不会丢弃之前的待保存记录。旧 `ActivityEntry` 不迁移、不持久化。Hosted XCTest 不加载真实 Activity store。 Terminal 的插件/主题 Apply 使用 `.shell` scope 与有限语义步骤，逐项持久化成功、部分完成、失败或取消；不保存插件名、主题名、路径或诊断原文。
+
+Homebrew 的 Tap 与元数据任务使用明确的 provider scope 和有限操作类型，Tap 只保存安全的 owner/repository 标识，元数据目标由有限语义范围在展示时生成；诊断同样保留 Homebrew 身份。doctor 使用共享的当前会话诊断 store 与视图，stdout/stderr 分开且各自限制 16,000 字符，始终提示敏感信息与截断。冻结 Node adapter 的 post-install/post-uninstall/update verification unavailable 原因表示写入结果不能复验，逐项记为 unknown；latest verification unavailable 保留已知变化并记为部分完成。协议边界只兼容冻结卸载已知的 operation-shaped 错误（exitCode 0、failed、post-uninstall-state-unavailable），不接受其他缺少 code 的错误。
 
 默认 Activity 只读取持久语义摘要，在显示时按当前语言渲染 operation、scope、状态、原因及步骤。只写入终态；当前任务来自同一 `OperationStore` 的上下文、真实批次计数和取消请求状态，最终复查结束前保持可见。provider/scope、状态和本地搜索组合筛选，在构建表格行之前执行；选择随可见 ID 集合收敛。保存与读取错误使用有限可本地化提示，写入失败可重试保存，读取或隔离失败可重试读取；无法读取或隔离的原文件不会被新任务覆盖。
 

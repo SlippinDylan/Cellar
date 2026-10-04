@@ -8,8 +8,10 @@ struct CellarApp: App {
     private let updateController = ApplicationUpdateController()
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: AppScene.mainWindowID, for: MainWindowIdentity.self) { _ in
             AppRootView(model: model)
+        } defaultValue: {
+            .main
         }
         .defaultSize(width: 1080, height: 720)
         .commands {

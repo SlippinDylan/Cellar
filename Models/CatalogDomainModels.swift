@@ -403,6 +403,9 @@ enum ActivityOperationKind: String, Codable, CaseIterable, Sendable {
     case openHomebrewInstaller
     case configuration
     case maintenance
+    case addHomebrewTap
+    case removeHomebrewTap
+    case updateHomebrewMetadata
 }
 
 enum ActivityItemReason: String, Codable, CaseIterable, Sendable {
@@ -427,6 +430,9 @@ struct ActivityItemSummary: Equatable, Codable, Sendable {
 
 enum ActivityScope: Hashable, Codable, Sendable {
     case homebrew(HomebrewPackageKind)
+    case homebrewTaps
+    case homebrewMetadata
+    case homebrewDiagnostics
     case npm(NodeEnvironmentContext)
     case nodeRuntime(NodeEnvironmentContext)
     case shell

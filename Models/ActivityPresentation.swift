@@ -20,7 +20,8 @@ struct ActivityFilter {
         let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return summaries.filter { summary in
             let matchesProvider: Bool = switch (provider, summary.scope) {
-            case (.all, _), (.homebrew, .homebrew), (.formula, .homebrew(.formula)), (.cask, .homebrew(.cask)),
+            case (.all, _), (.homebrew, .homebrew), (.homebrew, .homebrewTaps), (.homebrew, .homebrewMetadata), (.homebrew, .homebrewDiagnostics),
+                 (.formula, .homebrew(.formula)), (.cask, .homebrew(.cask)),
                  (.npm, .npm), (.nodeRuntime, .nodeRuntime), (.shell, .shell): true
             default: false
             }
@@ -61,6 +62,9 @@ struct ActivityRenderer {
         switch scope {
         case .homebrew(.formula): localized("Homebrew · Formula")
         case .homebrew(.cask): localized("Homebrew · Cask")
+        case .homebrewTaps: localized("Homebrew · Taps")
+        case .homebrewMetadata: localized("Homebrew · Metadata")
+        case .homebrewDiagnostics: localized("Homebrew · Diagnostics")
         case .npm(let environment): localized("npm · Node \(environment.nodeVersion) · npm \(environment.npmVersion)")
         case .nodeRuntime(let environment): localized("Node Runtime · Node \(environment.nodeVersion)")
         case .shell: localized("Terminal")
@@ -86,7 +90,15 @@ struct ActivityRenderer {
     func reason(_ reason: ActivityItemReason) -> String { localized(reason.message) }
     func target(_ summary: ActivitySummary) -> String {
         if summary.scope == .shell { return summary.itemOutcomes.compactMap(\.shellStep).map { localized($0.title) }.joined(separator: ", ") }
-        return summary.targetDisplayNames.joined(separator: ", ")
+        return targets(summary.targetDisplayNames, scope: summary.scope)
+    }
+
+    func targets(_ names: [String], scope: ActivityScope?) -> String {
+        switch scope {
+        case .homebrewMetadata: localized("Homebrew and Tap Metadata")
+        case .homebrewDiagnostics: localized("Homebrew Health")
+        default: names.joined(separator: ", ")
+        }
     }
 
     func counts(_ summary: ActivitySummary) -> String {
@@ -127,6 +139,9 @@ extension ActivityOperationKind {
         case .openHomebrewInstaller: LocalizedStringResource("Open Verified Homebrew Installer")
         case .configuration: LocalizedStringResource("Change Configuration")
         case .maintenance: LocalizedStringResource("Environment Maintenance")
+        case .addHomebrewTap: LocalizedStringResource("Add Homebrew Tap")
+        case .removeHomebrewTap: LocalizedStringResource("Remove Homebrew Tap")
+        case .updateHomebrewMetadata: LocalizedStringResource("Update Homebrew Metadata")
         }
     }
 }
@@ -176,6 +191,19 @@ extension BatchItemStatus {
 }
 
 extension ActivityItemReason {
+    static func verificationStatus(code: String) -> BatchItemStatus? {
+        switch code {
+        case "post-install-state-unavailable", "post-uninstall-state-unavailable", "update-verification-unavailable", "update-result-unavailable": .unknown
+        case "latest-verification-unavailable": .partiallySucceeded
+        default: nil
+        }
+    }
+
+    static func postWriteStatus(error: Error) -> BatchItemStatus? {
+        guard case BridgeError.managerFailure(let code, _) = error else { return nil }
+        return verificationStatus(code: code)
+    }
+
     init(error: Error, preparing: Bool = false) {
         if error is CancellationError { self = .cancelledByUser; return }
         if let error = error as? URLError { self = error.code == .cancelled ? .cancelledByUser : .network; return }
@@ -203,7 +231,8 @@ extension ActivityItemReason {
             case .processTimedOut: self = .network
             case .invalidOutput, .unsupportedSchema: self = .stateUnavailable
             case .managerFailure(let code, _):
-                if ["plan-stale", "plan-expired", "npm-update-not-behind"].contains(code) || code.hasSuffix("-changed") { self = .stateChanged }
+                if Self.verificationStatus(code: code) != nil { self = .stateUnavailable }
+                else if ["plan-stale", "plan-expired", "npm-update-not-behind"].contains(code) || code.hasSuffix("-changed") { self = .stateChanged }
                 else if code.contains("permission") { self = .permission }
                 else if code.hasSuffix("-unavailable") || code.hasSuffix("-not-found") { self = .unavailable }
                 else { self = preparing ? .preparationFailed : .providerFailure }

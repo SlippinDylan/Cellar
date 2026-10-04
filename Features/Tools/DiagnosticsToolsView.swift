@@ -4,6 +4,7 @@ struct DiagnosticsToolsView: View {
     @ObservedObject var model: AppModel
     @State private var nodePath = ""
     @State private var showsDetails = false
+    var clipboard: ActivityClipboard = .live
     var body: some View {
         Form {
             Section {
@@ -39,15 +40,7 @@ struct DiagnosticsToolsView: View {
             nodePath = await model.service.controlledNodePath(preferredVersion: model.preferredNodeVersion)
         }
         .sheet(isPresented: $showsDetails) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Homebrew Diagnostics").font(.title2)
-                if let report = model.homebrewDiagnosticReport {
-                    let detail = DiagnosticText.sanitized(report.command.standardOutput + "\n" + report.command.standardError)
-                    ScrollView { Text(detail).font(.body.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }
-                    ShareLink(item: detail) { Label("Copy or Share Diagnostics", systemImage: "square.and.arrow.up") }
-                }
-                Button("Close") { showsDetails = false }.keyboardShortcut(.cancelAction)
-            }.padding(24).frame(width: 580, height: 420)
+            ActivityDiagnosticsView(store: model.activityDiagnostics, initialSelection: model.homebrewDiagnosticRecordID, clipboard: clipboard)
         }
     }
 }

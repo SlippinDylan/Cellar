@@ -141,7 +141,8 @@ private struct ActivityHistoryView: View {
             }
             Text(renderer.operation(current.context.operation)).font(.body.weight(.medium))
             Text(renderer.scope(current.context.scope))
-            if !current.context.targets.isEmpty { Text(current.context.targets.joined(separator: ", ")).lineLimit(2) }
+            let targets = renderer.targets(current.context.targets, scope: current.context.scope)
+            if !targets.isEmpty { Text(targets).lineLimit(2) }
             HStack {
                 ProgressView().controlSize(.small).accessibilityHidden(true)
                 if current.cancellationRequested { Text("Cancellation Requested · Verifying Completed Changes") }

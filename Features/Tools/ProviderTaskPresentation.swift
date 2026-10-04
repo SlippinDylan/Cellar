@@ -56,6 +56,7 @@ struct ProviderTaskPresentation: ViewModifier {
 
 struct ProviderTaskFeedback: View {
     @ObservedObject var model: AppModel
+    @Environment(\.openWindow) private var openWindow
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if model.isNodeWorking || model.isHomebrewWorking || model.isShellWorking {
@@ -83,7 +84,7 @@ struct ProviderTaskFeedback: View {
                 resultLabel(status)
             }
             if !errors.isEmpty || model.nodeActionResult != nil || model.shellActionResult != nil || model.homebrewActionResult != nil {
-                Button("View Activity") { model.selectedDestination = .activity }
+                Button("View Activity") { model.showActivity { openWindow(id: $0, value: $1) } }
                 Button("Dismiss Feedback") { model.dismissNodeFeedback(); model.dismissShellFeedback(); model.dismissHomebrewFeedback() }
             }
         }

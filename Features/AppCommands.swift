@@ -6,6 +6,7 @@ struct AppCommands: Commands {
     @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
     @FocusedValue(\.activityActions) private var activityActions
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
     let updateController: ApplicationUpdateController
@@ -24,7 +25,8 @@ struct AppCommands: Commands {
         CommandMenu("Go") {
             ForEach(AppDestination.allCases) { destination in
                 Button {
-                    Task { await model.performShellAction(.show(destination)) }
+                    if destination == .activity { model.showActivity { openWindow(id: $0, value: $1) } }
+                    else { Task { await model.performShellAction(.show(destination)) } }
                 } label: { Text(destination.title) }
             }
         }
@@ -59,7 +61,7 @@ struct AppCommands: Commands {
             Button("Refresh") { Task { await model.performShellAction(.refresh) } }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(model.isBusy)
-            Button("View Activity") { Task { await model.performShellAction(.show(.activity)) } }
+            Button("View Activity") { model.showActivity { openWindow(id: $0, value: $1) } }
             Button("Cancel Task") { Task { await model.performShellAction(.cancel) } }
                 .keyboardShortcut(".", modifiers: .command)
                 .disabled(operationStore.activeTask?.canCancel != true)

@@ -72,7 +72,14 @@ final class DiscoverSearchModel: ObservableObject {
         if let guidance = Self.guidance(scope, context: context) { state = guidance; return }
         guard !operationStore.hasActiveOperations else { state = .busy; return }
         state = .loading
-        let operationID = operationStore.begin()
+        let activityScope: ActivityScope = switch scope {
+        case .homebrewFormula: .homebrew(.formula)
+        case .homebrewCask: .homebrew(.cask)
+        case .npm:
+            if let npm = context.npm { .npm(npm.environment) }
+            else { preconditionFailure("npm search requires a validated context") }
+        }
+        let operationID = operationStore.begin(context: .init(operation: .search, scope: activityScope, targets: [], stage: .checking))
         let task = Task { await self.run(term, scope: scope, context: context, limit: limit, request: request, operationID: operationID) }
         owner = (operationID, task)
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }

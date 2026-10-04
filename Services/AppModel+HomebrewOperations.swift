@@ -5,14 +5,14 @@ extension AppModel {
         do {
             let plan = try await createHomebrewPlan { try await self.service.planHomebrewUpdate() }
             await executeHomebrewAction(plan)
-        } catch { homebrewOperationError = error.localizedDescription }
+        } catch { homebrewOperationError = failureMessage(error) }
     }
 
     func searchHomebrew(_ query: String) async {
         guard !isBusy else { return }
         isHomebrewWorking = true
         homebrewOperationError = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: .init(operation: .refresh, scope: .homebrew(.formula), targets: [], stage: .checking))
         defer {
             isHomebrewWorking = false
             operationStore.end(operationID)
@@ -21,7 +21,7 @@ extension AppModel {
             homebrewSearchResults = try await service.searchHomebrew(query)
         } catch {
             homebrewSearchResults = []
-            homebrewOperationError = error.localizedDescription
+            homebrewOperationError = failureMessage(error)
         }
     }
 
@@ -29,7 +29,7 @@ extension AppModel {
         guard !isBusy else { return }
         isHomebrewWorking = true
         homebrewOperationError = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: .init(operation: .maintenance, scope: .homebrew(.formula), targets: [], stage: .checking))
         defer {
             isHomebrewWorking = false
             operationStore.end(operationID)
@@ -40,10 +40,11 @@ extension AppModel {
             }
             homebrewDiagnosticReport = report
             homebrewDiagnostics = report.diagnostics
+            activityDiagnostics.record(operation: .maintenance, scope: .homebrew(.formula), detail: "", command: report.command)
         } catch {
             homebrewDiagnosticReport = nil
             homebrewDiagnostics = []
-            homebrewOperationError = error.localizedDescription
+            homebrewOperationError = failureMessage(error)
         }
     }
 
@@ -106,7 +107,8 @@ extension AppModel {
         isHomebrewWorking = true
         homebrewOperationError = nil
         homebrewActionResult = nil
-        let operationID = operationStore.begin()
+        let context = plan.activityContext
+        let operationID = operationStore.begin(context: context)
         let activityID = beginActivity(title: plan.activityTitle, detail: "正在执行 Homebrew 操作")
 
         defer {
@@ -139,17 +141,17 @@ extension AppModel {
                 let message = result.command.terminationStatus == 0
                     ? "命令结束后复查未确认所有目标，但部分目标状态已经改变；请检查命令输出"
                     : "命令报告失败，但复查发现目标状态已经改变；请检查命令输出"
-                homebrewOperationError = message
+                homebrewOperationError = String(localized: ActivityItemReason.providerFailure.message)
                 activityDetail = result.activityDetail(prefix: message)
             case .failed:
                 activityOutcome = .failed
                 let message = result.command.standardError.nilIfBlank ?? "Homebrew 操作没有完成"
-                homebrewOperationError = message
+                homebrewOperationError = String(localized: ActivityItemReason.providerFailure.message)
                 activityDetail = result.activityDetail(prefix: message)
             case .stateUnknown:
                 activityOutcome = .failed
                 let message = result.postflightError ?? "操作结束后无法确认本机状态"
-                homebrewOperationError = message
+                homebrewOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
                 activityDetail = result.activityDetail(prefix: message)
             }
             finishActivity(
@@ -162,11 +164,12 @@ extension AppModel {
             let status: ActivityStatus = switch result.outcome {
             case .succeeded: .succeeded
             case .partial: .partiallySucceeded
-            case .failed, .stateUnknown: .failed
+            case .failed: .failed
+            case .stateUnknown: .unknown
             }
-            recordHomebrewSummary(plan, status: status)
+            recordHomebrewSummary(plan, id: activityID, status: status)
         } catch {
-            homebrewOperationError = error.localizedDescription
+            homebrewOperationError = failureMessage(error)
             if let managers {
                 let refresh = Task { try await service.loadHomebrew(snapshot: managers) }
                 if let refreshedHomebrew = try? await refresh.value {
@@ -180,7 +183,7 @@ extension AppModel {
                 outcome: .failed,
                 detail: error.localizedDescription
             )
-            recordHomebrewSummary(plan, status: error is CancellationError ? .cancelled : .failed)
+            recordHomebrewSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : .failed, reason: .init(error: error))
         }
     }
 
@@ -198,7 +201,7 @@ extension AppModel {
         operation: @escaping @Sendable () async throws -> HomebrewActionPlan
     ) async {
         do { homebrewPlan = try await createHomebrewPlan(operation: operation) }
-        catch { homebrewOperationError = error.localizedDescription }
+        catch { homebrewOperationError = failureMessage(error) }
     }
 
     private func createHomebrewPlan(operation: @escaping @Sendable () async throws -> HomebrewActionPlan) async throws -> HomebrewActionPlan {
@@ -206,7 +209,7 @@ extension AppModel {
         isHomebrewWorking = true
         homebrewOperationError = nil
         homebrewActionResult = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: .init(operation: .configuration, scope: nil, targets: [], stage: .preparing))
         defer {
             isHomebrewWorking = false
             operationStore.end(operationID)
@@ -219,23 +222,34 @@ extension AppModel {
         }
     }
 
-    private func recordHomebrewSummary(_ plan: HomebrewActionPlan, status: ActivityStatus) {
+    private func recordHomebrewSummary(_ plan: HomebrewActionPlan, id: UUID, status: ActivityStatus, reason: ActivityItemReason? = nil) {
         let operation: ActivityOperationKind = switch plan.action {
         case .install: .install
-        case .upgrade, .update: .update
+        case .upgrade: .update
+        case .update: .maintenance
         case .uninstallFormula, .uninstallCask, .zapCask: .uninstall
         case .addTap, .removeTap: .configuration
         }
         let scope = plan.targets.first.map { ActivityScope.homebrew($0.kind) }
-        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: scope,
+        activityStore?.append(ActivitySummary(id: id, operation: operation, scope: scope,
                                              targetDisplayNames: plan.targets.map(\.name), date: Date(),
                                              status: status, itemOutcomes: plan.targets.map {
-            ActivityItemSummary(displayName: $0.name, status: status.itemStatus, reason: status.itemReason)
-        }))
+            ActivityItemSummary(displayName: $0.name, status: status.itemStatus, reason: reason ?? status.itemReason)
+        }, reason: reason ?? status.itemReason))
     }
 }
 
 private extension HomebrewActionPlan {
+    var activityContext: ActiveOperationContext {
+        let operation: ActivityOperationKind = switch action {
+        case .install: .install
+        case .upgrade: .update
+        case .update: .maintenance
+        case .uninstallFormula, .uninstallCask, .zapCask: .uninstall
+        case .addTap, .removeTap: .configuration
+        }
+        return .init(operation: operation, scope: targets.first.map { .homebrew($0.kind) }, targets: targets.map(\.name), stage: .executing)
+    }
     var activityTitle: String {
         switch action {
         case .install: "安装 Homebrew 软件包"

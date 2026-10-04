@@ -59,10 +59,12 @@ struct ShellConfigurationResult: Sendable {
     let failure: String?
     var wasCancelled = false
     var stepOutcomes: [ShellStepOutcome] = []
+    var failureReason: ActivityItemReason? = nil
     var status: ActivityStatus {
         if !stepOutcomes.isEmpty {
             if stepOutcomes.allSatisfy({ $0.status == .succeeded }), failure == nil { return .succeeded }
             if stepOutcomes.contains(where: { [.succeeded, .partiallySucceeded].contains($0.status) }) { return .partiallySucceeded }
+            if stepOutcomes.allSatisfy({ $0.status == .unknown }) { return .unknown }
             return wasCancelled || stepOutcomes.allSatisfy({ $0.status == .cancelled }) ? .cancelled : .failed
         }
         if failure == nil { return .succeeded }

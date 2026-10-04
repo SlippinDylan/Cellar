@@ -7,6 +7,22 @@ import XCTest
 
 @MainActor
 final class HomeDashboardTests: XCTestCase {
+    func testSetupRequestsPersistHandoffSemanticsAndFiniteTrustFailures() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarSetupActivity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        var deps = dependencies(events: HomeTestEvents())
+        deps.openInstaller = { throw HomebrewSetupError(failure: .packageSignature) }
+        let model = HomeDashboardModel(dependencies: deps, operationStore: OperationStore(), activityStore: activity)
+        await model.requestCommandLineTools(installation: .commandLineToolsRequired)
+        XCTAssertEqual(activity.summaries.first?.operation, .requestCommandLineTools)
+        XCTAssertEqual(activity.summaries.first?.status, .succeeded)
+        await model.openHomebrewInstaller(installation: .notInstalled)
+        XCTAssertEqual(activity.summaries.first?.operation, .openHomebrewInstaller)
+        XCTAssertEqual(activity.summaries.first?.status, .failed)
+        XCTAssertEqual(activity.summaries.first?.reason, .stateUnavailable)
+    }
+
     func testOnlineChecksRequireLocalRefreshAndHostedTestsStayIsolated() async {
         let events = HomeTestEvents()
         let model = HomeDashboardModel(dependencies: dependencies(events: events), operationStore: OperationStore())

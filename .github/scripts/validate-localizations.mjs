@@ -7,6 +7,8 @@ export const presentationSources = [
   'CellarApp.swift',
   'Features/AppRootView.swift',
   'Features/AppCommands.swift',
+  'Features/Activity/ActivityView.swift',
+  'Features/Activity/ActivityDiagnosticsView.swift',
   'Features/ShellPlaceholderView.swift',
   'Features/Home/HomeView.swift',
   'Features/Catalog/CatalogCardView.swift',
@@ -33,6 +35,8 @@ export const presentationSources = [
   'Models/ConfigurationModels.swift',
   'Models/RuntimeCatalogFailure.swift',
   'Models/ShellActivityModels.swift',
+  'Models/ActivityPresentation.swift',
+  'Services/ActivityDiagnosticsStore.swift',
   'Services/RuntimeToolsModel.swift',
   'Bridge/ShellManagerClient.swift',
   'Bridge/BridgeError.swift',
@@ -41,7 +45,7 @@ export const presentationSources = [
 ];
 export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant'];
 
-const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|Toggle|DisclosureGroup|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
+const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|Toggle|DisclosureGroup|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|Menu|TableColumn|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint|localized|diagnosticSection)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
 const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning|registryLayer)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
 const discoverPresentationLiteral = /\b(?:guidance\s*\(|message:)\s*"((?:\\.|[^"\\])*)"/g;
 const signature = value => value.match(/%(?:\d+\$)?(?:[-+0 #]*)(?:\d+|\*)?(?:\.\d+)?(?:hh|ll|[hlz])?[@diuoxXfFeEgGcCs]/g) ?? [];

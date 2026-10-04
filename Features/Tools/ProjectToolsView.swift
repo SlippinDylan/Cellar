@@ -34,7 +34,7 @@ struct ProjectToolsView: View {
                 selectedDirectory = url
                 model.dismissNodePlan()
                 Task { await readProject(url) }
-            } catch { readError = error.localizedDescription }
+            } catch { readError = model.failureMessage(error) }
         }
         .onChange(of: model.nodeActionResult?.operation.operationId) { _, _ in
             if let selectedDirectory { Task { await readProject(selectedDirectory) } }
@@ -48,6 +48,6 @@ struct ProjectToolsView: View {
             guard selectedDirectory == url else { return }
             currentVersion = value
             version = value ?? ""
-        } catch { readError = error.localizedDescription }
+        } catch { readError = model.failureMessage(error) }
     }
 }

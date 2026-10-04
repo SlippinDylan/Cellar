@@ -51,12 +51,17 @@ final class HomeDashboardModel: ObservableObject {
     let officialHomebrewURL = CatalogWebsites.homebrew
     private let dependencies: HomeDashboardDependencies
     private let operationStore: OperationStore
+    private let activityStore: ActivityStore?
+    private let diagnosticsStore: ActivityDiagnosticsStore
     private var checkedLocalRefresh: Date?
     private var activeRefreshID: UUID?
 
-    init(dependencies: HomeDashboardDependencies, operationStore: OperationStore) {
+    init(dependencies: HomeDashboardDependencies, operationStore: OperationStore, activityStore: ActivityStore? = nil,
+         diagnosticsStore: ActivityDiagnosticsStore = ActivityDiagnosticsStore()) {
         self.dependencies = dependencies
         self.operationStore = operationStore
+        self.activityStore = activityStore
+        self.diagnosticsStore = diagnosticsStore
     }
 
     func onlineVersion(for source: HomeOnlineSource) -> OnlineVersionState {
@@ -123,7 +128,7 @@ final class HomeDashboardModel: ObservableObject {
     func requestCommandLineTools(installation: HomebrewInstallationState) async {
         guard installation == .commandLineToolsRequired, canBeginSetup else { return }
         setupState = .requestingCommandLineTools
-        await performSetup { [dependencies] in try await dependencies.requestCommandLineTools() }
+        await performSetup(.requestCommandLineTools) { [dependencies] in try await dependencies.requestCommandLineTools() }
         if setupState == .requestingCommandLineTools { setupState = .commandLineToolsRequested }
     }
 
@@ -140,7 +145,7 @@ final class HomeDashboardModel: ObservableObject {
     func openHomebrewInstaller(installation: HomebrewInstallationState) async {
         guard installation == .notInstalled, canBeginSetup else { return }
         setupState = .preparingInstaller
-        await performSetup { [dependencies] in
+        await performSetup(.openHomebrewInstaller) { [dependencies] in
             let tools: CommandLineToolsState
             do { tools = try await dependencies.commandLineTools() }
             catch {
@@ -196,12 +201,17 @@ final class HomeDashboardModel: ObservableObject {
         }
     }
 
-    private func performSetup(_ operation: @escaping @MainActor @Sendable () async throws -> Void) async {
-        let id = operationStore.begin()
+    private func performSetup(_ kind: ActivityOperationKind, operation: @escaping @MainActor @Sendable () async throws -> Void) async {
+        let id = operationStore.begin(context: .init(operation: kind, scope: nil, targets: [], stage: .executing))
         defer { operationStore.end(id) }
         do {
             try await operationStore.performCancellable(operationID: id, operation: operation)
+            activityStore?.append(.init(id: id, operation: kind, scope: nil, targetDisplayNames: [], date: Date(), status: .succeeded, itemOutcomes: []))
         } catch {
+            let cancelled = Task.isCancelled || error is CancellationError
+            activityStore?.append(.init(id: id, operation: kind, scope: nil, targetDisplayNames: [], date: Date(), status: cancelled ? .cancelled : .failed,
+                                        itemOutcomes: [], reason: cancelled ? .cancelledByUser : .init(error: error)))
+            diagnosticsStore.record(id: id, operation: kind, scope: nil, detail: error.localizedDescription)
             if Task.isCancelled || error is CancellationError { setupState = .idle }
             else if setupState == .requestingCommandLineTools { setupState = .failed(.commandLineTools) }
             else { setupState = .failed(.homebrew((error as? HomebrewSetupError)?.failure ?? .systemOpen)) }

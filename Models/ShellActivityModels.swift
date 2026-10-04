@@ -33,7 +33,7 @@ struct ShellStepOutcome: Equatable, Sendable {
 }
 
 extension ShellConfigurationResult {
-    func activitySummary(at date: Date = Date()) -> ActivitySummary {
-        .init(id: UUID(), operation: .configuration, scope: .shell, targetDisplayNames: [], date: date, status: status, itemOutcomes: stepOutcomes.map(\.summary))
+    func activitySummary(id: UUID = UUID(), at date: Date = Date()) -> ActivitySummary {
+        .init(id: id, operation: .configuration, scope: .shell, targetDisplayNames: [], date: date, status: status, itemOutcomes: stepOutcomes.map(\.summary), reason: failureReason)
     }
 }

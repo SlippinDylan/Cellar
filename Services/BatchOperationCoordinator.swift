@@ -31,7 +31,7 @@ struct BatchPlan: Identifiable, Sendable {
 
     var items: [BatchPreparedItem] {
         zip(intent.items, plans).map { item, plan in
-            let status: BatchPreparationStatus = if case .unavailable(let status) = plan { status } else { .ready }
+            let status: BatchPreparationStatus = if case .unavailable(let status, _) = plan { status } else { .ready }
             return BatchPreparedItem(item: item, status: status)
         }
     }
@@ -67,7 +67,7 @@ private enum BatchProviderPlan: Sendable {
     case homebrew(HomebrewActionPlan)
     case npm(NodeActionPlan, NodeEnvironmentContext)
     case nodeRuntime(NodeActionPlan, NodeEnvironmentContext)
-    case unavailable(BatchPreparationStatus)
+    case unavailable(BatchPreparationStatus, ActivityItemReason)
 }
 
 enum BatchProviderResult: Sendable {
@@ -129,18 +129,21 @@ final class BatchOperationCoordinator: ObservableObject {
     private let provider: any BatchOperationProviding
     private let operationStore: OperationStore
     private let activityStore: ActivityStore?
+    private let diagnosticsStore: ActivityDiagnosticsStore
 
-    init(provider: any BatchOperationProviding, operationStore: OperationStore, activityStore: ActivityStore? = nil) {
+    init(provider: any BatchOperationProviding, operationStore: OperationStore, activityStore: ActivityStore? = nil,
+         diagnosticsStore: ActivityDiagnosticsStore = ActivityDiagnosticsStore()) {
         self.provider = provider
         self.operationStore = operationStore
         self.activityStore = activityStore
+        self.diagnosticsStore = diagnosticsStore
     }
 
     func prepare(_ intent: BatchIntent) async throws -> BatchPlan {
         guard !operationStore.hasActiveOperations else { throw BatchOperationError.busy }
         preparedPlan = nil
         preparedUpdates = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: intent.activityContext(stage: .preparing))
         defer { operationStore.end(operationID) }
         let plan = try await operationStore.performCancellable(operationID: operationID) {
             try await self.preparePlan(intent)
@@ -156,7 +159,7 @@ final class BatchOperationCoordinator: ObservableObject {
               Set(items).count == items.count else { throw BatchOperationError.invalidPlan }
         preparedPlan = nil
         preparedUpdates = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: .init(operation: .update, scope: nil, targets: items.map(\.displayIdentifier), stage: .preparing))
         defer { operationStore.end(operationID) }
         let groups = try await operationStore.performCancellable(operationID: operationID) {
             var groups: [BatchPlan] = []
@@ -185,7 +188,7 @@ final class BatchOperationCoordinator: ObservableObject {
                     guard plan.request == NodeActionRequest(action: intent.operation.nodeAction, subject: identity.name)
                     else { throw BatchOperationError.invalidPlan }
                     if intent.operation == .install, plan.payload.alreadyInstalled == true {
-                        plans.append(.unavailable(.alreadyInstalled))
+                        plans.append(.unavailable(.alreadyInstalled, .alreadyInstalled))
                         continue
                     }
                     guard plan.canExecute else { throw BatchOperationError.invalidPlan }
@@ -206,7 +209,8 @@ final class BatchOperationCoordinator: ObservableObject {
                 if Task.isCancelled || error is CancellationError { throw CancellationError() }
                 guard intent.operation != .uninstall else { throw error }
                 let status: BatchPreparationStatus = if case HomebrewClientError.alreadyInstalled = error { .alreadyInstalled } else { .unavailable }
-                plans.append(.unavailable(status))
+                plans.append(.unavailable(status, .init(error: error, preparing: true)))
+                diagnosticsStore.record(operation: intent.activityOperation, scope: intent.scope.activityScope, detail: error.localizedDescription)
             }
         }
         try Task.checkCancellation()
@@ -233,7 +237,9 @@ final class BatchOperationCoordinator: ObservableObject {
 
     private func executePlans(_ plans: [BatchPlan]) async throws -> [BatchExecutionResult] {
         activeIntents = plans.map(\.intent)
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: plans[0].intent.activityContext(stage: .executing))
+        let total = plans.reduce(0) { $0 + $1.intent.items.count }
+        operationStore.updateProgress(completed: 0, total: total)
         defer {
             runningItem = nil
             activeIntent = nil
@@ -244,6 +250,7 @@ final class BatchOperationCoordinator: ObservableObject {
             var executions: [([BatchItemOutcome], [BatchProviderResult?], Bool)] = []
             for plan in plans {
                 self.activeIntent = plan.intent
+                self.operationStore.updateContext(plan.intent.activityContext(stage: .executing))
                 executions.append(await self.executeItems(plan))
             }
             return executions
@@ -251,6 +258,8 @@ final class BatchOperationCoordinator: ObservableObject {
         runningItem = nil
         activeIntent = nil
         activeIntents = []
+        operationStore.updateContext(.init(operation: plans[0].intent.activityOperation, scope: plans.count == 1 ? plans[0].intent.scope.activityScope : nil,
+                                          targets: [], stage: .reconciling))
         // Formula and Cask share one inventory. Reconcile it once after all typed groups.
         var reconciliations: [BatchReconciliationKey: (BatchRefreshStatus, BatchRefreshedState?)] = [:]
         for (plan, execution) in zip(plans, executions) where execution.2 {
@@ -268,7 +277,7 @@ final class BatchOperationCoordinator: ObservableObject {
             let reconciliation = reconciliations[BatchReconciliationKey(plan.intent.scope)] ?? (.notNeeded, nil)
             results.append(BatchExecutionResult(outcome: outcome, providerResults: execution.1,
                                                refreshStatus: reconciliation.0, refreshedState: reconciliation.1))
-            activityStore?.append(outcome.activitySummary)
+            activityStore?.append(outcome.activitySummary(id: plan.id))
         }
         // A shared provider failure has one separate warning, without changing item outcomes.
         var reported: Set<BatchReconciliationKey> = []
@@ -276,7 +285,7 @@ final class BatchOperationCoordinator: ObservableObject {
             let key = BatchReconciliationKey(plan.intent.scope)
             if reconciliations[key]?.0 == .failed, reported.insert(key).inserted {
                 activityStore?.append(ActivitySummary(id: UUID(), operation: .refresh, scope: plan.intent.scope.activityScope,
-                                                     targetDisplayNames: [], date: Date(), status: .failed, itemOutcomes: []))
+                                                     targetDisplayNames: [], date: Date(), status: .failed, itemOutcomes: [], reason: .stateUnavailable))
             }
         }
         return results
@@ -287,13 +296,19 @@ final class BatchOperationCoordinator: ObservableObject {
         var results: [BatchProviderResult?] = []
         var started = false
         for (item, prepared) in zip(plan.intent.items, plan.plans) {
-            if case .unavailable = prepared {
-                outcomes.append(.init(item: item, status: .failed, userFacingMessage: nil))
+            defer {
+                guard let current = operationStore.currentOperation, let completed = current.completed, let total = current.total else {
+                    preconditionFailure("Batch execution owns known progress")
+                }
+                operationStore.updateProgress(completed: completed + 1, total: total)
+            }
+            if case .unavailable(_, let reason) = prepared {
+                outcomes.append(.init(item: item, status: .failed, userFacingMessage: nil, reason: reason))
                 results.append(nil)
                 continue
             }
             if Task.isCancelled {
-                outcomes.append(.init(item: item, status: .cancelled, userFacingMessage: nil))
+                outcomes.append(.init(item: item, status: .cancelled, userFacingMessage: nil, reason: .cancelledByUser))
                 results.append(nil)
                 continue
             }
@@ -301,6 +316,7 @@ final class BatchOperationCoordinator: ObservableObject {
             started = true
             do {
                 let status: BatchItemStatus
+                let reason: ActivityItemReason?
                 switch prepared {
                 case .homebrew(let providerPlan):
                     let result = try await self.provider.executeHomebrew(providerPlan)
@@ -311,21 +327,31 @@ final class BatchOperationCoordinator: ObservableObject {
                     case .partial: .partiallySucceeded
                     case .stateUnknown: .unknown
                     }
+                    reason = status == .succeeded ? nil : status == .unknown ? .stateUnavailable : .providerFailure
+                    diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope,
+                                            detail: result.postflightError ?? "", command: result.command)
                 case .npm(let providerPlan, let environment):
                     let result = try await self.provider.executeNPM(providerPlan, environment: environment)
                     results.append(.npm(result))
                     status = result.batchItemStatus
+                    reason = status == .succeeded ? nil : status == .unknown ? .stateUnavailable : status == .partiallySucceeded ? .residueDetected : .init(error: BridgeError.managerFailure(code: result.detail ?? "provider-failure", detail: nil))
+                    diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope,
+                                            detail: [result.detail ?? "", result.logFile].joined(separator: "\n"))
                 case .nodeRuntime(let providerPlan, let environment):
                     let result = try await self.provider.executeNodeUninstall(providerPlan, environment: environment)
                     results.append(.nodeRuntime(result))
                     status = result.status == "ok" && result.exitCode == 0 ? .succeeded : .failed
+                    reason = status == .succeeded ? nil : .providerFailure
+                    diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope,
+                                            detail: [result.detail ?? "", result.logFile].joined(separator: "\n"))
                 case .unavailable: preconditionFailure("Unavailable preparation never enters execution")
                 }
-                outcomes.append(.init(item: item, status: status, userFacingMessage: nil))
+                outcomes.append(.init(item: item, status: status, userFacingMessage: nil, reason: reason))
             } catch {
                 outcomes.append(.init(item: item, status: error is CancellationError || Task.isCancelled ? .cancelled : .failed,
-                                      userFacingMessage: nil))
+                                      userFacingMessage: nil, reason: .init(error: error)))
                 results.append(nil)
+                diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope, detail: error.localizedDescription)
             }
         }
         return (outcomes, results, started)
@@ -367,7 +393,7 @@ extension BatchOperation {
     }
 }
 
-private extension BatchScope {
+extension BatchScope {
     var activityScope: ActivityScope {
         switch self {
         case .homebrew(let kind): .homebrew(kind)
@@ -377,14 +403,9 @@ private extension BatchScope {
     }
 }
 
-private extension BatchOutcome {
-    var activitySummary: ActivitySummary {
-        let operation: ActivityOperationKind = switch intent.operation {
-        case .install: .install
-        case .update: .update
-        case .uninstall: .uninstall
-        }
-        return ActivitySummary(id: UUID(), operation: operation, scope: intent.scope.activityScope,
+extension BatchOutcome {
+    func activitySummary(id: UUID) -> ActivitySummary {
+        return ActivitySummary(id: id, operation: intent.activityOperation, scope: intent.scope.activityScope,
                                targetDisplayNames: intent.items.map(\.displayIdentifier), date: Date(), status: status,
                                itemOutcomes: itemOutcomes.map { outcome in
             let reason: ActivityItemReason? = switch outcome.status {
@@ -393,7 +414,16 @@ private extension BatchOutcome {
             case .cancelled: .cancelledByUser
             case .unknown: .stateUnavailable
             }
-            return ActivityItemSummary(displayName: outcome.item.displayIdentifier, status: outcome.status, reason: reason)
+            return ActivityItemSummary(displayName: outcome.item.displayIdentifier, status: outcome.status, reason: outcome.reason ?? reason)
         })
+    }
+}
+
+extension BatchIntent {
+    var activityOperation: ActivityOperationKind {
+        switch operation { case .install: .install; case .update: .update; case .uninstall: .uninstall }
+    }
+    func activityContext(stage: ActivityTaskStage) -> ActiveOperationContext {
+        .init(operation: activityOperation, scope: scope.activityScope, targets: items.map(\.displayIdentifier), stage: stage)
     }
 }

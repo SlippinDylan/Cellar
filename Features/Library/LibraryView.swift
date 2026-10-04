@@ -46,6 +46,7 @@ struct LibraryView: View {
             }
             providerWarnings
             if let error = management.error { Text(error.libraryMessage).foregroundStyle(.secondary) }
+            if let reason = management.failureReason { Text(reason.message).foregroundStyle(.secondary) }
             if let result = management.result { LibraryResultView(result: result) }
             ScrollView {
                 if state == .available {

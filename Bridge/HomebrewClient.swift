@@ -5,6 +5,7 @@ enum HomebrewClientError: LocalizedError {
     case commandFailed(HomebrewCommandOutput)
     case invalidJSON(arguments: [String], detail: String)
     case invalidPlan(String)
+    case stateChanged
     case alreadyInstalled(HomebrewPackageIdentity)
     case outputTruncated(arguments: [String])
 
@@ -20,6 +21,8 @@ enum HomebrewClientError: LocalizedError {
             "Homebrew 返回了无法识别的数据：\(detail)"
         case .invalidPlan(let detail):
             detail
+        case .stateChanged:
+            String(localized: ActivityItemReason.stateChanged.message)
         case .alreadyInstalled(let identity):
             "软件包已经安装：\(identity.name)"
         case .outputTruncated(let arguments):
@@ -310,7 +313,7 @@ actor HomebrewClient {
         }
         let outdated = Set(snapshot.outdatedPackages.map(\.identity))
         guard validatedTargets.allSatisfy(outdated.contains) else {
-            throw HomebrewClientError.invalidPlan("升级目标已经变化，请刷新后重试")
+            throw HomebrewClientError.stateChanged
         }
         let packages = snapshot.outdatedPackages.filter { validatedTargets.contains($0.identity) }
         guard packages.allSatisfy({ !$0.installedVersions.isEmpty && $0.currentVersion?.isEmpty == false }) else {
@@ -399,7 +402,7 @@ actor HomebrewClient {
             throw HomebrewClientError.invalidPlan("Tap 仍有关联的已安装软件包，不能移除")
         }
         guard Date().timeIntervalSince(plan.generatedAt) <= 300 else {
-            throw HomebrewClientError.invalidPlan("操作计划已过期，请重新生成")
+            throw HomebrewClientError.stateChanged
         }
         mutationInProgress = true
         defer { mutationInProgress = false }
@@ -477,18 +480,18 @@ actor HomebrewClient {
             guard packages.allSatisfy({ !$0.isInstalled }),
                   packagesFingerprint(packages) == plan.stateFingerprint
             else {
-                throw HomebrewClientError.invalidPlan("软件包状态已经变化，请重新生成安装计划")
+                throw HomebrewClientError.stateChanged
             }
         case .upgrade:
             let snapshot = try await loadSnapshot()
             guard snapshot.sectionErrors[.outdated] == nil,
                   upgradeFingerprint(snapshot.outdatedPackages.filter { plan.targets.contains($0.identity) }) == plan.stateFingerprint
             else {
-                throw HomebrewClientError.invalidPlan("升级状态已经变化，请刷新后重试")
+                throw HomebrewClientError.stateChanged
             }
             let outdated = Set(snapshot.outdatedPackages.map(\.identity))
             guard plan.targets.allSatisfy(outdated.contains) else {
-                throw HomebrewClientError.invalidPlan("升级目标已经变化，请重新生成计划")
+                throw HomebrewClientError.stateChanged
             }
         case .removeTap:
             guard let tapName = plan.tapName else {
@@ -496,7 +499,7 @@ actor HomebrewClient {
             }
             let current = try await planRemoveTap(tapName)
             guard current.associatedPackages == plan.associatedPackages, current.canExecute else {
-                throw HomebrewClientError.invalidPlan("Tap 关联项目已经变化，请重新生成计划")
+                throw HomebrewClientError.stateChanged
             }
         case .uninstallFormula, .uninstallCask, .zapCask:
             guard let target = plan.targets.first else {
@@ -512,7 +515,7 @@ actor HomebrewClient {
                 currentFingerprint = packageFingerprint(package)
             }
             guard package.isInstalled, currentFingerprint == plan.stateFingerprint else {
-                throw HomebrewClientError.invalidPlan("卸载目标状态已经变化，请重新生成计划")
+                throw HomebrewClientError.stateChanged
             }
         case .addTap:
             guard let tapName = plan.tapName else {
@@ -522,7 +525,7 @@ actor HomebrewClient {
             guard snapshot.sectionErrors[.taps] == nil,
                   !snapshot.taps.contains(where: { $0.name == tapName })
             else {
-                throw HomebrewClientError.invalidPlan("Tap 状态已经变化，请重新生成计划")
+                throw HomebrewClientError.stateChanged
             }
         case .update:
             break

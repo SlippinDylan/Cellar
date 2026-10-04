@@ -17,7 +17,7 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 当前源码已经实现：
 
 - Home/Library/Discover/Updates/Tools 与底部 Activity 的原生任务导航、独立 Settings scene 和 General/Sources/Terminal/About 四个 pane；
-- Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates 已接入可见范围内的直接单项更新与一次确认的批量更新；Tools 已接入环境安装、Runtime、Project、Diagnostics、Maintenance 五类任务，Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；Activity 页面仍显示明确的未开放占位；既有 provider 页面和业务实现保留，不再作为主窗口路由；
+- Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates 已接入可见范围内的直接单项更新与一次确认的批量更新；Tools 已接入环境安装、Runtime、Project、Diagnostics、Maintenance 五类任务，Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；Activity 已接入持久语义历史、当前任务、筛选、搜索、复制与显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - shell/Settings 的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条诊断 Activity；
@@ -26,7 +26,7 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 - 强类型计划、确认、单写操作、post-refresh、部分失败和进程组取消基础；
 - Manager 版本化安装、Sparkle、arm64/macOS 26 构建边界。
 
-1.0 仍需完成 Activity 页面、最终交互与人工验收。完成前，目标架构不能被描述为当前已交付实现。
+1.0 仍需完成最终交互与人工验收。未经人工验收的行为不能被描述为已验证或已发布。
 
 ## 分层与依赖
 
@@ -65,7 +65,7 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 菜单命令与 toolbar 动作共享同一 intent，不复制业务执行路径。
 
-当前 shell 的刷新、Activity 导航和取消共同进入 `AppModel.performShellAction`；系统 `SidebarCommands` 提供侧边栏显隐。Library 与 Discover 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Manage 和 Batch Install 菜单与 toolbar 共用各自的动作。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
+当前 shell 的刷新、Activity 导航和取消共同进入 `AppModel.performShellAction`；系统 `SidebarCommands` 提供侧边栏显隐。Library、Discover 与 Activity 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Manage、Batch Install 与 Activity 菜单和 toolbar 共用各自的动作。Activity 表格的 Command-C 只复制当前选中的语义摘要，详情和搜索字段保留系统文字复制。尚无实际搜索内容的页面不提供搜索命令。Settings 由原生 `TabView` 管理 pane，保留最近所选 pane；About 保留 Sparkle 检查、版本、更新通道和开源入口。
 
 ## 状态与刷新
 
@@ -152,6 +152,10 @@ Activity store 保存最多 100 条结构化、可本地化的用户摘要。持
 原始输出只在当前 App 会话的内存诊断对象或既有受控 Manager 日志中存在。UI 的“复制诊断”显式组合可公开信息，持久化前执行 sanitizer。Activity 文件位于 Cellar 自有 Application Support 范围，并通过可注入根目录测试；损坏数据作为独立读取错误处理，不阻止环境状态加载。
 
 当前 `ActivityStore` 将 schema v2 摘要（兼容读取 v1 数据）原子写入 `~/Library/Application Support/Cellar/Activity/activity.json`，保留最近 100 条并限制单文件大小为 1 MiB。持久目标使用 provider 包标识；npm 仅保留 Node/npm 版本与由版本派生的标识，不保留原始环境标识或安装路径。损坏或不支持版本的文件移到同一自有目录中的唯一 `.isolated` 文件并公开独立错误；写入失败保留原文件与内存摘要。旧 `ActivityEntry` 不迁移、不持久化。Hosted XCTest 不加载真实 Activity store。 Terminal 的插件/主题 Apply 使用 `.shell` scope 与有限语义步骤，逐项持久化成功、部分完成、失败或取消；不保存插件名、主题名、路径或诊断原文。
+
+默认 Activity 只读取持久语义摘要，在显示时按当前语言渲染 operation、scope、状态、原因及步骤。只写入终态；当前任务来自同一 `OperationStore` 的上下文、真实批次计数和取消请求状态，最终复查结束前保持可见。provider/scope、状态和本地搜索组合筛选，在构建表格行之前执行；选择随可见 ID 集合收敛。保存与读取错误使用有限可本地化提示，写入失败可重试保存，读取或隔离失败可重试读取；无法读取或隔离的原文件不会被新任务覆盖。
+
+`ActivityDiagnosticsStore` 只在当前进程内保留最多 100 条、每字段最多 16,000 字符的去敏技术记录。单项任务和摘要共享会话内 ID；批次 provider 诊断作为单独的当前会话集合提供，不猜测与持久行的关联。用户必须显式打开诊断窗口并选择记录；命令、stdout、stderr 和技术详情只在此展示和复制，并提示截断与敏感信息风险。去敏处理覆盖已知凭证/header/私钥/用户路径模式，不声称可以识别所有秘密，也不读取诊断中引用的文件路径。有限原因区分状态变化、工具不可用、网络、权限、准备失败、取消和无法复验；批次逐项结果与普通页面反馈共享这些恢复建议。CLT 请求与已验证 Homebrew Installer 的系统交接以各自语义动作记录成功，不表示工具已安装。
 
 ## Homebrew
 

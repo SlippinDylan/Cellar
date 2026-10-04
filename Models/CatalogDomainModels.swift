@@ -315,26 +315,38 @@ struct BatchIntent: Equatable, Sendable {
     }
 }
 
-enum BatchItemStatus: String, Codable, Sendable {
+enum BatchItemStatus: String, Codable, CaseIterable, Sendable {
     case succeeded
     case partiallySucceeded
     case failed
     case cancelled
     case unknown
+
+    var activityStatus: ActivityStatus {
+        switch self {
+        case .succeeded: .succeeded
+        case .partiallySucceeded: .partiallySucceeded
+        case .failed: .failed
+        case .cancelled: .cancelled
+        case .unknown: .unknown
+        }
+    }
 }
 
 struct BatchItemOutcome: Equatable, Sendable {
     let item: BatchItem
     let status: BatchItemStatus
     let userFacingMessage: String?
+    var reason: ActivityItemReason? = nil
 }
 
-enum ActivityStatus: String, Codable, Sendable {
+enum ActivityStatus: String, Codable, CaseIterable, Sendable {
     case running
     case succeeded
     case partiallySucceeded
     case failed
     case cancelled
+    case unknown
 
     var itemStatus: BatchItemStatus {
         switch self {
@@ -342,7 +354,7 @@ enum ActivityStatus: String, Codable, Sendable {
         case .failed: .failed
         case .cancelled: .cancelled
         case .partiallySucceeded: .partiallySucceeded
-        case .running: .unknown
+        case .running, .unknown: .unknown
         }
     }
 
@@ -352,6 +364,7 @@ enum ActivityStatus: String, Codable, Sendable {
         case .failed: .providerFailure
         case .cancelled: .cancelledByUser
         case .partiallySucceeded: .providerFailure
+        case .unknown: .stateUnavailable
         }
     }
 }
@@ -370,6 +383,7 @@ struct BatchOutcome: Equatable, Sendable {
         if itemOutcomes.allSatisfy({ $0.status == .succeeded }) { return .succeeded }
         if itemOutcomes.contains(where: { $0.status == .succeeded || $0.status == .partiallySucceeded }) { return .partiallySucceeded }
         if itemOutcomes.allSatisfy({ $0.status == .cancelled }) { return .cancelled }
+        if itemOutcomes.allSatisfy({ $0.status == .unknown }) { return .unknown }
         return .failed
     }
 
@@ -378,20 +392,30 @@ struct BatchOutcome: Equatable, Sendable {
     }
 }
 
-enum ActivityOperationKind: String, Codable, Sendable {
+enum ActivityOperationKind: String, Codable, CaseIterable, Sendable {
     case refresh
+    case search
     case install
     case update
     case uninstall
     case setup
+    case requestCommandLineTools
+    case openHomebrewInstaller
     case configuration
     case maintenance
 }
 
-enum ActivityItemReason: String, Codable, Sendable {
+enum ActivityItemReason: String, Codable, CaseIterable, Sendable {
     case providerFailure
     case cancelledByUser
     case stateUnavailable
+    case stateChanged
+    case unavailable
+    case network
+    case permission
+    case preparationFailed
+    case alreadyInstalled
+    case residueDetected
 }
 
 struct ActivityItemSummary: Equatable, Codable, Sendable {
@@ -416,6 +440,7 @@ struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {
     let date: Date
     let status: ActivityStatus
     let itemOutcomes: [ActivityItemSummary]
+    var reason: ActivityItemReason? = nil
 }
 
 struct PersistedActivityEnvelope: Equatable, Codable, Sendable {

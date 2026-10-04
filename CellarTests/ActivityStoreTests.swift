@@ -3,6 +3,70 @@ import XCTest
 
 @MainActor
 final class ActivityStoreTests: XCTestCase {
+    func testRestoreOnceTerminalOnlyAndStableUpdates() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        let first = summary()
+        try store.record(first)
+        store.restore()
+        try Data("corrupt".utf8).write(to: store.fileURL)
+        store.restore()
+        XCTAssertEqual(store.summaries, [first])
+        XCTAssertNil(store.persistenceError)
+        let replacement = ActivitySummary(id: first.id, operation: first.operation, scope: first.scope, targetDisplayNames: first.targetDisplayNames,
+                                          date: first.date, status: .succeeded, itemOutcomes: [])
+        try store.record(replacement)
+        XCTAssertEqual(store.summaries, [replacement])
+        let started = ActivitySummary(id: UUID(), operation: .refresh, scope: nil, targetDisplayNames: [], date: Date(), status: .running, itemOutcomes: [])
+        XCTAssertThrowsError(try store.record(started))
+    }
+
+    func testIsolationFailureDoesNotOverwriteOriginalAndCanRecover() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        try store.record(summary())
+        let original = Data("corrupt original".utf8)
+        try original.write(to: store.fileURL)
+        let directory = store.fileURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+        store.restore()
+        XCTAssertEqual(store.persistenceError, .isolationFailed)
+        store.append(summary())
+        XCTAssertEqual(store.persistenceError, .isolationFailed)
+        XCTAssertEqual(try Data(contentsOf: store.fileURL), original)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        store.retryLoading()
+        XCTAssertEqual(store.persistenceError, .corruptData)
+        store.append(summary())
+        XCTAssertNil(store.persistenceError)
+        XCTAssertEqual(store.summaries.count, 1)
+    }
+
+    func testFailedSaveCanRetryAndKeepsSemanticReason() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        try store.record(summary())
+        let directory = store.fileURL.deletingLastPathComponent()
+        let failed = ActivitySummary(id: UUID(), operation: .configuration, scope: .npm(.init(identifier: "/private", nodeVersion: "v22.0.0", npmVersion: "10.0.0")),
+                                     targetDisplayNames: [], date: Date(), status: .failed, itemOutcomes: [], reason: .stateChanged)
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+        store.append(failed)
+        XCTAssertEqual(store.persistenceError, .writeFailed)
+        XCTAssertEqual(store.summaries.count, 1)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        store.retrySaving()
+        XCTAssertNil(store.persistenceError)
+        let restored = ActivityStore(applicationSupportRoot: root)
+        restored.restore()
+        XCTAssertEqual(restored.summaries.first?.reason, .stateChanged)
+        XCTAssertEqual(restored.summaries.count, 2)
+    }
+
     func testShellSemanticStepsRoundTripAndRejectUserControlledNames() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

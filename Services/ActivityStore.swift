@@ -16,12 +16,21 @@ final class ActivityStore: ObservableObject {
     @Published private(set) var summaries: [ActivitySummary] = []
     @Published private(set) var persistenceError: ActivityStoreError?
     let fileURL: URL
+    private var blockedError: ActivityStoreError?
+    private var didRestore = false
+    private var pendingSummary: ActivitySummary?
 
     init(applicationSupportRoot: URL) {
         fileURL = applicationSupportRoot.appending(path: "Cellar/Activity/activity.json")
     }
 
     func restore() {
+        guard !didRestore else { return }
+        didRestore = true
+        retryLoading()
+    }
+
+    func retryLoading() {
         do {
             try load()
             persistenceError = nil
@@ -33,14 +42,22 @@ final class ActivityStore: ObservableObject {
     func append(_ summary: ActivitySummary) {
         do {
             try record(summary)
+            pendingSummary = nil
             persistenceError = nil
         } catch {
+            if error == .writeFailed { pendingSummary = summary }
             persistenceError = error
         }
     }
 
+    func retrySaving() {
+        guard let pendingSummary else { return }
+        append(pendingSummary)
+    }
+
     func load() throws(ActivityStoreError) {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            blockedError = nil
             summaries = []
             return
         }
@@ -54,6 +71,7 @@ final class ActivityStore: ObservableObject {
         } catch let error as ActivityStoreError {
             throw error
         } catch {
+            blockedError = .readFailed
             throw .readFailed
         }
         let envelope: PersistedActivityEnvelope
@@ -71,12 +89,14 @@ final class ActivityStore: ObservableObject {
         do {
             let sanitized = try envelope.summaries.map(ActivitySummarySanitizer.sanitize)
             summaries = Array(sanitized.prefix(100))
+            blockedError = nil
         } catch {
             try isolate(.corruptData)
         }
     }
 
     func record(_ summary: ActivitySummary) throws(ActivityStoreError) {
+        if let blockedError { throw blockedError }
         let sanitized = try ActivitySummarySanitizer.sanitize(summary)
         let updated = Array(([sanitized] + summaries.filter { $0.id != sanitized.id }).prefix(100))
         do {
@@ -98,8 +118,10 @@ final class ActivityStore: ObservableObject {
         do {
             try FileManager.default.moveItem(at: fileURL, to: isolatedURL)
         } catch {
+            blockedError = .isolationFailed
             throw .isolationFailed
         }
+        blockedError = nil
         throw error
     }
 
@@ -110,6 +132,7 @@ final class ActivityStore: ObservableObject {
 
 enum ActivitySummarySanitizer {
     static func sanitize(_ summary: ActivitySummary) throws(ActivityStoreError) -> ActivitySummary {
+        guard summary.status != .running, summary.targetDisplayNames.count <= 100, summary.itemOutcomes.count <= 100 else { throw .invalidSummary }
         if summary.scope == .shell {
             guard summary.date.timeIntervalSince1970.isFinite, summary.targetDisplayNames.isEmpty,
                   summary.itemOutcomes.allSatisfy({ $0.displayName.isEmpty && $0.shellStep != nil }),
@@ -137,7 +160,7 @@ enum ActivitySummarySanitizer {
         }
         return ActivitySummary(id: summary.id, operation: summary.operation, scope: scope,
                                targetDisplayNames: summary.targetDisplayNames, date: summary.date,
-                               status: summary.status, itemOutcomes: summary.itemOutcomes)
+                               status: summary.status, itemOutcomes: summary.itemOutcomes, reason: summary.reason)
     }
 
     private static func validVersion(_ version: String) -> Bool {

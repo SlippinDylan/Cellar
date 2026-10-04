@@ -9,7 +9,7 @@ final class HomebrewClientTests: XCTestCase {
             let plan = try await fixture.client.planUpgrade([.init(name: "acme/tools/demo", kind: .formula)])
             try Data().write(to: fixture.directoryURL.appending(path: marker))
             do { _ = try await fixture.client.execute(plan); XCTFail("Confirmed upgrade versions changed") }
-            catch { guard case HomebrewClientError.invalidPlan = error else { return XCTFail("Expected upgrade state refusal") } }
+            catch { guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected upgrade state refusal") } }
             let calls = try String(contentsOf: fixture.logURL, encoding: .utf8)
             XCTAssertFalse(calls.contains("upgrade --formula"))
         }
@@ -308,7 +308,7 @@ final class HomebrewClientTests: XCTestCase {
             _ = try await fixture.client.execute(plan)
             XCTFail("Expected stale batch install plan rejection")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("状态已经变化"))
+            guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected semantic state change") }
         }
         let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
         XCTAssertFalse(log.contains("install --formula newpkg batchpkg"))
@@ -337,7 +337,7 @@ final class HomebrewClientTests: XCTestCase {
             _ = try await fixture.client.execute(plan)
             XCTFail("Expected stale install plan rejection")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("状态已经变化"))
+            guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected semantic state change") }
         }
         let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
         XCTAssertFalse(log.contains("install --formula newpkg"))

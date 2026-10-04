@@ -6,7 +6,7 @@ extension AppModel {
         isShellWorking = true
         shellOperationError = nil
         shellActionResult = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: .init(operation: .configuration, scope: .shell, targets: [], stage: .preparing))
         defer {
             isShellWorking = false
             operationStore.end(operationID)
@@ -16,7 +16,7 @@ extension AppModel {
                 try await self.service.planShell(request, snapshot: managers)
             }
         } catch {
-            shellOperationError = error.localizedDescription
+            shellOperationError = failureMessage(error)
         }
     }
 
@@ -27,7 +27,8 @@ extension AppModel {
         isShellWorking = true
         shellOperationError = nil
         shellActionResult = nil
-        let operationID = operationStore.begin()
+        let operation: ActivityOperationKind = plan.request.action == .tidy ? .maintenance : [.installOhMyZsh, .installPlugin].contains(plan.request.action) ? .install : .configuration
+        let operationID = operationStore.begin(context: .init(operation: operation, scope: .shell, targets: [], stage: .executing))
         let activityID = beginActivity(title: plan.activityTitle, detail: "正在执行 Shell 操作")
         defer {
             isShellWorking = false
@@ -59,9 +60,9 @@ extension AppModel {
                 postflightError: postflightError
             )
             shellActionResult = result
-            if operation.status != "ok" { shellOperationError = operation.detail }
-            if let postflightError {
-                shellOperationError = "操作已结束，但无法复查 Shell 状态：\(postflightError)"
+            if operation.status != "ok" { shellOperationError = String(localized: ActivityItemReason.providerFailure.message) }
+            if postflightError != nil {
+                shellOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
             }
             finishActivity(
                 activityID,
@@ -69,9 +70,10 @@ extension AppModel {
                 outcome: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded,
                 detail: result.activityDetail
             )
-            recordShellSummary(plan, status: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded)
+            recordShellSummary(plan, id: activityID, status: operation.status == "ok" ? postflightError == nil ? .succeeded : .partiallySucceeded : operation.status == "partial" ? .partiallySucceeded : .failed,
+                               reason: postflightError != nil ? .stateUnavailable : nil)
         } catch {
-            shellOperationError = error.localizedDescription
+            shellOperationError = failureMessage(error)
             let refresh = Task { try await service.loadShell(snapshot: managers) }
             if let refreshedShell = try? await refresh.value {
                 shell = refreshedShell
@@ -83,7 +85,7 @@ extension AppModel {
                 outcome: .failed,
                 detail: error.localizedDescription
             )
-            recordShellSummary(plan, status: error is CancellationError ? .cancelled : .failed)
+            recordShellSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : .failed, reason: .init(error: error))
         }
     }
 
@@ -97,15 +99,15 @@ extension AppModel {
         shellOperationError = nil
     }
 
-    private func recordShellSummary(_ plan: ShellActionPlan, status: ActivityStatus) {
+    private func recordShellSummary(_ plan: ShellActionPlan, id: UUID, status: ActivityStatus, reason: ActivityItemReason? = nil) {
         let operation: ActivityOperationKind = switch plan.request.action {
         case .installOhMyZsh, .installPlugin: .install
         case .tidy: .maintenance
         case .setPlugins, .switchTheme: .configuration
         }
         let step = ShellStepOutcome(step: .init(action: plan.request.action), status: status.itemStatus)
-        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: .shell,
-                                             targetDisplayNames: [], date: Date(), status: status, itemOutcomes: [step.summary]))
+        activityStore?.append(ActivitySummary(id: id, operation: operation, scope: .shell,
+                                             targetDisplayNames: [], date: Date(), status: status, itemOutcomes: [step.summary], reason: reason))
     }
 }
 

@@ -155,7 +155,7 @@ actor ShellManagerClient {
                 outcomes[index] = .init(step: outcomes[index].step, status: outcomes[index].status == .succeeded ? .partiallySucceeded : cancelled ? .cancelled : .failed)
             }
             if cancelled { outcomes = outcomes.map { $0.status == .unknown ? .init(step: $0.step, status: .cancelled) : $0 } }
-            return .init(operations: operations, failure: error.localizedDescription, wasCancelled: cancelled, stepOutcomes: outcomes)
+            return .init(operations: operations, failure: error.localizedDescription, wasCancelled: cancelled, stepOutcomes: outcomes, failureReason: .init(error: error))
         }
     }
 

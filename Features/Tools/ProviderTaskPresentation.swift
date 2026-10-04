@@ -62,21 +62,28 @@ struct ProviderTaskFeedback: View {
                 HStack { ProgressView().controlSize(.small); Text("Working on Environment") }
             }
             ForEach(errors, id: \.self) { error in
-                Label("The task could not be completed. Review the error and refresh before trying again.", systemImage: "exclamationmark.triangle")
+                Label(error, systemImage: "exclamationmark.triangle")
                 if let plan = model.nodePlan, !plan.canExecute { Text(plan.blockingMessage) }
-                DisclosureGroup("Error Details") { Text(DiagnosticText.sanitized(error)).textSelection(.enabled) }
             }
             if let result = model.nodeActionResult {
-                Label(result.operation.status == "ok" && result.postflightError == nil ? LocalizedStringResource("Task Completed") : LocalizedStringResource("Task Partially Completed"), systemImage: "info.circle")
+                let status = result.operation.batchItemStatus.activityStatus
+                resultLabel(status == .succeeded && result.postflightError != nil ? .partiallySucceeded : status)
             }
             if let result = model.shellActionResult {
-                Label(result.operation.status == "ok" && result.postflightError == nil ? LocalizedStringResource("Task Completed") : LocalizedStringResource("Task Partially Completed"), systemImage: "info.circle")
-                if !result.operation.backupPath.isEmpty { Text(result.operation.backupPath).textSelection(.enabled) }
+                let status: ActivityStatus = result.operation.status == "ok" ? result.postflightError == nil ? .succeeded : .partiallySucceeded : result.operation.status == "partial" ? .partiallySucceeded : .failed
+                resultLabel(status)
             }
             if let result = model.homebrewActionResult {
-                Label(result.outcome == .succeeded ? LocalizedStringResource("Task Completed") : LocalizedStringResource("Task Partially Completed"), systemImage: "info.circle")
+                let status: ActivityStatus = switch result.outcome {
+                case .succeeded: .succeeded
+                case .partial: .partiallySucceeded
+                case .failed: .failed
+                case .stateUnknown: .unknown
+                }
+                resultLabel(status)
             }
             if !errors.isEmpty || model.nodeActionResult != nil || model.shellActionResult != nil || model.homebrewActionResult != nil {
+                Button("View Activity") { model.selectedDestination = .activity }
                 Button("Dismiss Feedback") { model.dismissNodeFeedback(); model.dismissShellFeedback(); model.dismissHomebrewFeedback() }
             }
         }
@@ -84,4 +91,7 @@ struct ProviderTaskFeedback: View {
         .padding(errors.isEmpty && model.nodeActionResult == nil && model.shellActionResult == nil && model.homebrewActionResult == nil && !model.isBusy ? 0 : 16)
     }
     private var errors: [String] { [model.nodeOperationError, model.homebrewOperationError, model.shellOperationError].compactMap { $0 } }
+    private func resultLabel(_ status: ActivityStatus) -> some View {
+        Label { Text(status.title) } icon: { Image(systemName: status.systemImage) }
+    }
 }

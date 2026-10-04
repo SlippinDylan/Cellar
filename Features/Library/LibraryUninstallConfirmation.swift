@@ -67,6 +67,7 @@ struct LibraryResultView: View {
                                     Spacer()
                                     Text(outcome.status.libraryTitle)
                                 }
+                                if let reason = outcome.reason { Text(reason.message).foregroundStyle(.secondary) }
                                 let paths = residualPaths(for: outcome.item)
                                 if !paths.isEmpty {
                                     if case .npm = outcome.item {
@@ -139,6 +140,7 @@ extension ActivityStatus {
         case .partiallySucceeded: LocalizedStringResource("Partially Completed")
         case .failed: LocalizedStringResource("Uninstall Failed")
         case .cancelled: LocalizedStringResource("Cancelled")
+        case .unknown: LocalizedStringResource("Result Unknown")
         }
     }
 }

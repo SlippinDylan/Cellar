@@ -4,6 +4,25 @@ import XCTest
 
 @MainActor
 final class BatchOperationCoordinatorTests: XCTestCase {
+    func testStaleProviderFailuresKeepFiniteReasonsAndSessionDiagnostics() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarStaleActivity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        let diagnostics = ActivityDiagnosticsStore()
+        let provider = FakeBatchProvider(failingNames: ["two"], failureCode: "npm-uninstall-state-changed")
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity, diagnosticsStore: diagnostics)
+        let plan = try await coordinator.prepare(npmIntent(.uninstall))
+        let result = try await coordinator.execute(plan)
+        XCTAssertEqual(result.outcome.itemOutcomes[1].reason, .stateChanged)
+        XCTAssertEqual(activity.summaries.first?.id, plan.id)
+        XCTAssertEqual(activity.summaries.first?.itemOutcomes[1].reason, .stateChanged)
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        XCTAssertTrue(diagnostics.records.contains { $0.detail.contains("[redacted]") })
+        XCTAssertFalse(diagnostics.records.contains { $0.detail.contains("TOKEN=secret") })
+        let json = try String(contentsOf: activity.fileURL, encoding: .utf8)
+        for raw in ["secret", "TOKEN", "npm-uninstall-state-changed", "standardOutput", "/private"] { XCTAssertFalse(json.contains(raw), raw) }
+    }
+
     func testNPMUninstallResidueWarningIsPartialAndDiagnosticsAreSessionOnly() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarWarningActivity-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
@@ -189,7 +208,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.failed, .failed, .failed])
         XCTAssertEqual(result.refreshStatus, .notNeeded)
         XCTAssertEqual(activity.summaries.first?.status, .failed)
-        XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.providerFailure, .providerFailure, .providerFailure])
+        XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.preparationFailed, .preparationFailed, .preparationFailed])
         let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
         XCTAssertFalse(persisted.contains("FakeBatchProvider"))
         let names = await provider.executedNames()
@@ -228,7 +247,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         store.cancelActiveTask()
         let result = try await task.value
         XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.failed, .cancelled, .cancelled])
-        XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.providerFailure, .cancelledByUser, .cancelledByUser])
+        XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.preparationFailed, .cancelledByUser, .cancelledByUser])
         let names = await provider.executedNames()
         XCTAssertEqual(names, ["two"])
         let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
@@ -362,6 +381,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
 actor FakeBatchProvider: BatchOperationProviding {
     enum Failure: Error { case provider, refresh, plan }
     let failingNames: Set<String>
+    let failureCode: String?
     let refreshFails: Bool
     let pausedName: String?
     let onPaused: @Sendable () -> Void
@@ -399,8 +419,9 @@ actor FakeBatchProvider: BatchOperationProviding {
          npmWarningNames: Set<String> = [], homebrewPackagesRefreshFails: Bool = false, planFailureNames: Set<String> = [],
          alreadyInstalledNames: Set<String> = [], registries: [String: URL] = [:], changeDestinationAfterName: String? = nil,
          pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}, changeDestinationAfterPlanName: String? = nil,
-         homebrewRefreshSnapshot: HomebrewSnapshot? = nil, npmRefreshSnapshot: NodeSnapshot? = nil) {
+         homebrewRefreshSnapshot: HomebrewSnapshot? = nil, npmRefreshSnapshot: NodeSnapshot? = nil, failureCode: String? = nil) {
         self.failingNames = failingNames
+        self.failureCode = failureCode
         self.refreshFails = refreshFails
         self.pausedName = pausedName
         self.onPaused = onPaused
@@ -500,7 +521,10 @@ actor FakeBatchProvider: BatchOperationProviding {
             cancelled = Task.isCancelled
             try Task.checkCancellation()
         }
-        if failingNames.contains(plan.request.subject) { throw Failure.provider }
+        if failingNames.contains(plan.request.subject) {
+            if let failureCode { throw BridgeError.managerFailure(code: failureCode, detail: "TOKEN=secret") }
+            throw Failure.provider
+        }
         if plan.request.subject == changeDestinationAfterName { destination = "/changed" }
         if npmWarningNames.contains(plan.request.subject) {
             let envelope = try JSONDecoder().decode(ManagerEnvelope<NodeOperationResult>.self, from: Data(nodeUninstallResidueResponse.utf8))

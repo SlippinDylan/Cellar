@@ -13,7 +13,7 @@ final class RuntimeToolsModel: ObservableObject {
     }
     func refresh(model: AppModel) async {
         guard !model.isBusy else { return }
-        let id = model.operationStore.begin()
+        let id = model.operationStore.begin(context: .init(operation: .refresh, scope: model.node?.summary.activityEnvironment.map(ActivityScope.nodeRuntime), targets: [], stage: .checking))
         isLoading = true
         error = nil
         diagnosticError = nil

@@ -43,6 +43,7 @@ final class AppModel: ObservableObject {
     let service: SystemProbeService
     let operationStore: OperationStore
     let activityStore: ActivityStore?
+    let activityDiagnostics = ActivityDiagnosticsStore()
     let batchCoordinator: BatchOperationCoordinator
     let homeDashboard: HomeDashboardModel
     let homeOutdatedDependencies: HomeOutdatedDependencies
@@ -65,9 +66,10 @@ final class AppModel: ObservableObject {
         self.operationStore = operationStore
         self.activityStore = activityStore
         self.homeOutdatedDependencies = homeOutdatedDependencies ?? HomeOutdatedDependencies(service: service)
-        homeDashboard = HomeDashboardModel(dependencies: homeDashboardDependencies ?? .live(runner: ProcessRunner()), operationStore: operationStore)
+        homeDashboard = HomeDashboardModel(dependencies: homeDashboardDependencies ?? .live(runner: ProcessRunner()), operationStore: operationStore,
+                                           activityStore: activityStore, diagnosticsStore: activityDiagnostics)
         batchCoordinator = BatchOperationCoordinator(provider: batchProvider ?? ProviderBatchOperations(service: service),
-                                                     operationStore: operationStore, activityStore: activityStore)
+                                                     operationStore: operationStore, activityStore: activityStore, diagnosticsStore: activityDiagnostics)
     }
 
     static func live() -> AppModel {
@@ -171,21 +173,21 @@ final class AppModel: ObservableObject {
             nodeRefreshFailed = true
             homebrewUpdateState = .failed
             nodeUpdateState = .failed
-            errorMessages.append("Manager 快照：\(error.localizedDescription)")
+            errorMessages.append(failureMessage(error))
             refreshedAt = Date()
         }
 
         activities.removeAll { $0.id == activityID }
         recordActivity(ActivityEntry(
-            id: UUID(),
+            id: activityID,
             date: Date(),
             title: "刷新本机环境",
             outcome: errorMessages.isEmpty ? .succeeded : .failed,
             detail: errorMessages.isEmpty ? "已读取全部环境状态" : errorMessages.joined(separator: "；")
         ))
-        activityStore?.append(ActivitySummary(id: UUID(), operation: .refresh, scope: nil,
+        activityStore?.append(ActivitySummary(id: activityID, operation: .refresh, scope: nil,
                                              targetDisplayNames: [], date: Date(),
-                                             status: errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: []))
+                                             status: errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: [], reason: errorMessages.isEmpty ? nil : .stateUnavailable))
     }
 
     private func refreshHomebrewState(snapshot: SnapshotStatus) async {
@@ -211,7 +213,7 @@ final class AppModel: ObservableObject {
         case .failure(let error):
             homebrewRefreshFailed = true
             homebrewUpdateState = .failed
-            errorMessages.append("Homebrew：\(error.localizedDescription)")
+            errorMessages.append(failureMessage(error))
         }
     }
 
@@ -226,7 +228,7 @@ final class AppModel: ObservableObject {
         case .failure(let error):
             nodeRefreshFailed = true
             nodeUpdateState = .failed
-            errorMessages.append("Node：\(error.localizedDescription)")
+            errorMessages.append(failureMessage(error))
         }
     }
 
@@ -306,7 +308,7 @@ final class AppModel: ObservableObject {
     ) {
         activities.removeAll { $0.id == id }
         recordActivity(ActivityEntry(
-            id: UUID(),
+            id: id,
             date: Date(),
             title: title,
             outcome: outcome,
@@ -316,10 +318,21 @@ final class AppModel: ObservableObject {
     }
 
     private func recordActivity(_ entry: ActivityEntry) {
+        if entry.outcome != .started {
+            let context = operationStore.currentOperation?.context
+            activityDiagnostics.record(id: entry.id, operation: context?.operation ?? .refresh, scope: context?.scope,
+                                       detail: entry.detail, command: entry.command)
+        }
         activities.insert(entry, at: 0)
         if activities.count > 100 {
             activities.removeLast(activities.count - 100)
         }
+    }
+
+    func failureMessage(_ error: Error, preparing: Bool = false) -> String {
+        let context = operationStore.currentOperation?.context
+        activityDiagnostics.record(operation: context?.operation ?? .configuration, scope: context?.scope, detail: error.localizedDescription)
+        return String(localized: ActivityItemReason(error: error, preparing: preparing).message)
     }
 
     private func assign<Value>(_ result: Result<Value, Error>, name: String) -> Value? {
@@ -327,7 +340,7 @@ final class AppModel: ObservableObject {
         case .success(let value):
             return value
         case .failure(let error):
-            errorMessages.append("\(name)：\(error.localizedDescription)")
+            errorMessages.append(failureMessage(error))
             return nil
         }
     }

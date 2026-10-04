@@ -8,7 +8,7 @@ extension AppModel {
             let plan = prepared.plan
             guard plan.canExecute else { nodeOperationError = String(localized: plan.blockingMessage); return }
             await executeNodeAction(plan, snapshot: prepared.snapshot)
-        } catch { nodeOperationError = error.localizedDescription }
+        } catch { nodeOperationError = failureMessage(error) }
     }
 
     func prepareNodeAction(_ request: NodeActionRequest) async {
@@ -16,7 +16,7 @@ extension AppModel {
             let plan = try await createNodePlan(request).plan
             nodePlan = plan
             if !plan.canExecute { nodeOperationError = String(localized: plan.blockingMessage) }
-        } catch { nodeOperationError = error.localizedDescription }
+        } catch { nodeOperationError = failureMessage(error) }
     }
 
     private func createNodePlan(_ request: NodeActionRequest) async throws -> (plan: NodeActionPlan, snapshot: SnapshotStatus) {
@@ -24,7 +24,7 @@ extension AppModel {
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: .init(operation: .configuration, scope: node?.summary.activityEnvironment.map(ActivityScope.nodeRuntime), targets: [], stage: .preparing))
         defer {
             isNodeWorking = false
             operationStore.end(operationID)
@@ -39,7 +39,7 @@ extension AppModel {
     }
 
     func executeNodePlan(confirmed: NodeActionPlan? = nil) async {
-        if let confirmed, nodePlan?.id != confirmed.id { return }
+        if let confirmed, nodePlan?.id != confirmed.id { nodeOperationError = String(localized: ActivityItemReason.stateChanged.message); return }
         guard let plan = nodePlan, plan.canExecute, !isBusy, let managers else { return }
         nodePlan = nil
         await executeNodeAction(plan, snapshot: managers)
@@ -50,7 +50,7 @@ extension AppModel {
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
-        let operationID = operationStore.begin()
+        let operationID = operationStore.begin(context: nodeActivityContext(plan))
         let activityID = beginActivity(title: plan.activityTitle, detail: "正在执行 Node 操作")
         defer {
             isNodeWorking = false
@@ -84,8 +84,10 @@ extension AppModel {
                 postflightError: postflightError
             )
             nodeActionResult = result
-            if let postflightError {
-                nodeOperationError = "操作已结束，但无法复查 Node 状态：\(postflightError)"
+            if postflightError != nil {
+                nodeOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
+            } else if operation.batchItemStatus != .succeeded {
+                nodeOperationError = String(localized: ActivityItemReason(error: BridgeError.managerFailure(code: operation.detail ?? "provider-failure", detail: nil)).message)
             }
             finishActivity(
                 activityID,
@@ -93,9 +95,11 @@ extension AppModel {
                 outcome: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded,
                 detail: result.activityDetail
             )
-            recordNodeSummary(plan, status: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded)
+            let itemStatus = operation.batchItemStatus.activityStatus
+            let status = itemStatus == .succeeded && postflightError != nil ? ActivityStatus.partiallySucceeded : itemStatus
+            recordNodeSummary(plan, id: activityID, status: status, reason: status == .succeeded ? nil : postflightError != nil ? .stateUnavailable : .init(error: BridgeError.managerFailure(code: operation.detail ?? "provider-failure", detail: nil)))
         } catch {
-            nodeOperationError = error.localizedDescription
+            nodeOperationError = failureMessage(error)
             let refresh = Task { try await service.loadNode(snapshot: managers, preferredNodeVersion: preferredNodeVersion) }
             if let refreshedNode = try? await refresh.value {
                 node = refreshedNode
@@ -107,7 +111,7 @@ extension AppModel {
                 outcome: .failed,
                 detail: error.localizedDescription
             )
-            recordNodeSummary(plan, status: error is CancellationError ? .cancelled : .failed)
+            recordNodeSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : .failed, reason: .init(error: error))
         }
     }
 
@@ -134,7 +138,7 @@ extension AppModel {
         }
     }
 
-    private func recordNodeSummary(_ plan: NodeActionPlan, status: ActivityStatus) {
+    private func nodeActivityContext(_ plan: NodeActionPlan) -> ActiveOperationContext {
         let operation: ActivityOperationKind = switch plan.request.action {
         case .installPackage, .installNode, .installNVM: .install
         case .updatePackage: .update
@@ -142,32 +146,32 @@ extension AppModel {
         case .cleanup: .maintenance
         default: .configuration
         }
-        let scope: ActivityScope?
-        let names: [String]
-        switch plan.request.action {
-        case .installPackage, .updatePackage, .uninstallPackage:
-            scope = node.map { snapshot in .npm(NodeEnvironmentContext(
-                identifier: snapshot.summary.nodeVersion, nodeVersion: snapshot.summary.nodeVersion,
-                npmVersion: snapshot.summary.npmVersion
-            )) }
-            names = plan.payload.packageName.map { [$0] } ?? []
-        case .installNode, .useNode, .setDefaultNode, .uninstallNode:
-            scope = node.map { snapshot in .nodeRuntime(NodeEnvironmentContext(identifier: snapshot.summary.nodeVersion,
-                                                                                nodeVersion: snapshot.summary.nodeVersion,
-                                                                                npmVersion: snapshot.summary.npmVersion)) }
-            names = scope == nil ? [] : [plan.payload.normalizedVersion ?? plan.request.subject]
-        case .setRegistry, .deleteRegistry, .setScopeRegistry, .deleteScopeRegistry, .cleanup, .writeProjectNVMRC:
-            scope = node.map { snapshot in .npm(NodeEnvironmentContext(identifier: snapshot.summary.nodeVersion,
-                                                                       nodeVersion: snapshot.summary.nodeVersion,
-                                                                       npmVersion: snapshot.summary.npmVersion)) }
-            names = []
-        default:
-            scope = nil
-            names = []
+        let environment = node?.summary.activityEnvironment
+        let scope: ActivityScope? = switch plan.request.action {
+        case .installNode, .useNode, .setDefaultNode, .uninstallNode: environment.map(ActivityScope.nodeRuntime)
+        default: environment.map(ActivityScope.npm)
         }
-        activityStore?.append(ActivitySummary(id: UUID(), operation: operation, scope: scope,
+        let names: [String] = switch plan.request.action {
+        case .installPackage, .updatePackage, .uninstallPackage: plan.payload.packageName.map { [$0] } ?? []
+        case .installNode, .useNode, .setDefaultNode, .uninstallNode: [plan.payload.normalizedVersion ?? plan.request.subject]
+        default: []
+        }
+        return .init(operation: operation, scope: scope, targets: names, stage: .executing)
+    }
+
+    private func recordNodeSummary(_ plan: NodeActionPlan, id: UUID, status: ActivityStatus, reason: ActivityItemReason? = nil) {
+        guard let current = operationStore.currentOperation else { preconditionFailure("Node execution owns a registered operation") }
+        let context = current.context
+        let scope: ActivityScope?
+        if context.scope == nil, [.installNode, .useNode, .setDefaultNode, .uninstallNode].contains(plan.request.action) {
+            // Only a successful controlled reread can supply a first installation's environment.
+            scope = node?.summary.activityEnvironment.map(ActivityScope.nodeRuntime)
+        } else { scope = context.scope }
+        let names = scope == nil ? [] : context.targets
+        activityStore?.append(ActivitySummary(id: id, operation: context.operation, scope: scope,
                                              targetDisplayNames: names, date: Date(), status: status,
-                                             itemOutcomes: names.map { .init(displayName: $0, status: status.itemStatus, reason: status.itemReason) }))
+                                             itemOutcomes: names.map { .init(displayName: $0, status: status.itemStatus, reason: reason ?? status.itemReason) },
+                                             reason: reason ?? status.itemReason))
     }
 }
 

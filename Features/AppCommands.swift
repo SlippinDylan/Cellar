@@ -5,6 +5,7 @@ struct AppCommands: Commands {
     @FocusedValue(\.catalogSearchAction) private var catalogSearchAction
     @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
+    @FocusedValue(\.activityActions) private var activityActions
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
     let updateController: ApplicationUpdateController
@@ -26,6 +27,20 @@ struct AppCommands: Commands {
                     Task { await model.performShellAction(.show(destination)) }
                 } label: { Text(destination.title) }
             }
+        }
+        CommandMenu("Activity") {
+            Button("Copy Summary") { activityActions?.copy() }.disabled(activityActions?.canCopy != true)
+            Button("Session Diagnostics…") { activityActions?.showDiagnostics() }.disabled(activityActions == nil)
+            Menu("Provider") {
+                ForEach(ActivityProviderFilter.allCases, id: \.self) { provider in
+                    Button(ActivityRenderer().provider(provider)) { activityActions?.setProvider(provider) }
+                }
+            }.disabled(activityActions == nil)
+            Menu("Status") {
+                Button("All Statuses") { activityActions?.setStatus(nil) }
+                ForEach(ActivityStatus.allCases, id: \.self) { status in Button { activityActions?.setStatus(status) } label: { Text(status.title) } }
+            }.disabled(activityActions == nil)
+            Button("Clear Activity Filters") { activityActions?.clearFilters() }.disabled(activityActions == nil)
         }
         CommandGroup(after: .toolbar) {
             Button("Find") { catalogSearchAction?() }

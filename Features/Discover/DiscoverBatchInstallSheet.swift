@@ -84,10 +84,13 @@ struct DiscoverInstallResultView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 8) {
                         ForEach(result.outcome.itemOutcomes, id: \.item) { outcome in
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(outcome.item.displayIdentifier).textSelection(.enabled)
-                                Spacer()
-                                Text(outcome.status.discoverTitle)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(outcome.item.displayIdentifier).textSelection(.enabled)
+                                    Spacer()
+                                    Text(outcome.status.discoverTitle)
+                                }
+                                if let reason = outcome.reason { Text(reason.message).foregroundStyle(.secondary) }
                             }.accessibilityElement(children: .combine)
                         }
                     }

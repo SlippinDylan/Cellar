@@ -175,6 +175,7 @@ struct UpdatesResultView: View {
                                     HStack { Text(outcome.item.displayIdentifier); Spacer(); Text(outcome.status.updatesTitle) }
                                     VStack(alignment: .leading) { Text(outcome.item.displayIdentifier); Text(outcome.status.updatesTitle) }
                                 }.accessibilityElement(children: .combine)
+                                if let reason = outcome.reason { Text(reason.message).foregroundStyle(.secondary) }
                             }
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)

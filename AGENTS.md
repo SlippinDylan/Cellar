@@ -6,7 +6,7 @@
 
 Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 采用任务导向的 Home、Library、Discover、Updates、Tools 和 Activity，统一组织 Homebrew Formula/Cask、npm 全局包、Node/nvm 与终端配置，同时保留 provider 身份和安全边界。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit；现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
 
-[产品需求](docs/requirements/product-requirements.md)是 1.0 用户行为和安全边界的唯一权威来源；尚未完成的条目是实现要求，不是当前已交付声明。[架构文档](docs/architecture/macos-app-architecture.md)分别标注当前基线与 1.0 目标，构建和验证见[开发指南](docs/development.md)。
+[产品需求](docs/requirements/product-requirements.md)是 1.0 用户行为和安全边界的唯一权威来源。1.0 源码已实现，尚未公开发布；未执行的真实环境与 UI 验收见人工清单。[架构文档](docs/architecture/macos-app-architecture.md)描述当前实现，构建和验证见[开发指南](docs/development.md)。
 
 ## 开始工作
 
@@ -19,7 +19,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 ## 仓库地图
 
 - `CellarApp.swift`：SwiftUI Scene、AppKit delegate 和退出策略。
-- `Features/`：当前技术模块页面；按产品契约逐步迁移到 Home、Library、Discover、Updates、Tools、Activity 与 Settings。
+- `Features/`：Home、Library、Discover、Updates、Tools、Activity 与主窗口 Settings；保留的旧 provider 页面不进入主导航。
 - `Services/`：App 状态、刷新编排、任务登记和系统探测。
 - `Models/`：页面状态、Manager JSON DTO、操作计划与结果模型。
 - `Bridge/`：`Process`、受控环境、Manager 快照安装和 JSON 解码。
@@ -112,7 +112,7 @@ git diff -- scripts
 
 - [1.0 产品需求](docs/requirements/product-requirements.md)：唯一的用户行为、安全边界和验收契约。
 - [1.0 交付范围](docs/requirements/v1-mvp.md)：发布内容、非目标和门槛；不重复定义行为。
-- [总体架构](docs/architecture/macos-app-architecture.md)：当前基线、1.0 目标、数据流、快照与进程边界。
+- [总体架构](docs/architecture/macos-app-architecture.md)：当前实现、数据流、快照与进程边界。
 - [平台支持](docs/requirements/platform-support.md)：macOS、arm64 和构建门禁。
 - [开发指南](docs/development.md)：环境、测试、构建和产物检查。
 - [开发产物清理规则](docs/development-cleanup.md)：清理语义、范围、安全边界与结果报告。

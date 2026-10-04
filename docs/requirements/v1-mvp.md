@@ -1,12 +1,12 @@
 # Cellar 1.0 交付范围
 
-状态：已确认范围；实现中
+状态：1.0 源码已实现，未公开发布；人工验收门槛保留
 
 更新日期：2026-10-04
 
 文件名为兼容既有链接保留。本文只概括 1.0 的发布边界，不建立第二套产品定义；任何用户行为、确认规则或安全边界以[产品需求](product-requirements.md)为准。
 
-## 1.0 必须交付
+## 1.0 实现范围
 
 | 范围 | 交付结果 |
 |---|---|
@@ -21,7 +21,7 @@
 | Operations | 全局写任务互斥、顺序批量、取消、部分完成、post-refresh 和退出保护 |
 | Activity | 最多 100 条可筛选、可复制、隐私处理后的持久摘要；原始输出不持久化到摘要 |
 | Localization | English、简体中文、繁体中文；默认 Follow System |
-| Quality | 键盘、VoiceOver、系统外观、对比度/动态效果设置、响应式窗口和低空闲资源占用 |
+| Quality | 键盘、VoiceOver 和系统外观支持、响应式窗口、无空闲轮询；真实辅助功能、外观和性能仍需人工验收 |
 | Distribution | macOS 26+、仅 arm64、普通前台 App、现有 Sparkle 发布边界 |
 
 ## 延续的实现基础
@@ -44,7 +44,7 @@
 2. 自动测试只使用 fake executable、fixture 和临时根目录，不触发用户真实环境写入或系统 Installer。
 3. 完整 XCTest、Debug/Release build、localization coverage、release manifest/version checks 通过。
 4. Release App 内每个 Mach-O 的最低系统版本为 macOS 26.0，且只有 `arm64`。
-5. README、产品、架构、开发和人工清单与最终实现一致；未验证行为不写成已交付。
+5. README、产品、架构、开发和人工清单与最终实现一致；未执行的人工验收不写成已验证。
 6. `scripts/` 保持冻结，release 开关保持关闭，除非用户另行明确授权。
 
 真实环境步骤见[人工验收清单](../manual-smoke-checklist.md)，工程验证见[开发指南](../development.md)。

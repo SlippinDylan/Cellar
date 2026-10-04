@@ -1,6 +1,6 @@
 # Cellar 文档
 
-Cellar 的文档按职责维护。[1.0 产品需求](requirements/product-requirements.md)是用户行为和安全边界的唯一权威来源；尚未实现的条目是交付要求，不是当前能力声明。代码和工程配置说明实现事实，架构文档明确区分当前基线与目标。
+Cellar 的文档按职责维护。[1.0 产品需求](requirements/product-requirements.md)是用户行为和安全边界的唯一权威来源。1.0 源码已实现，尚未公开发布；代码和工程配置说明实现事实，架构文档描述当前实现，人工清单保留未执行的真实环境验收。
 
 ## 文档导航
 
@@ -9,7 +9,7 @@ Cellar 的文档按职责维护。[1.0 产品需求](requirements/product-requir
 | 用户行为、状态、安全边界和验收契约 | [1.0 产品需求](requirements/product-requirements.md) |
 | 1.0 发布内容、非目标和门槛 | [1.0 交付范围](requirements/v1-mvp.md) |
 | macOS 版本、arm64 和构建门禁 | [平台支持](requirements/platform-support.md) |
-| 当前基线、1.0 目标、数据流、快照和进程边界 | [总体架构](architecture/macos-app-architecture.md) |
+| 当前实现、数据流、快照和进程边界 | [总体架构](architecture/macos-app-architecture.md) |
 | 本地开发、测试、构建和清理 | [开发指南](development.md) |
 | Apple、Homebrew、npm、nvm 官方依据和项目推论 | [研究依据](research.md) |
 | 真实机器、系统授权与 UI 检查 | [人工验收清单](manual-smoke-checklist.md) |

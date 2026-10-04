@@ -1,10 +1,10 @@
 # Cellar macOS App 架构
 
-状态：1.0 目标架构；当前基线已单独标注
+状态：1.0 当前实现；未公开发布
 
 更新日期：2026-10-04
 
-本文描述实现 [Cellar 1.0 产品契约](../requirements/product-requirements.md)时必须保持的组件、数据流和安全边界。构建与测试见[开发指南](../development.md)，外部依据见[研究文档](../research.md)。
+本文描述已实现的 [Cellar 1.0 产品契约](../requirements/product-requirements.md)对应的组件、数据流和安全边界。构建与测试见[开发指南](../development.md)，外部依据见[研究文档](../research.md)。
 
 ## 系统定位
 
@@ -12,21 +12,21 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责主�
 
 1.0 使用任务导向的信息架构，但不会把 Homebrew Formula、Homebrew Cask、npm、Node/nvm 和 Shell 压缩成一个通用命令协议。统一发生在展示与编排层；身份、环境、计划和执行仍由 typed model 与 provider client 保留。
 
-## 当前基线与目标差异
+## 当前实现
 
 当前源码已经实现：
 
 - Home/Library/Discover/Updates/Tools 与底部 Settings/Activity 的原生任务导航，Settings 主窗口页面中的 General/Sources/Terminal/About 四个 pane；
 - Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates 已接入可见范围内的直接单项更新与一次确认的批量更新；Tools 已接入环境安装、Runtime、Project、Diagnostics、Maintenance 五类任务，Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；Activity 已接入持久语义历史、当前任务、筛选、搜索、复制与显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
-- shell/Settings 的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
+- 全部可达页面的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条诊断 Activity；
 - typed batch prepare/execute、可取消任务与最多 100 条结构化 Activity 持久摘要；
 - Homebrew 直接 Bridge、Node Manager schema v1、Shell schema v1 adapter；
 - 强类型计划、确认、单写操作、post-refresh、部分失败和进程组取消基础；
 - Manager 版本化安装、Sparkle、arm64/macOS 26 构建边界。
 
-1.0 仍需完成最终交互与人工验收。未经人工验收的行为不能被描述为已验证或已发布。
+1.0 源码实现已完成，真实工具、系统 Installer、网络、辅助功能和外观等人工验收仍按清单执行。未经实际验收的行为不能被描述为已验证，源码完成也不表示已公开发布。
 
 ## 分层与依赖
 
@@ -48,11 +48,11 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 - `Bridge`/client 封装外部进程、网络、环境、schema 和平台 API，不依赖具体页面。
 - provider-specific client 不被“generic command executor”替代。
 
-仓库继续沿用 `Features → Services → Bridge → 外部系统` 的方向。新增类型优先放入现有职责目录；不为目标架构提前建立没有当前用途的抽象层。
+仓库沿用 `Features → Services → Bridge → 外部系统` 的方向。新增类型优先放入现有职责目录，不建立没有当前用途的抽象层。
 
 ## Scene、导航与生命周期
 
-`CellarApp` 只提供普通 `WindowGroup`，不声明独立 `Settings` scene。主窗口首次默认内容尺寸为 1080 × 720 点；不设置 `LSUIElement`，不声明 `MenuBarExtra`。
+`CellarApp` 只提供绑定 `MainWindowIdentity.main` 的 typed-value `WindowGroup`，不声明独立 `Settings` scene。主窗口首次默认内容尺寸为 1080 × 720 点；不设置 `LSUIElement`，不声明 `MenuBarExtra`。
 
 主 `NavigationSplitView` 的主导航包含 Home、Library、Discover、Updates、Tools；Sidebar 左下方依次为 Settings 和 Activity 导航。两份 Sidebar `List` 的 binding 只返回各自拥有的 selection。Settings 是 `AppDestination.settings`，detail 区域复用 `SettingsView`，共享同一 `AppModel`、`OperationStore` 与 updater controller。App 菜单和 Command-Comma 经 `AppModel.showDestination` 选择 Settings，并以固定主窗口 identity 调用 `openWindow(id:value:)`，复用或重建主窗口。
 

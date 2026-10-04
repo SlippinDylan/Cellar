@@ -4,7 +4,7 @@
 
 ## 1.0 实现纪律
 
-- 产品需求是目标行为的唯一来源。架构文档中的“当前基线”用于理解现有代码，不覆盖目标契约。
+- 产品需求是用户行为和安全边界的唯一来源。架构文档描述当前实现，不覆盖产品契约。
 - 任务导航统一发生在 Features/Services；Formula、Cask、npm 和 Node environment identity 必须保留到 Bridge，不引入通用命令执行器。
 - 用户界面可以隐藏内部 plan 术语，但强类型计划、状态指纹、全局 mutation slot 和 post-refresh 不能删除。
 - String Catalog 是用户可见静态字符串的来源；新增界面同步提供 English、简体中文和繁体中文，默认语言行为为 Follow System。
@@ -44,7 +44,7 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 - Batch coordinator 测试使用 fake typed operations，断言同 provider/type、顺序执行、项目失败后继续、取消后停止未开始项、无回滚声明和正确 post-refresh。
 - Activity 持久化测试注入临时 Application Support，断言最多 100 条、结构化本地化数据、凭证/原始输出不落盘和损坏数据隔离。
 - Localization 检查必须覆盖 String Catalog 中 English、简体中文和繁体中文的缺失项，并搜索新增的非本地化用户字符串。
-- `node .github/scripts/validate-localizations.mjs` 无需启动 App，检查全部 catalog 翻译、格式占位与当前可达 shell/Settings 源码。后续页面接入主窗口时同步扩展脚本的 `presentationSources`；保留但不可达的旧 provider 页面不代表完成本地化。
+- `node .github/scripts/validate-localizations.mjs` 无需启动 App，检查全部 catalog 翻译、格式占位与全部可达页面源码。新增用户可见来源时同步扩展脚本的 `presentationSources`；保留但不可达的旧 provider 页面不属于当前 UI。
 - 测试结束后不得留下 `~/Library/Application Support/Cellar/`、npm cache 变更或全局包变更。
 
 需要验证真实环境时，使用[人工验收清单](manual-smoke-checklist.md)，并先向用户说明会读取的工具、网络和目录。真实环境检查不属于普通单元测试。
@@ -151,7 +151,7 @@ build/DerivedData-Release/Build/Products/Release/Cellar.app
 6. Bundle 内快照与仓库 `Resources/Managers/` 一致。
 7. `Resources/Managers/` 不包含 `.runtime`、日志或临时文件。
 
-不要只检查主程序。未来加入 Framework、Plug-in、Helper 或其他可执行文件时，逐项运行 `file` 或 `lipo -archs`。
+不要只检查主程序。当前 Sparkle Framework、Updater、Autoupdate 和 XPC，以及未来新增可执行文件，都应逐项运行 `file`/`lipo -archs` 与 `vtool -show-build`，确认仅 `arm64` 且 `minos` 为 `26.0`。同时确认 `en.lproj`、`zh-Hans.lproj` 和 `zh-Hant.lproj` 中的编译字符串资源存在。
 
 ## Manager 快照检查
 
@@ -193,4 +193,4 @@ git diff -- scripts
 
 确认验证结果对应最终改动。如果验证后又修改了代码，重新运行受影响的检查。不要把 `build/`、测试结果、临时日志或 App 运行副本加入提交。
 
-仅文档变更还应检查：仓库内 Markdown 相对链接存在；旧技术模块导航术语没有被误写成 1.0 目标；`Formula`、`Cask`、`npm`、`nvm` 大小写一致；产品契约与 README/AGENTS/架构/人工清单互相可达。
+仅文档变更还应检查：仓库内 Markdown 相对链接存在；旧技术模块页面没有被误写成当前导航；`Formula`、`Cask`、`npm`、`nvm` 大小写一致；产品契约与 README/AGENTS/架构/人工清单互相可达。

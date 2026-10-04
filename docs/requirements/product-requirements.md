@@ -1,10 +1,10 @@
 # Cellar 1.0 产品需求
 
-状态：已确认的 1.0 产品契约；实现中
+状态：1.0 产品契约；源码已实现，未公开发布
 
 更新日期：2026-10-04
 
-本文是 Cellar 1.0 用户行为、范围和验收的唯一权威来源。当前代码尚未实现的条目是交付要求，不是已交付声明。组件边界见[总体架构](../architecture/macos-app-architecture.md)，阶段范围见[1.0 交付范围](v1-mvp.md)，外部依据见[研究文档](../research.md)。
+本文是 Cellar 1.0 用户行为、范围和验收的唯一权威来源。源码实现与自动验证不代替真实环境人工验收。组件边界见[总体架构](../architecture/macos-app-architecture.md)，发布范围见[1.0 交付范围](v1-mvp.md)，外部依据见[研究文档](../research.md)。
 
 ## 1. 摘要
 
@@ -16,7 +16,7 @@ Cellar 是面向 Apple Silicon Mac 的原生开发环境管理工具。它把 Ho
 
 目标用户是在 macOS 上维护本机开发工具、但不希望反复记忆多套 CLI 语法的开发者。他们需要快速回答三个问题：本机有什么、有什么可更新、一个操作会影响哪里。
 
-现有实现已经具备受控进程、Homebrew 查询和 mutation、Node Manager schema v1、Shell adapter、部分失败保留与 Manager 快照。1.0 在这些边界上重组信息架构，补齐官方目录、环境安装引导、批量编排、取消、持久 Activity、本地化和可访问性。
+1.0 在受控进程、Homebrew 查询和 mutation、Node Manager schema v1、Shell adapter、部分失败保留与 Manager 快照的基础上，已实现任务信息架构、官方目录、环境安装引导、批量编排、取消、持久 Activity、本地化和可访问性支持。
 
 ## 3. 目标与成功标准
 

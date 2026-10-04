@@ -2,7 +2,7 @@
 
 Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 把 Homebrew Formula、Homebrew Cask、npm 全局包、Node/nvm 与终端配置组织为查找、安装、更新、卸载和维护等用户任务，同时保留每个 provider 的真实语义与安全边界。
 
-> Cellar 仍在开发，没有可下载的正式版本。以下内容是已确认的 1.0 产品范围；当前源码会随实现任务逐步达到该契约。
+> Cellar 1.0.0 已完成源码实现与本地自动验证，尚未公开发布，没有正式下载。真实工具写入、系统 Installer、网络和辅助功能等人工验收仍按清单执行。
 
 ## Cellar 1.0
 
@@ -73,7 +73,7 @@ xcodebuild build \
 |---|---|
 | [1.0 产品需求](docs/requirements/product-requirements.md) | 唯一的用户行为、安全边界与验收契约 |
 | [1.0 交付范围](docs/requirements/v1-mvp.md) | 发布内容、非目标和门槛 |
-| [总体架构](docs/architecture/macos-app-architecture.md) | 目标架构、当前基线、数据流与进程边界 |
+| [总体架构](docs/architecture/macos-app-architecture.md) | 当前实现、数据流与进程边界 |
 | [平台支持](docs/requirements/platform-support.md) | macOS、arm64 和构建门禁 |
 | [研究依据](docs/research.md) | Apple、Homebrew、npm 与 nvm 官方依据 |
 | [开发指南](docs/development.md) | 测试、构建、产物检查和清理 |

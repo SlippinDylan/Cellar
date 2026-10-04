@@ -23,7 +23,7 @@
 | `applicationShouldTerminate(_:)` 可以允许、取消或延迟退出 | Apple 官方 | [applicationShouldTerminate(_:)](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/applicationshouldterminate(_:)) |
 | 关闭最后一个窗口后返回 `true` 会继续进入终止确认 | Apple 官方 | [applicationShouldTerminateAfterLastWindowClosed(_:)](https://developer.apple.com/documentation/appkit/nsapplicationdelegate/applicationshouldterminateafterlastwindowclosed(_:)) |
 | `NavigationSplitView` 适合作为两栏根导航，前导选择控制详情页 | Apple 官方 | [NavigationSplitView](https://developer.apple.com/documentation/swiftui/navigationsplitview) |
-| SwiftUI `Settings` scene 用于声明 App 的标准设置窗口 | Apple 官方 | [Settings](https://developer.apple.com/documentation/swiftui/settings) |
+| SwiftUI `Settings` scene 用于声明 App 的标准设置窗口；这是外部 API 事实，Cellar 按用户确认的产品契约使用主窗口 Settings 页面，不采用该 scene | Apple 官方与项目决策 | [Settings](https://developer.apple.com/documentation/swiftui/settings)、[产品需求](requirements/product-requirements.md) |
 | `openURL` 使用环境提供的系统 URL 打开行为，网站链接不需要内嵌浏览器 | Apple 官方 | [OpenURLAction](https://developer.apple.com/documentation/swiftui/openurlaction) |
 | `LazyVGrid` 根据 grid item 定义按需创建二维布局，适合响应式卡片集合 | Apple 官方 | [LazyVGrid](https://developer.apple.com/documentation/swiftui/lazyvgrid) |
 | Sidebar 应提供少量清晰的顶层目的地并保持一致位置 | Apple 官方与项目推论 | [HIG: Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars) |
@@ -120,7 +120,7 @@ Command Line Tools 则直接采用 Apple 文档中的 `xcode-select --install` �
 | String Catalog 管理可本地化字符串和多语言变体 | Apple 官方 | [Localizing and varying text with a string catalog](https://developer.apple.com/documentation/xcode/localizing-and-varying-text-with-a-string-catalog) |
 | macOS App 应支持键盘导航、辅助技术和不只依赖颜色的状态表达 | Apple 官方 | [HIG: Accessibility](https://developer.apple.com/design/human-interface-guidelines/accessibility) |
 | 系统提供 Reduce Motion、Increase Contrast 和 Reduce Transparency 等辅助功能环境值 | Apple 官方 | [Accessibility environment](https://developer.apple.com/documentation/swiftui/environmentvalues#Accessibility) |
-| 1.0 卡片网格仍需为 loading、empty、offline、partial error 提供语义不同的状态，不能用空结果伪装成功 | 项目推论 | 与 1.0 产品状态契约一致 |
+| 1.0 卡片网格为 loading、empty、offline、partial error 提供不同语义状态，不用空结果伪装成功 | 当前实现与项目约束 | 与 1.0 产品状态契约一致；真实网络失败仍需人工验收 |
 
 ## SwiftUI 性能与 macOS 26 界面
 

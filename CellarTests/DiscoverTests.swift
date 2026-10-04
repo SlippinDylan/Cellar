@@ -172,12 +172,12 @@ final class DiscoverTests: XCTestCase {
         let provider = FakeBatchProvider(failingNames: ["two"])
         let model = fixtureModel(provider)
         let installation = DiscoverInstallationModel(model: model)
-        installation.preview("one\ntwo\nthree\none", scope: .npm)
+        await installation.preview("one\ntwo\nthree\none", scope: .npm)
         XCTAssertEqual(installation.preview?.intent.items.map(\.displayIdentifier), ["one", "two", "three"])
         XCTAssertEqual(installation.preview?.npm, model.discoverContext.npm)
         let before = await provider.executedNames()
         XCTAssertTrue(before.isEmpty)
-        XCTAssertNil(model.batchCoordinator.preparedPlan)
+        XCTAssertNotNil(model.batchCoordinator.preparedPlan)
         await installation.confirmInstall()
         XCTAssertNil(installation.preview)
         XCTAssertEqual(installation.result?.outcome.itemOutcomes.map(\.status), [.succeeded, .failed, .succeeded])
@@ -193,12 +193,109 @@ final class DiscoverTests: XCTestCase {
         XCTAssertEqual(replay, names)
     }
 
+    func testPreviewBindsAllPlansBeforeConfirmationAndRejectsDestinationChange() async {
+        let provider = FakeBatchProvider()
+        let model = fixtureModel(provider)
+        let installation = DiscoverInstallationModel(model: model)
+        await installation.preview("one\ntwo", scope: .npm)
+        let plannedBefore = await provider.preparedNames()
+        XCTAssertEqual(plannedBefore, ["one", "two"])
+        XCTAssertNotNil(model.batchCoordinator.preparedPlan)
+        await provider.changeDestination()
+        await installation.confirmInstall()
+        let plannedAfter = await provider.preparedNames()
+        let executed = await provider.executedNames()
+        XCTAssertEqual(plannedAfter, ["one", "two"])
+        XCTAssertTrue(executed.isEmpty)
+        XCTAssertEqual(installation.result?.outcome.itemOutcomes.map(\.status), [.failed, .failed])
+    }
+
+    func testLaterItemCannotAdoptDestinationChangedByEarlierItemAfterConfirmation() async {
+        let provider = FakeBatchProvider(changeDestinationAfterName: "one")
+        let model = fixtureModel(provider)
+        let installation = DiscoverInstallationModel(model: model)
+        await installation.preview("one\ntwo", scope: .npm)
+        XCTAssertEqual(installation.preview?.plan.npmBindings.map(\.destination.globalRoot), ["/fake", "/fake"])
+        await installation.confirmInstall()
+        XCTAssertEqual(installation.result?.outcome.itemOutcomes.map(\.status), [.succeeded, .failed])
+        let planned = await provider.preparedNames()
+        let executed = await provider.executedNames()
+        XCTAssertEqual(planned, ["one", "two"])
+        XCTAssertEqual(executed, ["one"])
+    }
+
+    func testPreviewShowsScopedRegistryAndKnownUnavailableItemsAndRejectsMixedSources() async {
+        let scoped = CatalogWebsites.url(host: "scope.fixture.invalid", path: "/")
+        let provider = FakeBatchProvider(planFailureNames: ["bad"], alreadyInstalledNames: ["installed"], registries: ["@scope/one": scoped])
+        let model = fixtureModel(provider)
+        let installation = DiscoverInstallationModel(model: model)
+        await installation.preview("@scope/one\nbad\ninstalled", scope: .npm)
+        XCTAssertEqual(installation.preview?.npm?.registryURL, scoped)
+        XCTAssertEqual(installation.preview?.plan.executableCount, 1)
+        XCTAssertEqual(installation.preview?.plan.items.map(\.status), [.ready, .unavailable, .alreadyInstalled])
+        await installation.preview("@scope/one\nunscoped", scope: .npm)
+        XCTAssertNil(installation.preview)
+        XCTAssertEqual(installation.error, .mixedRegistries)
+        let executed = await provider.executedNames()
+        XCTAssertTrue(executed.isEmpty)
+    }
+
+    func testCancellingPreviewPreparationStopsUnstartedReadsAndCannotPublishConfirmation() async {
+        let started = expectation(description: "Preparation started")
+        let provider = FakeBatchProvider(pausedPlanName: "one", onPlan: { started.fulfill() })
+        let model = fixtureModel(provider)
+        let installation = DiscoverInstallationModel(model: model)
+        let task = Task { await installation.preview("one\ntwo", scope: .npm) }
+        await fulfillment(of: [started], timeout: 3)
+        XCTAssertTrue(installation.isPreparing)
+        XCTAssertTrue(model.isBusy)
+        installation.dismissPreview()
+        await task.value
+        XCTAssertFalse(installation.isPreparing)
+        XCTAssertNil(installation.preview)
+        XCTAssertFalse(model.isBusy)
+        let planned = await provider.preparedNames()
+        let executed = await provider.executedNames()
+        XCTAssertEqual(planned, ["one"])
+        XCTAssertTrue(executed.isEmpty)
+    }
+
+    func testSearchResolvesScopedRegistryBeforeRequestAndAdvertisesActualSource() async {
+        let scoped = CatalogWebsites.url(host: "scope.fixture.invalid", path: "/")
+        let initial = DiscoverNPMContext(environment: environment, registryURL: CatalogWebsites.npmRegistry)
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, _, _ in [] }, npm: { query, context, _ in
+            XCTAssertEqual(query, "@scope/one")
+            XCTAssertEqual(context.registryURL, scoped)
+            return [.init(identity: .init(name: query, environment: context.environment), version: "1.0.0", description: nil, websiteURL: nil, registryURL: context.registryURL)]
+        }, resolveNPM: { query, context in
+            XCTAssertEqual(try NPMRegistryClient.packageScope(query), "@scope")
+            return .init(environment: context.environment, registryURL: scoped)
+        })
+        let search = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
+        await search.search("@scope/one", scope: .npm, context: .init(homebrewAvailable: true, npm: initial))
+        XCTAssertEqual(search.resultContext?.npm?.registryURL, scoped)
+        XCTAssertEqual(search.state, .available)
+    }
+
+    func testSingleScopedInstallRefusesSearchSourceMismatchBeforeAnyMutation() async {
+        let scoped = CatalogWebsites.url(host: "scope.fixture.invalid", path: "/")
+        let provider = FakeBatchProvider(registries: ["@scope/one": scoped])
+        let model = fixtureModel(provider)
+        let installation = DiscoverInstallationModel(model: model)
+        let card = npmResult("@scope/one").card(homebrew: nil, node: model.node, activeIntent: nil, running: nil, canInstall: true)
+        await installation.install(card, context: model.discoverContext)
+        XCTAssertEqual(installation.error, .sourceMismatch)
+        let executed = await provider.executedNames()
+        XCTAssertTrue(executed.isEmpty)
+        XCTAssertNil(installation.result)
+    }
+
     func testDismissedOrChangedContextPreviewCannotInstall() async {
         for changeRegistry in [true, false] {
             let provider = FakeBatchProvider()
             let model = fixtureModel(provider)
             let installation = DiscoverInstallationModel(model: model)
-            installation.preview("one", scope: .npm)
+            await installation.preview("one", scope: .npm)
             if changeRegistry { model.node = snapshot(registry: "https://other.fixture.invalid") }
             else { installation.dismissPreview() }
             await installation.confirmInstall()
@@ -229,7 +326,7 @@ final class DiscoverTests: XCTestCase {
         let provider = FakeBatchProvider(pausedName: "two", onPaused: { started.fulfill() })
         let model = fixtureModel(provider)
         let installation = DiscoverInstallationModel(model: model)
-        installation.preview("one\ntwo\nthree", scope: .npm)
+        await installation.preview("one\ntwo\nthree", scope: .npm)
         let task = Task { await installation.confirmInstall() }
         await fulfillment(of: [started], timeout: 3)
         model.operationStore.cancelActiveTask()
@@ -249,9 +346,18 @@ final class DiscoverTests: XCTestCase {
         for source in [view, library] { XCTAssertTrue(source.contains(".focusedSceneValue(\\.catalogSearchAction)")) }
         XCTAssertEqual(commands.components(separatedBy: ".keyboardShortcut(\"f\", modifiers: .command)").count, 2)
         XCTAssertTrue(view.contains("CatalogCardGrid("))
+        let sheet = try String(contentsOf: root.appending(path: "Features/Discover/DiscoverBatchInstallSheet.swift"), encoding: .utf8)
+        XCTAssertTrue(sheet.contains("preview.plan.items"))
+        XCTAssertTrue(sheet.contains("DiscoverNPMDestinationView"))
+        XCTAssertTrue(sheet.contains(".disabled(preview.plan.executableCount == 0)"))
         for forbidden in ["NavigationLink", "onTapGesture", "Process(", "plan sheet", "generate plan", "AsyncImage"] { XCTAssertFalse(view.contains(forbidden)) }
         for (language, expected) in [("en", "Installed"), ("zh-Hans", "已安装"), ("zh-Hant", "已安裝")] {
             var resource = BatchItemStatus.succeeded.discoverTitle
+            resource.locale = Locale(identifier: language)
+            XCTAssertEqual(String(localized: resource), expected)
+        }
+        for (language, expected) in [("en", "Ready to Install"), ("zh-Hans", "可安装"), ("zh-Hant", "可安裝")] {
+            var resource = BatchPreparationStatus.ready.discoverTitle
             resource.locale = Locale(identifier: language)
             XCTAssertEqual(String(localized: resource), expected)
         }

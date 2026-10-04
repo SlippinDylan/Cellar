@@ -2,6 +2,91 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    func testScopedInstallBindsActualScopeRegistryAndRejectsItsPostConfirmationChange() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "@scope/example", environment: fixture.context), action: .installPackage, managerDirectory: fixture.root)
+        XCTAssertEqual(plan.confirmedInstallRegistry?.absoluteString, "https://scope.fixture.invalid/")
+        try Data().write(to: fixture.root.appending(path: "scope-registry-changed"))
+        do {
+            _ = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+            XCTFail("Changed effective scope Registry must reject the confirmed install")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-install-state-changed") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
+
+    func testTypedRegistryReadHonorsScopeFallbackAndFailsClosedOnInvalidConfiguration() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let scoped = try await fixture.client.effectivePackageRegistry("@scope/example@latest", environment: fixture.context, managerDirectory: fixture.root)
+        let unscoped = try await fixture.client.effectivePackageRegistry("example", environment: fixture.context, managerDirectory: fixture.root)
+        XCTAssertEqual(scoped.absoluteString, "https://scope.fixture.invalid/")
+        XCTAssertEqual(unscoped, CatalogWebsites.npmRegistry)
+        try Data().write(to: fixture.root.appending(path: "scope-registry-unset"))
+        let fallback = try await fixture.client.effectivePackageRegistry("@scope/example", environment: fixture.context, managerDirectory: fixture.root)
+        XCTAssertEqual(fallback, CatalogWebsites.npmRegistry)
+        try Data().write(to: fixture.root.appending(path: "scope-registry-invalid"))
+        do { _ = try await fixture.client.effectivePackageRegistry("@scope/example", environment: fixture.context, managerDirectory: fixture.root); XCTFail("Invalid Registry must fail closed") }
+        catch { XCTAssertEqual(error as? CatalogSourceError, .invalidURL) }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertEqual(calls.split(separator: "\n").filter { $0.hasPrefix("scope-config") }.count, 3)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+        XCTAssertFalse(calls.contains("/opt/homebrew/"))
+    }
+
+    @MainActor
+    func testBatchKeepsBothOriginalDestinationsWhenFirstExecutionChangesGlobalRoot() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        try Data().write(to: fixture.root.appending(path: "change-root-after-first"))
+        let coordinator = BatchOperationCoordinator(provider: NodeFixtureBatchProvider(fixture: fixture), operationStore: OperationStore())
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: ["one", "two"].map { .npm(.init(name: $0, environment: fixture.context)) }))
+        let plan = try await coordinator.prepare(intent)
+        XCTAssertEqual(plan.npmBindings.map(\.destination.globalRoot), ["/fake", "/fake"])
+        let before = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(before.contains("execute|"))
+        let result = try await coordinator.execute(plan)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .failed])
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        let writes = calls.split(separator: "\n").filter { $0.hasPrefix("execute|") }
+        XCTAssertEqual(writes.count, 1)
+        XCTAssertTrue(writes.first?.contains("install one") == true)
+        XCTAssertFalse(calls.contains("|1|" + "install two"))
+    }
+
+    func testProviderBatchOperationsKeepsScopedRegistryBindingWithTemporaryManagerRoot() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let support = fixture.root.appending(path: "support")
+        let runtime = support.appending(path: "Cellar/Managers/\(ManagerSnapshotInstaller.snapshotVersion)")
+        for directory in ["node-manager", "homebrew-manager", "zsh-manager"] {
+            try FileManager.default.createDirectory(at: runtime.appending(path: directory), withIntermediateDirectories: true)
+        }
+        try FileManager.default.copyItem(at: fixture.root.appending(path: "main.sh"), to: runtime.appending(path: "node-manager/main.sh"))
+        for entry in ["homebrew-manager/main.sh", "zsh-manager/omz-manager.sh", "zsh-manager/app-json.sh"] {
+            let url = runtime.appending(path: entry)
+            try Data("fixture only".utf8).write(to: url)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        let runner = ProcessRunner()
+        let service = SystemProbeService(runner: runner, installer: .init(applicationSupportDirectory: support), nodeClient: fixture.client,
+                                         shellClient: .init(runner: runner), environmentResolver: .init(homeDirectory: fixture.root))
+        let provider = ProviderBatchOperations(service: service)
+        let plan = try await provider.planNPM(.init(name: "@scope/example", environment: fixture.context), operation: .install)
+        XCTAssertEqual(plan.confirmedInstallRegistry, CatalogWebsites.url(host: "scope.fixture.invalid", path: "/"))
+        XCTAssertEqual(plan.confirmedPackageDestination?.globalRoot, "/fake")
+        let before = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(before.contains("execute|"))
+        try Data().write(to: fixture.root.appending(path: "scope-registry-changed"))
+        do { _ = try await provider.executeNPM(plan, environment: fixture.context); XCTFail("Provider must preserve the bound Registry") }
+        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-install-state-changed") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
     func testInstallRefusesChangedGlobalDestinationOrRegistryBeforeWriteGate() async throws {
         for changed in ["global-prefix-changed", "global-root-changed", "registry-changed"] {
             let fixture = try PackageManagerFixture()
@@ -166,10 +251,10 @@ final class NodePackageEnvironmentTests: XCTestCase {
         XCTAssertEqual(result.status, "ok")
         let calls = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n").map(String.init)
         let selectedPath = fixture.selectedBin.resolvingSymlinksInPath().path
-        XCTAssertEqual(calls.count, 6)
+        XCTAssertEqual(calls.count, 7)
         let fields = calls.map { $0.components(separatedBy: "|") }
-        XCTAssertEqual(fields.map { $0[0] }, ["summary", "plan", "summary", "plan", "summary", "execute"])
-        XCTAssertEqual(fields.map { $0[1] }, ["0", "0", "0", "0", "0", "1"])
+        XCTAssertEqual(fields.map { $0[0] }, ["summary", "plan", "summary", "summary", "plan", "summary", "execute"])
+        XCTAssertEqual(fields.map { $0[1] }, ["0", "0", "0", "0", "0", "0", "1"])
         for call in fields {
             let firstPath = try XCTUnwrap(call[2].split(separator: ":").first)
             XCTAssertEqual(URL(filePath: String(firstPath)).resolvingSymlinksInPath().path, selectedPath)
@@ -298,9 +383,19 @@ private struct PackageManagerFixture {
         let alias = root.appending(path: ".nvm/alias")
         try FileManager.default.createDirectory(at: alias, withIntermediateDirectories: true)
         try Data("v20.0.0".utf8).write(to: alias.appending(path: "default"))
+        let npmScript = #"""
+        #!/bin/bash
+        printf '%s|%s|%s\n' 'scope-config' "$NODE_MANAGER_ALLOW_JSON_EXECUTE" "$PATH" >> '\#(log.path)'
+        [ "$1 $2 $3" = 'config get @scope:registry' ] || exit 2
+        [ ! -e '\#(root.path)/scope-registry-invalid' ] || { printf '%s\n' https://user:password@invalid.fixture.invalid; exit 0; }
+        [ ! -e '\#(root.path)/scope-registry-unset' ] || { printf '%s\n' undefined; exit 0; }
+        [ ! -e '\#(root.path)/scope-registry-changed' ] || { printf '%s\n' https://changed.fixture.invalid; exit 0; }
+        printf '%s\n' https://scope.fixture.invalid
+        """#
+        try Data(npmScript.utf8).write(to: selectedBin.appending(path: "npm"))
         let script = #"""
         #!/bin/bash
-        printf '%s|%s|%s\n' "$2" "$NODE_MANAGER_ALLOW_JSON_EXECUTE" "$PATH" >> '\#(log.path)'
+        printf '%s|%s|%s|%s\n' "$2" "$NODE_MANAGER_ALLOW_JSON_EXECUTE" "$PATH" "$3 $4" >> '\#(log.path)'
         if [ "$2" = summary ]; then
           npm_version=10.0.0
           [ ! -e '\#(root.path)/npm-changed' ] || npm_version=11.0.0
@@ -334,6 +429,7 @@ private struct PackageManagerFixture {
           [ ! -e '\#(root.path)/package-version-changed' ] || installed_version=2.0.0
           printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$4" "$installed_version"
         elif [ "$2" = execute ]; then
+          if [ "$4" = one ] && [ -e '\#(root.path)/change-root-after-first' ]; then /usr/bin/touch '\#(root.path)/global-root-changed'; fi
           printf '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fake","action":"%s","subject":"%s","exitCode":0,"status":"ok","logFile":"/fake/log"}}\n' "$3" "$4"
         else
           exit 2
@@ -344,4 +440,21 @@ private struct PackageManagerFixture {
     }
 
     func remove() { try? FileManager.default.removeItem(at: root) }
+}
+
+private struct NodeFixtureBatchProvider: BatchOperationProviding {
+    enum Unsupported: Error { case operation }
+    let fixture: PackageManagerFixture
+    func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan {
+        try await fixture.client.planPackage(identity, action: operation.nodeAction, managerDirectory: fixture.root)
+    }
+    func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult {
+        try await fixture.client.executePackage(plan, environment: environment, managerDirectory: fixture.root)
+    }
+    func refreshNPM(_ environment: NodeEnvironmentContext) async throws -> NodeSnapshot { throw Unsupported.operation }
+    func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan { throw Unsupported.operation }
+    func executeHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionResult { throw Unsupported.operation }
+    func refreshHomebrew() async throws -> HomebrewStatus { throw Unsupported.operation }
+    func planNodeUninstall(_ identity: NodeRuntimeIdentity) async throws -> NodeActionPlan { throw Unsupported.operation }
+    func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult { throw Unsupported.operation }
 }

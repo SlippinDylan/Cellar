@@ -176,19 +176,74 @@ final class BatchOperationCoordinatorTests: XCTestCase {
     }
 
     func testPreparationFailureDoesNotWriteAndCleansUpOperation() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarUnavailableActivity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
         let provider = FakeBatchProvider(planFails: true)
         let store = OperationStore()
-        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
-        do {
-            _ = try await coordinator.prepare(npmIntent(.install))
-            XCTFail("Expected plan failure")
-        } catch {}
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store, activityStore: activity)
+        let plan = try await coordinator.prepare(npmIntent(.install))
+        XCTAssertEqual(plan.executableCount, 0)
+        XCTAssertEqual(plan.items.map(\.status), [.unavailable, .unavailable, .unavailable])
+        let result = try await coordinator.execute(plan)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.failed, .failed, .failed])
+        XCTAssertEqual(result.refreshStatus, .notNeeded)
+        XCTAssertEqual(activity.summaries.first?.status, .failed)
+        XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.providerFailure, .providerFailure, .providerFailure])
+        let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
+        XCTAssertFalse(persisted.contains("FakeBatchProvider"))
         let names = await provider.executedNames()
         let refreshes = await provider.refreshCount()
         XCTAssertEqual(names, [])
         XCTAssertEqual(refreshes, 0)
         XCTAssertFalse(store.hasActiveOperations)
         XCTAssertNil(store.activeTask)
+    }
+
+    func testInstallPreparationFailureIsPerItemAndEligibleItemsStillExecute() async throws {
+        for unavailable in [Set(["one"]), Set(["two"]), Set(["one", "two", "three"])] {
+            let provider = FakeBatchProvider(planFailureNames: unavailable)
+            let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore())
+            let plan = try await coordinator.prepare(npmIntent(.install))
+            let result = try await coordinator.execute(plan)
+            XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), ["one", "two", "three"].map { unavailable.contains($0) ? .failed : .succeeded })
+            let names = await provider.executedNames()
+            XCTAssertEqual(names, ["one", "two", "three"].filter { !unavailable.contains($0) })
+            XCTAssertEqual(result.refreshStatus, unavailable.count == 3 ? .notNeeded : .succeeded)
+        }
+    }
+
+    func testKnownPreparationFailureAndCancellationPreserveOrderedActivitySemantics() async throws {
+        let started = expectation(description: "Eligible install started")
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarPreparationActivity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        let provider = FakeBatchProvider(pausedName: "two", onPaused: { started.fulfill() }, planFailureNames: ["one"])
+        let store = OperationStore()
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store, activityStore: activity)
+        let plan = try await coordinator.prepare(npmIntent(.install))
+        XCTAssertEqual(plan.items.map(\.status), [.unavailable, .ready, .ready])
+        let task = Task { try await coordinator.execute(plan) }
+        await fulfillment(of: [started], timeout: 3)
+        store.cancelActiveTask()
+        let result = try await task.value
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.failed, .cancelled, .cancelled])
+        XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.providerFailure, .cancelledByUser, .cancelledByUser])
+        let names = await provider.executedNames()
+        XCTAssertEqual(names, ["two"])
+        let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
+        for secret in ["TOKEN", "secret", "FakeBatchProvider", "/private", "planFailure"] { XCTAssertFalse(persisted.contains(secret), secret) }
+    }
+
+    func testAlreadyInstalledAndUnavailableHomebrewItemsDoNotPreventLaterTypedTargets() async throws {
+        let provider = FakeBatchProvider(planFailureNames: ["bad"], alreadyInstalledNames: ["installed"])
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore())
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: ["installed", "bad", "eligible"].map { .homebrew(.init(name: $0, kind: .cask)) }))
+        let plan = try await coordinator.prepare(intent)
+        XCTAssertEqual(plan.items.map(\.status), [.alreadyInstalled, .unavailable, .ready])
+        XCTAssertEqual(plan.homebrewImpacts.map(\.targets), [[.init(name: "eligible", kind: .cask)]])
+        let result = try await coordinator.execute(plan)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.failed, .failed, .succeeded])
     }
 
     func testCancellationBeforeStartingDoesNotRefreshOrExecute() async throws {
@@ -311,6 +366,14 @@ actor FakeBatchProvider: BatchOperationProviding {
     let pausedName: String?
     let onPaused: @Sendable () -> Void
     let planFails: Bool
+    let planFailureNames: Set<String>
+    let alreadyInstalledNames: Set<String>
+    let registries: [String: URL]
+    let changeDestinationAfterName: String?
+    let pausedPlanName: String?
+    let onPlan: @Sendable () -> Void
+    var plannedNames: [String] = []
+    var destination = "/fake"
     let unknownNames: Set<String>
     let partialNames: Set<String>
     let protectedNames: Set<String>
@@ -330,12 +393,20 @@ actor FakeBatchProvider: BatchOperationProviding {
          pausedName: String? = nil, onPaused: @escaping @Sendable () -> Void = {}, planFails: Bool = false,
          unknownNames: Set<String> = [], partialNames: Set<String> = [], pauseRefresh: Bool = false,
          onRefresh: @escaping @Sendable () -> Void = {}, protectedNames: Set<String> = [],
-         npmWarningNames: Set<String> = [], homebrewPackagesRefreshFails: Bool = false) {
+         npmWarningNames: Set<String> = [], homebrewPackagesRefreshFails: Bool = false, planFailureNames: Set<String> = [],
+         alreadyInstalledNames: Set<String> = [], registries: [String: URL] = [:], changeDestinationAfterName: String? = nil,
+         pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}) {
         self.failingNames = failingNames
         self.refreshFails = refreshFails
         self.pausedName = pausedName
         self.onPaused = onPaused
         self.planFails = planFails
+        self.planFailureNames = planFailureNames
+        self.alreadyInstalledNames = alreadyInstalledNames
+        self.registries = registries
+        self.changeDestinationAfterName = changeDestinationAfterName
+        self.pausedPlanName = pausedPlanName
+        self.onPlan = onPlan
         self.unknownNames = unknownNames
         self.partialNames = partialNames
         self.protectedNames = protectedNames
@@ -346,7 +417,8 @@ actor FakeBatchProvider: BatchOperationProviding {
     }
 
     func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) throws -> HomebrewActionPlan {
-        if planFails { throw Failure.plan }
+        if planFails || planFailureNames.contains(identity.name) { throw Failure.plan }
+        if operation == .install, alreadyInstalledNames.contains(identity.name) { throw HomebrewClientError.alreadyInstalled(identity) }
         return HomebrewActionPlan(id: UUID(), action: operation.homebrewAction(for: identity.kind), targets: [identity],
                                   tapName: nil, dependencies: [], dependents: [], artifacts: [], residualPaths: [],
                                   associatedPackages: [], generatedAt: Date(), stateFingerprint: "fake-fingerprint")
@@ -380,21 +452,30 @@ actor FakeBatchProvider: BatchOperationProviding {
         return HomebrewStatus(executablePath: "/fake/brew", version: "5.0.0", managerAvailable: true, snapshot: nil)
     }
 
-    func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) throws -> NodeActionPlan {
-        if planFails { throw Failure.plan }
+    func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan {
+        plannedNames.append(identity.name)
+        if identity.name == pausedPlanName {
+            let stream = AsyncStream<Void> { _ in onPlan() }
+            for await _ in stream {}
+            try Task.checkCancellation()
+        }
+        if planFails || planFailureNames.contains(identity.name) { throw Failure.plan }
         let action: NodeAction = switch operation {
         case .install: .installPackage
         case .update: .updatePackage
         case .uninstall: .uninstallPackage
         }
         let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(
-            "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"executeSupported\":true,\"executable\":true}".utf8
+            "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"executeSupported\":true,\"executable\":true,\"alreadyInstalled\":\(operation == .install && alreadyInstalledNames.contains(identity.name))}".utf8
         ))
         return NodeActionPlan(id: UUID(), request: .init(action: action, subject: identity.name),
-                              payload: payload, generatedAt: Date())
+                              payload: payload, generatedAt: Date(),
+                              confirmedPackageDestination: operation == .install ? .init(nodeExecutable: identity.environment.identifier, npmExecutable: "/fake/npm", globalPrefix: destination, globalRoot: destination) : nil,
+                              confirmedInstallRegistry: operation == .install ? registries[identity.name] ?? CatalogWebsites.npmRegistry : nil)
     }
 
     func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult {
+        if let bound = plan.confirmedPackageDestination, bound.globalRoot != destination { throw Failure.provider }
         names.append(plan.request.subject)
         environments.append(environment)
         concurrent += 1
@@ -407,6 +488,7 @@ actor FakeBatchProvider: BatchOperationProviding {
             try Task.checkCancellation()
         }
         if failingNames.contains(plan.request.subject) { throw Failure.provider }
+        if plan.request.subject == changeDestinationAfterName { destination = "/changed" }
         if npmWarningNames.contains(plan.request.subject) {
             let envelope = try JSONDecoder().decode(ManagerEnvelope<NodeOperationResult>.self, from: Data(nodeUninstallResidueResponse.utf8))
             guard let result = envelope.data else { throw Failure.provider }
@@ -437,6 +519,8 @@ actor FakeBatchProvider: BatchOperationProviding {
     }
 
     func executedNames() -> [String] { names }
+    func preparedNames() -> [String] { plannedNames }
+    func changeDestination() { destination = "/changed" }
     func planNodeUninstall(_ identity: NodeRuntimeIdentity) throws -> NodeActionPlan {
         if planFails { throw Failure.plan }
         let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(

@@ -4,12 +4,23 @@ import Foundation
 struct DiscoverSearchDependencies: Sendable {
     let homebrew: @Sendable (String, HomebrewPackageKind, Int) async throws -> [HomebrewPackage]
     let npm: @Sendable (String, DiscoverNPMContext, Int) async throws -> [NPMCatalogResult]
+    let resolveNPM: @Sendable (String, DiscoverNPMContext) async throws -> DiscoverNPMContext
+
+    init(homebrew: @escaping @Sendable (String, HomebrewPackageKind, Int) async throws -> [HomebrewPackage],
+         npm: @escaping @Sendable (String, DiscoverNPMContext, Int) async throws -> [NPMCatalogResult],
+         resolveNPM: @escaping @Sendable (String, DiscoverNPMContext) async throws -> DiscoverNPMContext = { _, context in context }) {
+        self.homebrew = homebrew
+        self.npm = npm
+        self.resolveNPM = resolveNPM
+    }
 
     static func live(service: SystemProbeService) -> Self {
         let http = CatalogHTTPClient()
         return Self(homebrew: { try await service.discoverHomebrew($0, kind: $1, limit: $2) },
                     npm: { query, context, limit in
             try await NPMRegistryClient(registryURL: context.registryURL, http: http).search(query, environment: context.environment, limit: limit)
+        }, resolveNPM: { query, context in
+            .init(environment: context.environment, registryURL: try await service.effectiveNPMRegistry(query, environment: context.environment))
         })
     }
 }
@@ -79,22 +90,27 @@ final class DiscoverSearchModel: ObservableObject {
                      request: UUID, operationID: UUID) async {
         defer { operationStore.end(operationID) }
         do {
-            let results = try await operationStore.performCancellable(operationID: operationID) {
+            let (results, resolvedContext) = try await operationStore.performCancellable(operationID: operationID) {
                 let values: [DiscoverResult]
+                var effectiveContext = context
                 switch scope {
                 case .homebrewFormula, .homebrewCask:
                     let kind: HomebrewPackageKind = scope == .homebrewFormula ? .formula : .cask
                     values = try await self.dependencies.homebrew(query, kind, limit).prefix(limit).map(DiscoverResult.homebrew)
                 case .npm:
-                    guard let npm = context.npm else { preconditionFailure("npm search requires a validated context") }
+                    guard let base = context.npm else { preconditionFailure("npm search requires a validated context") }
+                    let npm = try await self.dependencies.resolveNPM(query, base)
+                    effectiveContext = DiscoverContext(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true)
+                    guard self.latestRequest == request else { throw CancellationError() }
+                    self.resultContext = effectiveContext
                     values = try await self.dependencies.npm(query, npm, limit).prefix(limit).map(DiscoverResult.npm)
                 }
                 try Task.checkCancellation()
-                return values
+                return (values, effectiveContext)
             }
             guard latestRequest == request, !Task.isCancelled else { return }
             self.results = results
-            resultContext = context
+            resultContext = resolvedContext
             state = results.isEmpty ? .empty : .available
         } catch {
             guard latestRequest == request else { return }
@@ -108,57 +124,95 @@ final class DiscoverInstallationModel: ObservableObject {
     @Published private(set) var preview: DiscoverInstallPreview?
     @Published private(set) var result: BatchExecutionResult?
     @Published private(set) var error: DiscoverInputError?
+    @Published private(set) var isPreparing = false
     private let model: AppModel
+    private var previewRequest: UUID?
+    private var preparationTask: Task<BatchPlan, Error>?
 
     init(model: AppModel) { self.model = model }
 
-    func preview(_ input: String, scope: CatalogProviderScope) {
+    func preview(_ input: String, scope: CatalogProviderScope) async {
+        guard !model.isBusy else { error = .installationFailed; return }
+        let request = UUID()
+        previewRequest = request
         preview = nil
         error = nil
+        isPreparing = true
+        defer {
+            if previewRequest == request { isPreparing = false; preparationTask = nil }
+        }
         do {
             if scope != .npm, !model.discoverContext.homebrewAvailable { throw DiscoverInputError.missingContext }
             if scope == .npm, model.nodeRefreshFailed { throw DiscoverInputError.missingContext }
-            let npm = scope == .npm ? model.discoverContext.npm : nil
+            let context = model.discoverContext
+            let npm = scope == .npm ? context.npm : nil
             let intent = try DiscoverBatchInput.intent(input, scope: scope, npm: npm)
-            preview = DiscoverInstallPreview(intent: intent, npm: npm)
+            let task = Task { try await self.model.prepareBatch(intent) }
+            preparationTask = task
+            let plan = try await withTaskCancellationHandler { try await task.value } onCancel: { task.cancel() }
+            guard previewRequest == request, !Task.isCancelled else { return }
+            try checkBindings(plan)
+            preview = DiscoverInstallPreview(plan: plan, context: context)
         } catch let error as DiscoverInputError { self.error = error }
-        catch { preconditionFailure("Input validation only throws DiscoverInputError") }
+        catch { if previewRequest == request { self.error = .installationFailed } }
     }
 
-    func dismissPreview() { preview = nil }
+    func dismissPreview() {
+        previewRequest = nil
+        preparationTask?.cancel()
+        preparationTask = nil
+        isPreparing = false
+        preview = nil
+    }
 
     func confirmInstall() async {
         guard let preview else { return }
         self.preview = nil
-        // Consume the user's confirmation once, before any asynchronous preparation.
-        guard valid(preview.intent, npm: preview.npm) else { error = .staleContext; return }
-        await execute(preview.intent, npm: preview.npm)
+        // The confirmation consumes only the plans and destinations already shown.
+        let currentContextMatches = switch preview.intent.scope {
+        case .npm: preview.context.npm == model.discoverContext.npm
+        case .homebrew: true
+        case .nodeRuntime: false
+        }
+        guard valid(preview.intent), currentContextMatches
+        else { error = .staleContext; return }
+        await execute(preview.plan)
     }
 
     func install(_ card: CatalogCardState, context: DiscoverContext) async {
         guard card.primaryAction == .install, card.progress == .idle,
               let intent = BatchIntent(operation: .install, items: [card.batchItem]) else { return }
-        let npm = card.identity.providerScope == .npm ? context.npm : nil
-        guard valid(intent, npm: npm) else { error = .staleContext; return }
-        await execute(intent, npm: npm)
+        guard valid(intent) else { error = .staleContext; return }
+        do {
+            let plan = try await model.prepareBatch(intent)
+            try checkBindings(plan)
+            if let npm = context.npm, !plan.npmBindings.allSatisfy({ $0.registryURL == npm.registryURL }) { throw DiscoverInputError.sourceMismatch }
+            await execute(plan)
+        } catch let error as DiscoverInputError { self.error = error }
+        catch { self.error = .installationFailed }
     }
 
-    private func valid(_ intent: BatchIntent, npm: DiscoverNPMContext?) -> Bool {
+    private func valid(_ intent: BatchIntent) -> Bool {
         switch intent.scope {
         case .homebrew: return model.discoverContext.homebrewAvailable
-        case .npm(let environment): return !model.nodeRefreshFailed && npm == model.discoverContext.npm && npm?.environment == environment
+        case .npm(let environment): return !model.nodeRefreshFailed && model.discoverContext.npm?.environment == environment
         case .nodeRuntime: return false
         }
     }
 
-    private func execute(_ intent: BatchIntent, npm: DiscoverNPMContext?) async {
+    private func checkBindings(_ plan: BatchPlan) throws {
+        if let first = plan.npmBindings.first {
+            guard plan.npmBindings.allSatisfy({ $0.registryURL == first.registryURL }) else { throw DiscoverInputError.mixedRegistries }
+            guard plan.npmBindings.allSatisfy({ $0.destination == first.destination }) else { throw DiscoverInputError.staleContext }
+        }
+    }
+
+    private func execute(_ plan: BatchPlan) async {
         guard !model.isBusy else { error = .installationFailed; return }
         error = nil
         result = nil
         do {
-            let plan = try await model.prepareBatch(intent)
-            guard valid(intent, npm: npm), !Task.isCancelled else { throw DiscoverInputError.staleContext }
-            if let npm, !plan.npmRegistryURLs.allSatisfy({ $0 == npm.registryURL }) { throw DiscoverInputError.staleContext }
+            guard valid(plan.intent), !Task.isCancelled else { throw DiscoverInputError.staleContext }
             result = try await model.executeBatch(plan)
         } catch let error as DiscoverInputError { self.error = error }
         catch { self.error = .installationFailed }
@@ -169,8 +223,8 @@ extension AppModel {
     var discoverContext: DiscoverContext {
         let npm: DiscoverNPMContext?
         if let node, !node.summary.nodePath.isEmpty, !node.summary.npmPath.isEmpty,
-           let registry = URL(string: node.summary.registry), (try? NPMRegistryClient(registryURL: registry)) != nil {
-            npm = DiscoverNPMContext(environment: LibraryCatalog.context(node.summary), registryURL: registry)
+           let registry = URL(string: node.summary.registry), let client = try? NPMRegistryClient(registryURL: registry) {
+            npm = DiscoverNPMContext(environment: LibraryCatalog.context(node.summary), registryURL: client.registryURL)
         } else { npm = nil }
         return DiscoverContext(homebrewAvailable: homebrew?.executablePath != nil && !homebrewRefreshFailed, npm: npm,
                                nodeAvailable: node != nil && node?.summary.nodePath.isEmpty == false && node?.summary.npmPath.isEmpty == false)

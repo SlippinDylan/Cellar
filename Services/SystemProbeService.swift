@@ -166,6 +166,11 @@ actor SystemProbeService {
         try await nodeClient.planPackage(identity, action: action, managerDirectory: nodeManagerDirectory(snapshot))
     }
 
+    func effectiveNPMRegistry(_ specOrQuery: String, environment: NodeEnvironmentContext) async throws -> URL {
+        let snapshot = try await installManagers()
+        return try await nodeClient.effectivePackageRegistry(specOrQuery, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
     func executeNPMPackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NodeOperationResult {
         try await nodeClient.executePackage(plan, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
     }

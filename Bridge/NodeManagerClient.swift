@@ -168,12 +168,19 @@ actor NodeManagerClient {
             throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
         }
         let validated = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
+        let registry = action == .installPackage ? try await packageRegistry(identity.name, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory) : nil
         let plan = try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
                                   environment: validated.environment)
         guard action == .uninstallPackage || action == .installPackage else { return plan }
+        if action == .installPackage {
+            let final = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
+            guard try packageDestination(validated.summary) == packageDestination(final.summary),
+                  registry == (try await packageRegistry(identity.name, summary: final.summary, environment: final.environment, managerDirectory: managerDirectory))
+            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
+        }
         return NodeActionPlan(id: plan.id, request: plan.request, payload: plan.payload, generatedAt: plan.generatedAt,
                               confirmedPackageDestination: try packageDestination(validated.summary),
-                              confirmedInstallRegistry: action == .installPackage ? try packageRegistry(validated.summary) : nil)
+                              confirmedInstallRegistry: registry)
     }
 
     func executePackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeOperationResult {
@@ -195,6 +202,10 @@ actor NodeManagerClient {
             return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
         }
         if plan.request.action == .installPackage {
+            guard let confirmed = plan.confirmedPackageDestination,
+                  confirmed == (try packageDestination(validated.summary)),
+                  plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory))
+            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
             let currentPlan = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: validated.environment)
             guard currentPlan.canExecute,
                   currentPlan.payload.packageName == plan.payload.packageName,
@@ -202,9 +213,8 @@ actor NodeManagerClient {
                   currentPlan.payload.installedVersion == plan.payload.installedVersion
             else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
             let finalEnvironment = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
-            guard let confirmed = plan.confirmedPackageDestination,
-                  confirmed == (try packageDestination(finalEnvironment.summary)),
-                  plan.confirmedInstallRegistry == (try packageRegistry(finalEnvironment.summary))
+            guard confirmed == (try packageDestination(finalEnvironment.summary)),
+                  plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: finalEnvironment.summary, environment: finalEnvironment.environment, managerDirectory: managerDirectory))
             else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
             return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
         }
@@ -221,8 +231,23 @@ actor NodeManagerClient {
                                       globalPrefix: canonical(summary.globalPrefix), globalRoot: canonical(summary.globalRoot))
     }
 
-    private func packageRegistry(_ summary: NodeSummary) throws -> URL {
-        guard let registryURL = URL(string: summary.registry) else { throw CatalogSourceError.invalidURL }
+    func effectivePackageRegistry(_ specOrQuery: String, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> URL {
+        let validated = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+        return try await packageRegistry(specOrQuery, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory)
+    }
+
+    private func packageRegistry(_ specOrQuery: String, summary: NodeSummary, environment: [String: String], managerDirectory: URL) async throws -> URL {
+        var value = summary.registry
+        if let scope = try NPMRegistryClient.packageScope(specOrQuery) {
+            // Cellar-owned typed read; the frozen Manager schema does not expose scoped configuration.
+            let result = try await runner.run(ProcessRequest(executableURL: URL(filePath: summary.npmPath),
+                                                            arguments: ["config", "get", "\(scope):registry"], environment: environment,
+                                                            currentDirectoryURL: managerDirectory, timeout: .seconds(20)))
+            guard result.terminationStatus == 0, !result.standardOutputWasTruncated, !result.standardErrorWasTruncated else { throw CatalogSourceError.invalidResponse }
+            let configured = result.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if configured != "undefined", configured != "null" { value = configured }
+        }
+        guard let registryURL = URL(string: value) else { throw CatalogSourceError.invalidURL }
         return try NPMRegistryClient(registryURL: registryURL).registryURL
     }
 

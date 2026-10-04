@@ -73,7 +73,7 @@ enum DiscoverResult: Sendable {
 }
 
 enum DiscoverInputError: Error, Equatable {
-    case empty, tooMany, invalidTarget, missingContext, staleContext, installationFailed
+    case empty, tooMany, invalidTarget, missingContext, staleContext, sourceMismatch, mixedRegistries, installationFailed
 }
 
 enum DiscoverBatchInput {
@@ -124,7 +124,11 @@ enum DiscoverBatchInput {
 }
 
 struct DiscoverInstallPreview: Identifiable {
-    let id = UUID()
-    let intent: BatchIntent
-    let npm: DiscoverNPMContext?
+    let plan: BatchPlan
+    let context: DiscoverContext
+    var id: UUID { plan.id }
+    var intent: BatchIntent { plan.intent }
+    var npm: DiscoverNPMContext? {
+        plan.npmBindings.first.map { .init(environment: $0.environment, registryURL: $0.registryURL) }
+    }
 }

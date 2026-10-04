@@ -6,7 +6,7 @@ struct NPMRegistryClient: Sendable {
 
     init(registryURL: URL, http: CatalogHTTPClient = CatalogHTTPClient()) throws {
         guard CatalogWebsites.origin(registryURL) != nil, registryURL.query == nil, registryURL.fragment == nil else { throw CatalogSourceError.invalidURL }
-        self.registryURL = registryURL
+        self.registryURL = registryURL.path.isEmpty ? registryURL.appending(path: "/") : registryURL
         self.http = http
     }
 
@@ -39,6 +39,14 @@ struct NPMRegistryClient: Sendable {
         }
         if name.hasPrefix("@") { return parts.count == 2 && validPart(parts[0].dropFirst()) && validPart(parts[1]) }
         return parts.count == 1 && validPart(parts[0])
+    }
+
+    static func packageScope(_ specOrQuery: String) throws -> String? {
+        let value = specOrQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value.hasPrefix("@") else { return nil }
+        let scope = String(value.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)[0])
+        guard scope.range(of: #"^@[a-z0-9][a-z0-9._-]*$"#, options: .regularExpression) != nil else { throw CatalogSourceError.invalidQuery }
+        return scope
     }
 }
 

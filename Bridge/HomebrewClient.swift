@@ -5,6 +5,7 @@ enum HomebrewClientError: LocalizedError {
     case commandFailed(HomebrewCommandOutput)
     case invalidJSON(arguments: [String], detail: String)
     case invalidPlan(String)
+    case alreadyInstalled(HomebrewPackageIdentity)
     case outputTruncated(arguments: [String])
 
     var errorDescription: String? {
@@ -19,6 +20,8 @@ enum HomebrewClientError: LocalizedError {
             "Homebrew 返回了无法识别的数据：\(detail)"
         case .invalidPlan(let detail):
             detail
+        case .alreadyInstalled(let identity):
+            "软件包已经安装：\(identity.name)"
         case .outputTruncated(let arguments):
             "brew \(arguments.joined(separator: " ")) 的输出超过安全上限"
         }
@@ -277,7 +280,7 @@ actor HomebrewClient {
         for target in validatedTargets {
             let package = try await loadPackage(target)
             guard !package.isInstalled else {
-                throw HomebrewClientError.invalidPlan("软件包已经安装：\(package.identity.name)")
+                throw HomebrewClientError.alreadyInstalled(package.identity)
             }
             packages.append(package)
         }

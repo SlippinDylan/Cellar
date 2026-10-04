@@ -105,7 +105,7 @@ Local library 从本机 provider 状态派生。Discover 通过官方 Homebrew �
 
 Library 的 All/Homebrew/npm 与 Homebrew All/Formula/Cask 筛选只处理已有快照，不发起网络或完整目录请求。npm identity 保留当前受控 Node executable 身份和 Node/npm 版本；未完成或失败的 enrichment 显示 unknown。Manage 一次只选择 Formula、Cask、npm 或独立 Node runtime 范围，最多 100 项；单项和批量都复用 typed coordinator，在唯一的任务专用确认之后执行。Library 的 Cask 卸载仅提供 standard；artifact 在确认前展示、执行后报告，不由 App 删除。
 
-Discover 固定显示互斥的 Formula、Cask、npm 范围，以 Return 或 Search 发起查询。空输入不请求；默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。npm 使用当前快照中的有效默认 Registry 与精确 Node context，不合并其他安装。输入、范围或页面生命周期变化取消旧搜索；替换查询等待旧任务清理后才登记新 owner，菜单取消同时撤销等待中的替换。已安装卡片不提供重复安装，更新由 Updates 负责。批量输入只做本地规范化与预览，最终确认一次消费后才准备和执行 typed batch；执行或复查失败分别呈现，搜索结果保留。
+Discover 固定显示互斥的 Formula、Cask、npm 范围，以 Return 或 Search 发起查询。空输入不请求；默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。npm 搜索保留精确 Node context；普通查询使用有效默认 Registry，`@scope/name` 查询先读取该 scope 的有效 Registry，并显示实际请求来源。结果安装前准备的有效 Registry 必须与已显示的搜索来源相同，不能静默改用另一个 Registry。输入、范围或页面生命周期变化取消旧搜索；替换查询等待旧任务清理后才登记新 owner，菜单取消同时撤销等待中的替换。已安装卡片不提供重复安装，更新由 Updates 负责。批量输入经本地规范化后，以可取消只读操作准备全部 typed plan，再显示绑定的实际来源、Node/npm 入口、canonical globalPrefix/globalRoot、逐项可执行性和数量。最终一次确认仅执行原批次计划；执行或复查失败分别呈现，搜索结果保留。
 
 ## Operation 与 batch coordinator
 
@@ -131,11 +131,13 @@ Batch coordinator 只组合现有单项 typed operation：
 
 当前 `BatchOperationCoordinator` 在确认前准备有序单项计划，整批计划只能消费一次。执行通过 `ProviderBatchOperations` 复用既有 Homebrew/npm client；npm 核对明确安装中的实际 Node/npm 入口与版本，计划、执行和复查复用验证后固定的 environment，PATH 只包含该安装的 bin 与系统工具路径，禁止其他 provider 提供 fallback。npm 复查合并时同步 App 内后续操作使用的 Node 会话版本。`OperationStore` 登记覆盖执行、取消后的进程回收及最终复查；可取消 worker 与最终复查分开，取消不打断复查。Homebrew 保留单项执行契约要求的安全复查，再执行一次整批最终复查；provider partial 单独保留为逐项部分完成，并计入整体部分完成。最终复查失败独立报告，既有逐项结果保持不变。现有单项 Homebrew、Node 与 Shell 写操作也使用相同的取消登记。
 
+安装批次把准备不可用或已经安装的目标保留为 typed unavailable/alreadyInstalled 条目，预览明确说明这些项目不会安装，其他 eligible 项仍按原顺序准备和执行。准备失败不保存原始错误；最终 outcome 包含全部原目标的有序结果，已知不可用项为 failed，取消后尚未开始的可执行项为 cancelled。零可执行项禁用用户确认按钮；协调器即使收到该批次，也只生成失败摘要，不调用 provider execute 或复查。既有卸载与 Node 当前/default 保护仍在准备时拒绝危险批次。
+
 Node runtime 卸载批次与 npm 包批次使用不同 identity 和 scope，但均绑定确认中显示的受控 Node 环境。Bridge 执行前重新读取 Node runtime 计划，复验当前/default、精确目标目录及其全局包摘要；provider 对当前、默认或无法可靠读取的版本的拒绝仍生效。批次完成后只进行一次最终 Node 环境复查；Activity 保存独立的 Node runtime scope，清除环境路径后只保留版本语义。
 
 npm 卸载的确认状态在当前会话中保存规范化的 Node/npm executable、globalPrefix 和 globalRoot。打开单次写入 gate 前重新读取同一环境的包计划及最终 summary，确认 package identity、installedVersion 和精确全局目标目录没有变化；变化后拒绝旧确认，不把同版本的其他 Node executable 当作已确认环境。原计划的有效期和 token 不因复验而延长。Manager 的 uninstall `warn`/零退出/`residue-detected` 表示移除成功但有残留，协调器保留为 partiallySucceeded；路径仅在当前会话 Library 结果中以可复制文字展示，不写入 Activity，也不由 App 删除。
 
-npm 安装同样保存会话内的目标目录与默认 Registry，执行前复验原包名、已安装版本、解析目标版本、Node/npm 入口与最终 summary；旧计划的有效期不延长。Discover 还核对准备时读到的 Registry 与用户预览来源一致。安装完成但最终复查失败时保留原快照与逐项结果，标记对应 provider 状态未知，停止从该旧清单提供安装动作，直到显式刷新成功。
+npm 安装保存会话内的原目标目录与每个 package spec 的有效 Registry；准备前后确认目的地没有变化，确认后在逐项执行前及打开 write gate 前复验原包名、已安装版本、解析目标版本、Node/npm 入口、目的地和 Registry，旧计划的有效期不延长。scope Registry 通过 Cellar-owned typed read 查询：只调用已验证安装中的绝对 npm，参数固定为 `config get <validated-scope>:registry`，采用与 Manager 相同的受控环境与工作目录、关闭 execute gate、20 秒 deadline 和有界输出；未配置 scope 才使用同次 summary 的默认 Registry，读取失败或无效来源均 fail closed。冻结 Manager 无法强制指定 Registry，因此来源变化必须拒绝执行，不重建已确认基线。Discover 的一个批次若包含不同有效 Registry，会要求用户分别提交；准备期间不同项目读到不同目的地也拒绝发布确认。安装完成但最终复查失败时保留原快照与逐项结果，标记对应 provider 状态未知，停止从该旧清单提供安装动作，直到显式刷新成功。
 
 Homebrew 整批最终复查遇到 packages 分区错误时视为 reconciliation failed，不发布空安装清单作为新快照。AppModel 保留先前成功的 Homebrew 快照与刷新时间，同时发布失败状态；Library 显示复查失败提示，逐项执行结果仍保留。
 

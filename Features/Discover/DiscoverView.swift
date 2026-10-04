@@ -25,7 +25,9 @@ struct DiscoverView: View {
                 ForEach(CatalogProviderScope.allCases, id: \.self) { Text($0.cardTitle).tag($0) }
             }
             .pickerStyle(.segmented)
-            if scope == .npm, let npm = model.discoverContext.npm { DiscoverNPMContextView(context: npm) }
+            if scope == .npm, let npm = search.resultContext?.npm ?? model.discoverContext.npm {
+                DiscoverNPMContextView(context: npm, isDefault: search.resultContext == nil)
+            }
             ViewThatFits(in: .horizontal) {
                 HStack { searchButton; Spacer(); Text("Search returns up to 50 results.").foregroundStyle(.secondary) }
                 VStack(alignment: .leading, spacing: 8) { searchButton; Text("Search returns up to 50 results.").foregroundStyle(.secondary) }
@@ -115,10 +117,24 @@ struct DiscoverView: View {
 
 struct DiscoverNPMContextView: View {
     let context: DiscoverNPMContext
+    var isDefault = false
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Registry: \(context.registryURL.absoluteString)").textSelection(.enabled)
+            if isDefault { Text("Default Registry: \(context.registryURL.absoluteString)").textSelection(.enabled) }
+            else { Text("Registry: \(context.registryURL.absoluteString)").textSelection(.enabled) }
             Text("Node Environment: \(context.environment.nodeVersion) · npm \(context.environment.npmVersion)")
         }.foregroundStyle(.secondary)
+    }
+}
+
+struct DiscoverNPMDestinationView: View {
+    let destination: NodePackageDestination
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Node Executable: \(destination.nodeExecutable)")
+            Text("npm Executable: \(destination.npmExecutable)")
+            Text("Global Prefix: \(destination.globalPrefix)")
+            Text("Global Package Directory: \(destination.globalRoot)")
+        }.textSelection(.enabled).foregroundStyle(.secondary)
     }
 }

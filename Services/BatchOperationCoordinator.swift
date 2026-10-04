@@ -29,15 +29,44 @@ struct BatchPlan: Identifiable, Sendable {
         plans.compactMap { if case .homebrew(let plan) = $0 { plan } else { nil } }
     }
 
-    var npmRegistryURLs: [URL] {
-        plans.compactMap { if case .npm(let plan, _) = $0 { plan.confirmedInstallRegistry } else { nil } }
+    var items: [BatchPreparedItem] {
+        zip(intent.items, plans).map { item, plan in
+            let status: BatchPreparationStatus = if case .unavailable(let status) = plan { status } else { .ready }
+            return BatchPreparedItem(item: item, status: status)
+        }
     }
+
+    var executableCount: Int { items.count { $0.status == .ready } }
+
+    var npmBindings: [BatchNPMBinding] {
+        zip(intent.items, plans).compactMap { item, prepared in
+            guard case .npm(let plan, let environment) = prepared,
+                  let destination = plan.confirmedPackageDestination, let registryURL = plan.confirmedInstallRegistry else { return nil }
+            return BatchNPMBinding(item: item, environment: environment, destination: destination, registryURL: registryURL)
+        }
+    }
+}
+
+enum BatchPreparationStatus: Sendable { case ready, unavailable, alreadyInstalled }
+
+struct BatchPreparedItem: Identifiable, Sendable {
+    let item: BatchItem
+    let status: BatchPreparationStatus
+    var id: BatchItem { item }
+}
+
+struct BatchNPMBinding: Sendable {
+    let item: BatchItem
+    let environment: NodeEnvironmentContext
+    let destination: NodePackageDestination
+    let registryURL: URL
 }
 
 private enum BatchProviderPlan: Sendable {
     case homebrew(HomebrewActionPlan)
     case npm(NodeActionPlan, NodeEnvironmentContext)
     case nodeRuntime(NodeActionPlan, NodeEnvironmentContext)
+    case unavailable(BatchPreparationStatus)
 }
 
 enum BatchProviderResult: Sendable {
@@ -91,27 +120,41 @@ final class BatchOperationCoordinator: ObservableObject {
             var plans: [BatchProviderPlan] = []
             for item in intent.items {
                 try Task.checkCancellation()
-                switch item {
-                case .homebrew(let identity):
-                    let plan = try await self.provider.planHomebrew(identity, operation: intent.operation)
-                    guard plan.targets == [identity], plan.canExecute,
-                          plan.action == intent.operation.homebrewAction(for: identity.kind)
-                    else { throw BatchOperationError.invalidPlan }
-                    plans.append(.homebrew(plan))
-                case .npm(let identity):
-                    let plan = try await self.provider.planNPM(identity, operation: intent.operation)
-                    guard plan.request == NodeActionRequest(action: intent.operation.nodeAction, subject: identity.name),
-                          plan.canExecute
-                    else { throw BatchOperationError.invalidPlan }
-                    plans.append(.npm(plan, identity.environment))
-                case .nodeRuntime(let identity):
-                    let plan = try await self.provider.planNodeUninstall(identity)
-                    guard plan.payload.protectedByCurrent != true, plan.payload.protectedByDefault != true
-                    else { throw BatchOperationError.protectedNode }
-                    guard plan.request == NodeActionRequest(action: .uninstallNode, subject: identity.version),
-                          plan.canExecute
-                    else { throw BatchOperationError.invalidPlan }
-                    plans.append(.nodeRuntime(plan, identity.environment))
+                do {
+                    switch item {
+                    case .homebrew(let identity):
+                        let plan = try await self.provider.planHomebrew(identity, operation: intent.operation)
+                        guard plan.targets == [identity], plan.canExecute,
+                              plan.action == intent.operation.homebrewAction(for: identity.kind)
+                        else { throw BatchOperationError.invalidPlan }
+                        plans.append(.homebrew(plan))
+                    case .npm(let identity):
+                        let plan = try await self.provider.planNPM(identity, operation: intent.operation)
+                        guard plan.request == NodeActionRequest(action: intent.operation.nodeAction, subject: identity.name)
+                        else { throw BatchOperationError.invalidPlan }
+                        if intent.operation == .install, plan.payload.alreadyInstalled == true {
+                            plans.append(.unavailable(.alreadyInstalled))
+                            continue
+                        }
+                        guard plan.canExecute else { throw BatchOperationError.invalidPlan }
+                        if intent.operation == .install {
+                            guard plan.confirmedPackageDestination != nil, plan.confirmedInstallRegistry != nil else { throw BatchOperationError.invalidPlan }
+                        }
+                        plans.append(.npm(plan, identity.environment))
+                    case .nodeRuntime(let identity):
+                        let plan = try await self.provider.planNodeUninstall(identity)
+                        guard plan.payload.protectedByCurrent != true, plan.payload.protectedByDefault != true
+                        else { throw BatchOperationError.protectedNode }
+                        guard plan.request == NodeActionRequest(action: .uninstallNode, subject: identity.version),
+                              plan.canExecute
+                        else { throw BatchOperationError.invalidPlan }
+                        plans.append(.nodeRuntime(plan, identity.environment))
+                    }
+                } catch {
+                    if Task.isCancelled || error is CancellationError { throw CancellationError() }
+                    guard intent.operation == .install else { throw error }
+                    let status: BatchPreparationStatus = if case HomebrewClientError.alreadyInstalled = error { .alreadyInstalled } else { .unavailable }
+                    plans.append(.unavailable(status))
                 }
             }
             try Task.checkCancellation()
@@ -138,6 +181,11 @@ final class BatchOperationCoordinator: ObservableObject {
             var results: [BatchProviderResult?] = []
             var started = false
             for (item, prepared) in zip(plan.intent.items, plan.plans) {
+                if case .unavailable = prepared {
+                    outcomes.append(.init(item: item, status: .failed, userFacingMessage: nil))
+                    results.append(nil)
+                    continue
+                }
                 if Task.isCancelled {
                     outcomes.append(.init(item: item, status: .cancelled, userFacingMessage: nil))
                     results.append(nil)
@@ -165,6 +213,7 @@ final class BatchOperationCoordinator: ObservableObject {
                         let result = try await self.provider.executeNodeUninstall(providerPlan, environment: environment)
                         results.append(.nodeRuntime(result))
                         status = result.status == "ok" && result.exitCode == 0 ? .succeeded : .failed
+                    case .unavailable: preconditionFailure("Unavailable preparation never enters execution")
                     }
                     outcomes.append(.init(item: item, status: status, userFacingMessage: nil))
                 } catch {

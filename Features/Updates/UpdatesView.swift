@@ -139,6 +139,7 @@ struct UpdatesConfirmationSheet: View {
                                     Text(item.item.displayIdentifier).textSelection(.enabled)
                                     Text(item.status.updatesTitle).foregroundStyle(.secondary)
                                     if let binding = group.npmBindings.first(where: { $0.item == item.item }) {
+                                        if let target = binding.targetVersion { Text("Available: \(target)") }
                                         Text("Registry: \(binding.registryURL.absoluteString)").foregroundStyle(.secondary)
                                     }
                                 }.accessibilityElement(children: .combine)

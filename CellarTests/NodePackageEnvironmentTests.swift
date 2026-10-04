@@ -2,6 +2,68 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    func testUpdateWritesExactConfirmedScopedVersionWhenLatestChangesDuringExecution() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "@scope/example", environment: fixture.context), action: .updatePackage, managerDirectory: fixture.root)
+        XCTAssertEqual(plan.payload.targetVersion, "3.0.0")
+        try Data().write(to: fixture.root.appending(path: "latest-changes-during-execute"))
+        let result = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+        XCTAssertEqual(result.action, NodeAction.updatePackage.rawValue)
+        XCTAssertEqual(result.subject, "@scope/example")
+        XCTAssertEqual(result.batchItemStatus, .succeeded)
+        XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: "written-version"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "3.0.0")
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        let writes = calls.split(separator: "\n").filter { $0.hasPrefix("execute|") }
+        XCTAssertEqual(writes.count, 1)
+        XCTAssertTrue(writes.first?.contains("install @scope/example@3.0.0") == true)
+        XCTAssertFalse(writes.first?.contains("update-latest") == true)
+        XCTAssertTrue(writes.first?.contains("|1|") == true)
+    }
+
+    func testUpdateDoesNotReportSuccessWhenInstalledVersionDiffersFromConfirmedTarget() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .updatePackage, managerDirectory: fixture.root)
+        try Data().write(to: fixture.root.appending(path: "wrong-installed-target"))
+        let result = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+        XCTAssertEqual(result.batchItemStatus, .failed)
+        XCTAssertEqual(result.exitCode, 0)
+        let writes = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n").filter { $0.hasPrefix("execute|") }
+        XCTAssertEqual(writes.count, 1)
+    }
+
+    func testUpdateVerificationReadFailureRetainsUnknownOutcomeAndActualExitStatus() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .updatePackage, managerDirectory: fixture.root)
+        try Data().write(to: fixture.root.appending(path: "verification-unavailable"))
+        let result = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+        XCTAssertEqual(result.batchItemStatus, .unknown)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertEqual(result.detail, "update-verification-unavailable")
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n").map { $0.components(separatedBy: "|") }
+        XCTAssertEqual(calls.filter { $0[0] == "execute" }.map { $0[1] }, ["1"])
+        XCTAssertEqual(calls.filter { $0[0] == "packages" }.map { $0[1] }, ["0"])
+    }
+
+    func testProviderBatchOperationsEnforcesExactScopedUpdateTargetAfterLatestChanges() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let provider = try fixture.batchProvider()
+        let plan = try await provider.planNPM(.init(name: "@scope/example", environment: fixture.context), operation: .update)
+        XCTAssertEqual(plan.request.action, .updatePackage)
+        XCTAssertEqual(plan.exactUpdateSpec, "@scope/example@3.0.0")
+        XCTAssertEqual(plan.confirmedInstallRegistry?.absoluteString, "https://scope.fixture.invalid/")
+        try Data().write(to: fixture.root.appending(path: "latest-changes-during-execute"))
+        let result = try await provider.executeNPM(plan, environment: fixture.context)
+        XCTAssertEqual(result.action, NodeAction.updatePackage.rawValue)
+        XCTAssertEqual(result.batchItemStatus, .succeeded)
+        XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: "written-version"), encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), "3.0.0")
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertTrue(calls.contains("install @scope/example@3.0.0"))
+        XCTAssertFalse(calls.split(separator: "\n").filter { $0.hasPrefix("execute|") }.contains { $0.contains("update-latest") })
+    }
     func testUpdateBindsScopeRegistryDestinationAndTargetBeforeOpeningWriteGate() async throws {
         for changed in ["scope-registry-changed", "global-root-changed", "global-prefix-changed", "target-version-changed", "package-version-changed"] {
             let fixture = try PackageManagerFixture()
@@ -112,21 +174,7 @@ final class NodePackageEnvironmentTests: XCTestCase {
     func testProviderBatchOperationsKeepsScopedRegistryBindingWithTemporaryManagerRoot() async throws {
         let fixture = try PackageManagerFixture()
         defer { fixture.remove() }
-        let support = fixture.root.appending(path: "support")
-        let runtime = support.appending(path: "Cellar/Managers/\(ManagerSnapshotInstaller.snapshotVersion)")
-        for directory in ["node-manager", "homebrew-manager", "zsh-manager"] {
-            try FileManager.default.createDirectory(at: runtime.appending(path: directory), withIntermediateDirectories: true)
-        }
-        try FileManager.default.copyItem(at: fixture.root.appending(path: "main.sh"), to: runtime.appending(path: "node-manager/main.sh"))
-        for entry in ["homebrew-manager/main.sh", "zsh-manager/omz-manager.sh", "zsh-manager/app-json.sh"] {
-            let url = runtime.appending(path: entry)
-            try Data("fixture only".utf8).write(to: url)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
-        }
-        let runner = ProcessRunner()
-        let service = SystemProbeService(runner: runner, installer: .init(applicationSupportDirectory: support), nodeClient: fixture.client,
-                                         shellClient: .init(runner: runner), environmentResolver: .init(homeDirectory: fixture.root))
-        let provider = ProviderBatchOperations(service: service)
+        let provider = try fixture.batchProvider()
         let plan = try await provider.planNPM(.init(name: "@scope/example", environment: fixture.context), operation: .install)
         XCTAssertEqual(plan.confirmedInstallRegistry, CatalogWebsites.url(host: "scope.fixture.invalid", path: "/"))
         XCTAssertEqual(plan.confirmedPackageDestination?.globalRoot, "/fake")
@@ -487,7 +535,21 @@ private struct PackageManagerFixture {
           printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","targetVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$4" "$installed_version" "$target_version"
         elif [ "$2" = execute ]; then
           if [ "$4" = one ] && [ -e '\#(root.path)/change-root-after-first' ]; then /usr/bin/touch '\#(root.path)/global-root-changed'; fi
-          printf '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fake","action":"%s","subject":"%s","exitCode":0,"status":"ok","logFile":"/fake/log"}}\n' "$3" "$4"
+          package_name="$4"
+          written_version=3.0.0
+          case "$4" in
+            *@[0-9]*) package_name="${4%@*}"; written_version="${4##*@}" ;;
+          esac
+          if [ "$3" = update-latest ] && [ -e '\#(root.path)/latest-changes-during-execute' ]; then written_version=0.5.0; fi
+          [ ! -e '\#(root.path)/wrong-installed-target' ] || written_version=4.0.0
+          printf '%s\n' "$package_name" > '\#(root.path)/written-name'
+          printf '%s\n' "$written_version" > '\#(root.path)/written-version'
+          printf '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fake","action":"%s","subject":"%s","exitCode":0,"status":"ok","logFile":"/fake/log"}}\n' "$3" "$package_name"
+        elif [ "$2" = packages ]; then
+          [ ! -e '\#(root.path)/verification-unavailable' ] || exit 2
+          package_name=$(/bin/cat '\#(root.path)/written-name')
+          written_version=$(/bin/cat '\#(root.path)/written-version')
+          printf '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{"%s":{"version":"%s"}}}}\n' "$package_name" "$written_version"
         else
           exit 2
         fi
@@ -497,6 +559,24 @@ private struct PackageManagerFixture {
     }
 
     func remove() { try? FileManager.default.removeItem(at: root) }
+
+    func batchProvider() throws -> ProviderBatchOperations {
+        let support = root.appending(path: "support")
+        let runtime = support.appending(path: "Cellar/Managers/\(ManagerSnapshotInstaller.snapshotVersion)")
+        for directory in ["node-manager", "homebrew-manager", "zsh-manager"] {
+            try FileManager.default.createDirectory(at: runtime.appending(path: directory), withIntermediateDirectories: true)
+        }
+        try FileManager.default.copyItem(at: root.appending(path: "main.sh"), to: runtime.appending(path: "node-manager/main.sh"))
+        for entry in ["homebrew-manager/main.sh", "zsh-manager/omz-manager.sh", "zsh-manager/app-json.sh"] {
+            let url = runtime.appending(path: entry)
+            try Data("fixture only".utf8).write(to: url)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+        }
+        let runner = ProcessRunner()
+        let service = SystemProbeService(runner: runner, installer: .init(applicationSupportDirectory: support), nodeClient: client,
+                                         shellClient: .init(runner: runner), environmentResolver: .init(homeDirectory: root))
+        return ProviderBatchOperations(service: service)
+    }
 }
 
 private struct NodeFixtureBatchProvider: BatchOperationProviding {

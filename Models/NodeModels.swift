@@ -180,6 +180,14 @@ struct NodeActionPlan: Identifiable, Sendable {
 
     var canExecute: Bool {
         payload.executeSupported != false && payload.executable != false && payload.alreadyInstalled != true
+            && (request.action != .updatePackage || exactUpdateSpec != nil)
+    }
+
+    var exactUpdateSpec: String? {
+        guard request.action == .updatePackage, let packageName = payload.packageName,
+              packageName == request.subject, let target = payload.targetVersion,
+              SemanticVersionStatus(current: payload.installedVersion, available: target) == .behind else { return nil }
+        return "\(packageName)@\(target)"
     }
 }
 
@@ -207,6 +215,7 @@ struct NodeOperationResult: Decodable, Sendable {
 
     var batchItemStatus: BatchItemStatus {
         guard exitCode == 0 else { return .failed }
+        if action == NodeAction.updatePackage.rawValue, status == "unknown" { return .unknown }
         if status == "ok" { return .succeeded }
         if action == NodeAction.uninstallPackage.rawValue, status == "warn", detail == "residue-detected" {
             return .partiallySucceeded
@@ -239,5 +248,21 @@ struct NodeSnapshot: Sendable {
         }
         return Self(summary: summary, configuration: configuration, packages: rows, installations: installations,
                     managerStatus: managerStatus, logs: logs, outdatedError: error, maintenanceError: maintenanceError)
+    }
+
+    func retainingKnownOutdated(from previous: Self?) -> Self {
+        // npm can update itself without changing package ownership in this installation and global directory.
+        guard outdatedError != nil, let previous,
+              summary.nodePath == previous.summary.nodePath, summary.nodeVersion == previous.summary.nodeVersion,
+              summary.npmPath == previous.summary.npmPath, summary.globalPrefix == previous.summary.globalPrefix,
+              summary.globalRoot == previous.summary.globalRoot else { return self }
+        let known = Dictionary(uniqueKeysWithValues: previous.packages.map { ($0.name, $0) })
+        let rows = packages.map { package in
+            NodePackageRow(name: package.name, installedVersion: package.installedVersion,
+                           wantedVersion: package.wantedVersion ?? known[package.name]?.wantedVersion,
+                           latestVersion: package.latestVersion ?? known[package.name]?.latestVersion)
+        }
+        return Self(summary: summary, configuration: configuration, packages: rows, installations: installations,
+                    managerStatus: managerStatus, logs: logs, outdatedError: outdatedError, maintenanceError: maintenanceError)
     }
 }

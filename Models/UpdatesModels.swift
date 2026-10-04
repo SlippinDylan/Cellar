@@ -42,7 +42,7 @@ enum UpdatesCatalog {
             npm = node.packages.compactMap { package in
                 guard let available = package.latestVersion else { return nil }
                 let knownStatus = SemanticVersionStatus(current: package.installedVersion, available: available)
-                guard knownStatus != .current else { return nil }
+                guard knownStatus != .current || nodeUpdates != .available || node.outdatedError != nil else { return nil }
                 let status: SemanticVersionStatus = nodeUpdates == .available && node.outdatedError == nil ? knownStatus : .unknown
                 let identity = NPMPackageIdentity(name: package.name, environment: environment)
                 return CatalogCardState(identity: .npm(identity), displayName: package.name, description: nil,

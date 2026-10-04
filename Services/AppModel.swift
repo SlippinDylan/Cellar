@@ -244,12 +244,13 @@ final class AppModel: ObservableObject {
     func applyBatchResult(_ result: BatchExecutionResult) {
         switch result.refreshedState {
         case .homebrew(let status):
-            homebrew = status
+            let snapshot = status.snapshot.map { $0.retainingKnownOutdated(from: homebrew?.snapshot) }
+            homebrew = HomebrewStatus(executablePath: status.executablePath, version: status.version, managerAvailable: status.managerAvailable, snapshot: snapshot)
             homebrewRefreshFailed = false
             homebrewRefreshedAt = Date()
             homebrewUpdateState = status.snapshot.map { $0.sectionErrors[.outdated] == nil ? .available : .failed } ?? .notLoaded
         case .npm(let snapshot), .nodeRuntime(let snapshot):
-            node = snapshot
+            node = snapshot.retainingKnownOutdated(from: node)
             preferredNodeVersion = snapshot.summary.nodeVersion
             nodeRefreshFailed = false
             nodeRefreshedAt = Date()

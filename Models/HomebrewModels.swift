@@ -111,6 +111,17 @@ struct HomebrewSnapshot: Sendable {
                     packages: self.packages, outdatedPackages: packages, taps: taps, sectionErrors: errors,
                     controlledPath: controlledPath, commandLineToolsAvailable: commandLineToolsAvailable)
     }
+
+    func retainingKnownOutdated(from previous: Self?) -> Self {
+        guard sectionErrors[.outdated] != nil, let previous,
+              executablePath == previous.executablePath, configuration.prefix == previous.configuration.prefix else { return self }
+        let installed = Dictionary(uniqueKeysWithValues: packages.filter(\.isInstalled).map { ($0.identity, $0) })
+        let retained = previous.outdatedPackages.compactMap { outdated -> HomebrewOutdatedPackage? in
+            guard let package = installed[outdated.identity] else { return nil }
+            return HomebrewOutdatedPackage(identity: outdated.identity, installedVersions: package.installedVersions, currentVersion: outdated.currentVersion)
+        }
+        return replacingOutdated(packages: retained, error: sectionErrors[.outdated])
+    }
 }
 
 enum HomebrewCaskArtifactCategory: String, Sendable {

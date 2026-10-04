@@ -156,7 +156,7 @@ actor NodeManagerClient {
         }
         return try await request(
             "execute",
-            arguments: executeArguments(for: plan),
+            arguments: try executeArguments(for: plan),
             managerDirectory: managerDirectory,
             environment: environment,
             timeout: .seconds(1_800)
@@ -217,17 +217,44 @@ actor NodeManagerClient {
                   currentPlan.payload.targetVersion == plan.payload.targetVersion,
                   currentPlan.payload.installedVersion == plan.payload.installedVersion
             else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
-            if plan.request.action == .updatePackage {
-                guard SemanticVersionStatus(current: currentPlan.payload.installedVersion, available: currentPlan.payload.targetVersion) == .behind
-                else { throw BridgeError.managerFailure(code: "npm-update-not-behind", detail: nil) }
-            }
             let finalEnvironment = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
             guard confirmed == (try packageDestination(finalEnvironment.summary)),
                   plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: finalEnvironment.summary, environment: finalEnvironment.environment, managerDirectory: managerDirectory))
             else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
-            return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
+            let result = try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
+            if plan.request.action == .updatePackage {
+                return await verifyPackageUpdate(result, plan: plan, context: environment, managerDirectory: managerDirectory)
+            }
+            return result
         }
         return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
+    }
+
+    private func verifyPackageUpdate(_ result: NodeOperationResult, plan: NodeActionPlan, context: NodeEnvironmentContext,
+                                     managerDirectory: URL) async -> NodeOperationResult {
+        var status = result.status
+        var detail = result.detail
+        if result.action != NodeAction.installPackage.rawValue || result.subject != plan.request.subject {
+            status = "unknown"
+            detail = "update-result-unavailable"
+        } else if result.exitCode == 0 && result.status == "ok" {
+            do {
+                let current = try await validatedPackageEnvironment(context, managerDirectory: managerDirectory, requireMatchingNPMVersion: false)
+                guard try packageDestination(current.summary) == plan.confirmedPackageDestination else {
+                    throw BridgeError.managerFailure(code: "npm-update-destination-changed", detail: nil)
+                }
+                let inventory: NodePackageInventory = try await request("packages", managerDirectory: managerDirectory, environment: current.environment)
+                if inventory.dependencies?[plan.request.subject]?.version != plan.payload.targetVersion {
+                    status = "failed"
+                    detail = "update-target-mismatch"
+                }
+            } catch {
+                status = "unknown"
+                detail = "update-verification-unavailable"
+            }
+        }
+        return NodeOperationResult(operationId: result.operationId, action: NodeAction.updatePackage.rawValue, subject: plan.request.subject,
+                                   exitCode: result.exitCode, status: status, logFile: result.logFile, detail: detail, residues: result.residues)
     }
 
     private func packageDestination(_ summary: NodeSummary) throws -> NodePackageDestination {
@@ -397,7 +424,12 @@ actor NodeManagerClient {
         return arguments
     }
 
-    private func executeArguments(for plan: NodeActionPlan) -> [String] {
+    private func executeArguments(for plan: NodeActionPlan) throws -> [String] {
+        if plan.request.action == .updatePackage {
+            guard let spec = plan.exactUpdateSpec else { throw BridgeError.managerFailure(code: "npm-update-not-behind", detail: nil) }
+            // Frozen update-latest resolves latest again; pinned install enforces and verifies the confirmed version.
+            return [NodeAction.installPackage.rawValue, spec]
+        }
         var arguments = [plan.request.action.rawValue]
         if !plan.request.subject.isEmpty || plan.request.value != nil || plan.payload.planToken != nil {
             arguments.append(plan.request.subject)

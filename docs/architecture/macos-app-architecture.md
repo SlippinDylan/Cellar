@@ -107,7 +107,7 @@ Library 的 All/Homebrew/npm 与 Homebrew All/Formula/Cask 筛选只处理已有
 
 Discover 固定显示互斥的 Formula、Cask、npm 范围，以 Return 或 Search 发起查询。空输入不请求；默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。npm 搜索保留精确 Node context；普通查询使用有效默认 Registry，`@scope/name` 查询先读取该 scope 的有效 Registry，并显示实际请求来源。结果安装前准备的有效 Registry 必须与已显示的搜索来源相同，不能静默改用另一个 Registry。输入、范围或页面生命周期变化取消旧搜索；替换查询等待旧任务清理后才登记新 owner，菜单取消同时撤销等待中的替换。已安装卡片不提供重复安装，更新由 Updates 负责。批量输入经本地规范化后，以可取消只读操作准备全部 typed plan，再显示绑定的实际来源、Node/npm 入口、canonical globalPrefix/globalRoot、逐项可执行性和数量。最终一次确认仅执行原批次计划；执行或复查失败分别呈现，搜索结果保留。
 
-Updates 的 All/Homebrew/npm 与 Homebrew All/Formula/Cask 范围只筛选已有更新快照。页面显示 Homebrew outdated 项和 npm 的已知版本差异；npm ahead/unknown 不提供更新，检查失败保留已知版本并标为 unknown。单项更新直接准备并执行；Update All 捕获当时可见的 behind 目标，在确认前准备全部 Formula、Cask 和明确 npm 环境的 typed groups，确认只消费原组一次。所有组由一个可取消任务顺序持有全局槽，逐项准备失败与执行失败保留且继续，取消停止未开始项。完成后 Homebrew Formula/Cask 共用一次最终库存复查，每个 npm 环境独立复查；复查失败保留原快照与结果并单独记录警告。更新后的复查不会触发重复自动检查，用户仍可显式重试。
+Updates 的 All/Homebrew/npm 与 Homebrew All/Formula/Cask 范围只筛选已有更新快照。页面显示 Homebrew outdated 项和 npm 的已知版本差异；npm ahead/unknown 不提供更新，检查失败保留已知版本并标为 unknown。单项更新直接准备并执行；Update All 捕获当时可见的 behind 目标，在确认前准备全部 Formula、Cask 和明确 npm 环境的 typed groups，确认只消费原组一次。所有组由一个可取消任务顺序持有全局槽，逐项准备失败与执行失败保留且继续，取消停止未开始项。完成后 Homebrew Formula/Cask 共用一次最终库存复查，每个 npm 环境独立复查。核心读取不可用时保留原快照；核心成功但 outdated 返回分区错误时，复查状态仍为 failed，同一 Homebrew 安装或 npm 全局目录内安全合并新核心数据与旧版本补充信息，卡片保持 unknown 且不可更新。逐项结果保持不变，刷新警告与 Activity 独立记录。更新后的复查不会触发重复自动检查，用户仍可显式重试。
 
 ## Operation 与 batch coordinator
 
@@ -143,7 +143,7 @@ npm 安装保存会话内的原目标目录与每个 package spec 的有效 Regi
 
 Homebrew 整批最终复查遇到 packages 分区错误时视为 reconciliation failed，不发布空安装清单作为新快照。AppModel 保留先前成功的 Homebrew 快照与刷新时间，同时发布失败状态；Library 显示复查失败提示，逐项执行结果仍保留。
 
-npm 更新复用安装的会话 Registry 与 canonical destination 绑定，在准备前后及执行前复验；计划与最终复验的 installed/target 版本必须可靠比较为 behind，当前、ahead 与 unknown 均拒绝写入。Homebrew upgrade 的指纹绑定各自目标的类型、名称、已安装版本与可用版本，确认后目标版本变化会拒绝该项；其他项目的完成不会使无关目标的计划失效。`brew update` 仍只属于独立 metadata action。
+npm 更新复用安装的会话 Registry 与 canonical destination 绑定，在准备前后及执行前复验；计划与最终复验的 installed/target 版本必须可靠比较为 behind，当前、ahead 与 unknown 均拒绝写入。确认中显示准备时的具体目标版本；实际写入通过冻结 Manager 已有的 install action 与精确 `name@version` spec 执行，不调用会再次解析 latest 的 update-latest write，App 的 typed intent、结果和 Activity 仍为 update。冻结 install 的精确版本验证继续生效；Cellar 在同一 Node 入口与全局目的地读取安装版本，只有等于原目标才报告成功，读取不可用保留原退出状态并报告 unknown。Homebrew upgrade 的指纹绑定各自目标的类型、名称、已安装版本与可用版本，确认后目标版本变化会拒绝该项；其他项目的完成不会使无关目标的计划失效。`brew update` 仍只属于独立 metadata action。
 
 ## Activity 与持久化
 

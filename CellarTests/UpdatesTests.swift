@@ -239,6 +239,72 @@ final class UpdatesTests: XCTestCase {
         for forbidden in ["TOKEN", "secret", "stdout", "/fake", "command"] { XCTAssertFalse(persisted.contains(forbidden)) }
     }
 
+    func testReturnedHomebrewOutdatedFailureKeepsNewCoreOldAvailableVersionsAndOneWarning() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarPartialBrewUpdates-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        let prior = brewSnapshot()
+        let packages = prior.packages.map { package in
+            HomebrewPackage(identity: package.identity, displayName: package.displayName, description: package.description, homepage: package.homepage, installedVersions: ["2.0.0"], currentVersion: package.currentVersion, tap: package.tap, dependencies: package.dependencies, pinned: package.pinned, deprecated: package.deprecated, disabled: package.disabled, artifacts: package.artifacts)
+        }
+        let partial = HomebrewSnapshot(executablePath: prior.executablePath, version: prior.version, configuration: prior.configuration, packages: packages, outdatedPackages: [], taps: prior.taps, sectionErrors: [.outdated: "fixture enrichment unavailable"], controlledPath: prior.controlledPath, commandLineToolsAvailable: true)
+        let model = fixtureModel(FakeBatchProvider(homebrewRefreshSnapshot: partial), activity: activity)
+        let updates = PackageUpdatesModel(model: model)
+        await updates.prepareAll(model.updateCards, scope: .homebrew, subtype: .all)
+        await updates.confirmUpdateAll()
+        let result = try XCTUnwrap(updates.result)
+        XCTAssertEqual(result.groups.map(\.refreshStatus), [.failed, .failed])
+        XCTAssertEqual(result.groups.flatMap { $0.outcome.itemOutcomes }.map(\.status), [.succeeded, .succeeded])
+        XCTAssertEqual(model.homebrew?.snapshot?.packages.map(\.installedVersions), [["2.0.0"], ["2.0.0"]])
+        let cards = UpdatesCatalog.visible(model.updateCards, scope: .homebrew, subtype: .all)
+        XCTAssertEqual(cards.count, 2)
+        XCTAssertTrue(cards.allSatisfy { $0.currentVersion == "2.0.0" && $0.availableVersion == "2.0.0" && $0.versionStatus == .unknown && $0.primaryAction == nil })
+        XCTAssertEqual(model.homebrewUpdateState, .failed)
+        XCTAssertFalse(model.homebrewRefreshFailed)
+        XCTAssertEqual(activity.summaries.filter { $0.operation == .refresh }.map(\.status), [.failed])
+        XCTAssertEqual(activity.summaries.filter { $0.operation == .update }.map(\.status), [.succeeded, .succeeded])
+        XCTAssertFalse(try String(contentsOf: activity.fileURL, encoding: .utf8).contains("enrichment unavailable"))
+    }
+
+    func testReturnedNPMOutdatedFailureKeepsNewInstalledStateOldAvailableVersionAndWarning() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarPartialNPMUpdates-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let activity = ActivityStore(applicationSupportRoot: root)
+        let prior = nodeSnapshot()
+        let packages = prior.packages.map { NodePackageRow(name: $0.name, installedVersion: $0.name == "behind" ? "2.0.0" : $0.installedVersion, wantedVersion: nil, latestVersion: nil) }
+        let partial = NodeSnapshot(summary: prior.summary, configuration: prior.configuration, packages: packages, installations: prior.installations, managerStatus: prior.managerStatus, logs: prior.logs, outdatedError: "fixture enrichment unavailable", maintenanceError: nil)
+        let model = fixtureModel(FakeBatchProvider(npmRefreshSnapshot: partial), activity: activity)
+        let updates = PackageUpdatesModel(model: model)
+        await updates.prepareAll(model.updateCards, scope: .npm, subtype: .all)
+        await updates.confirmUpdateAll()
+        let result = try XCTUnwrap(updates.result)
+        XCTAssertEqual(result.groups.map(\.refreshStatus), [.failed])
+        XCTAssertEqual(result.groups.flatMap { $0.outcome.itemOutcomes }.map(\.status), [.succeeded])
+        let card = try XCTUnwrap(model.updateCards.first { $0.displayName == "behind" })
+        XCTAssertEqual(card.currentVersion, "2.0.0")
+        XCTAssertEqual(card.availableVersion, "2.0.0")
+        XCTAssertEqual(card.versionStatus, .unknown)
+        XCTAssertNil(card.primaryAction)
+        XCTAssertEqual(model.nodeUpdateState, .failed)
+        XCTAssertFalse(model.nodeRefreshFailed)
+        XCTAssertEqual(activity.summaries.filter { $0.operation == .refresh }.map(\.status), [.failed])
+        XCTAssertEqual(activity.summaries.filter { $0.operation == .update }.map(\.status), [.succeeded])
+        XCTAssertFalse(try String(contentsOf: activity.fileURL, encoding: .utf8).contains("enrichment unavailable"))
+    }
+
+    func testPartialVersionRetentionDoesNotCrossProviderOrGlobalDirectoryIdentity() {
+        let node = nodeSnapshot()
+        let otherSummary = NodeSummary(nodePath: node.summary.nodePath, npmPath: node.summary.npmPath, nodeVersion: node.summary.nodeVersion, npmVersion: node.summary.npmVersion,
+                                       nvmLoaded: false, globalPrefix: "/other", globalRoot: "/other/lib", registry: node.summary.registry)
+        let rows = node.packages.map { NodePackageRow(name: $0.name, installedVersion: $0.installedVersion, wantedVersion: nil, latestVersion: nil) }
+        let otherNode = NodeSnapshot(summary: otherSummary, configuration: node.configuration, packages: rows, installations: [], managerStatus: nil, logs: [], outdatedError: "fixture", maintenanceError: nil)
+        XCTAssertTrue(otherNode.retainingKnownOutdated(from: node).packages.allSatisfy { $0.latestVersion == nil })
+        let brew = brewSnapshot()
+        let otherBrew = HomebrewSnapshot(executablePath: "/other/brew", version: brew.version, configuration: brew.configuration, packages: brew.packages,
+                                         outdatedPackages: [], taps: brew.taps, sectionErrors: [.outdated: "fixture"], controlledPath: "", commandLineToolsAvailable: true)
+        XCTAssertTrue(otherBrew.retainingKnownOutdated(from: brew).outdatedPackages.isEmpty)
+    }
+
     func testPageUsesInertSharedCardsAndScopedMenuActionWithoutMetadataUpdate() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appending(path: "Features/Updates/UpdatesView.swift"), encoding: .utf8)

@@ -42,7 +42,7 @@ struct BatchPlan: Identifiable, Sendable {
         zip(intent.items, plans).compactMap { item, prepared in
             guard case .npm(let plan, let environment) = prepared,
                   let destination = plan.confirmedPackageDestination, let registryURL = plan.confirmedInstallRegistry else { return nil }
-            return BatchNPMBinding(item: item, environment: environment, destination: destination, registryURL: registryURL)
+            return BatchNPMBinding(item: item, environment: environment, destination: destination, registryURL: registryURL, targetVersion: plan.payload.targetVersion)
         }
     }
 }
@@ -60,6 +60,7 @@ struct BatchNPMBinding: Sendable {
     let environment: NodeEnvironmentContext
     let destination: NodePackageDestination
     let registryURL: URL
+    let targetVersion: String?
 }
 
 private enum BatchProviderPlan: Sendable {
@@ -255,8 +256,8 @@ final class BatchOperationCoordinator: ObservableObject {
         for (plan, execution) in zip(plans, executions) where execution.2 {
             let key = BatchReconciliationKey(plan.intent.scope)
             guard reconciliations[key] == nil else { continue }
-            let refresh = Task { try await self.refresh(plan.intent.scope) }
-            do { reconciliations[key] = (.succeeded, try await refresh.value) }
+            let refresh = Task { try await self.refresh(plan.intent) }
+            do { reconciliations[key] = try await refresh.value }
             catch { reconciliations[key] = (.failed, nil) }
         }
         var results: [BatchExecutionResult] = []
@@ -330,16 +331,20 @@ final class BatchOperationCoordinator: ObservableObject {
         return (outcomes, results, started)
     }
 
-    private func refresh(_ scope: BatchScope) async throws -> BatchRefreshedState {
-        switch scope {
+    private func refresh(_ intent: BatchIntent) async throws -> (BatchRefreshStatus, BatchRefreshedState?) {
+        switch intent.scope {
         case .homebrew:
             let status = try await provider.refreshHomebrew()
-            guard status.snapshot?.sectionErrors[.packages] == nil else {
+            guard let snapshot = status.snapshot, snapshot.sectionErrors[.packages] == nil else {
                 throw BatchOperationError.reconciliationUnavailable
             }
-            return .homebrew(status)
-        case .npm(let environment): return .npm(try await provider.refreshNPM(environment))
-        case .nodeRuntime(let environment): return .nodeRuntime(try await provider.refreshNPM(environment))
+            let refreshStatus: BatchRefreshStatus = intent.operation == .update && snapshot.sectionErrors[.outdated] != nil ? .failed : .succeeded
+            return (refreshStatus, .homebrew(status))
+        case .npm(let environment):
+            let snapshot = try await provider.refreshNPM(environment)
+            let refreshStatus: BatchRefreshStatus = intent.operation == .update && snapshot.outdatedError != nil ? .failed : .succeeded
+            return (refreshStatus, .npm(snapshot))
+        case .nodeRuntime(let environment): return (.succeeded, .nodeRuntime(try await provider.refreshNPM(environment)))
         }
     }
 }

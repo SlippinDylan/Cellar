@@ -380,6 +380,8 @@ actor FakeBatchProvider: BatchOperationProviding {
     let protectedNames: Set<String>
     let npmWarningNames: Set<String>
     let homebrewPackagesRefreshFails: Bool
+    let homebrewRefreshSnapshot: HomebrewSnapshot?
+    let npmRefreshSnapshot: NodeSnapshot?
     let pauseRefresh: Bool
     let onRefresh: @Sendable () -> Void
     var refreshContinuation: AsyncStream<Void>.Continuation?
@@ -396,7 +398,8 @@ actor FakeBatchProvider: BatchOperationProviding {
          onRefresh: @escaping @Sendable () -> Void = {}, protectedNames: Set<String> = [],
          npmWarningNames: Set<String> = [], homebrewPackagesRefreshFails: Bool = false, planFailureNames: Set<String> = [],
          alreadyInstalledNames: Set<String> = [], registries: [String: URL] = [:], changeDestinationAfterName: String? = nil,
-         pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}, changeDestinationAfterPlanName: String? = nil) {
+         pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}, changeDestinationAfterPlanName: String? = nil,
+         homebrewRefreshSnapshot: HomebrewSnapshot? = nil, npmRefreshSnapshot: NodeSnapshot? = nil) {
         self.failingNames = failingNames
         self.refreshFails = refreshFails
         self.pausedName = pausedName
@@ -414,6 +417,8 @@ actor FakeBatchProvider: BatchOperationProviding {
         self.protectedNames = protectedNames
         self.npmWarningNames = npmWarningNames
         self.homebrewPackagesRefreshFails = homebrewPackagesRefreshFails
+        self.homebrewRefreshSnapshot = homebrewRefreshSnapshot
+        self.npmRefreshSnapshot = npmRefreshSnapshot
         self.pauseRefresh = pauseRefresh
         self.onRefresh = onRefresh
     }
@@ -447,11 +452,15 @@ actor FakeBatchProvider: BatchOperationProviding {
     func refreshHomebrew() throws -> HomebrewStatus {
         refreshes += 1
         if refreshFails { throw Failure.refresh }
+        if let snapshot = homebrewRefreshSnapshot {
+            return HomebrewStatus(executablePath: snapshot.executablePath, version: snapshot.version, managerAvailable: true, snapshot: snapshot)
+        }
         if homebrewPackagesRefreshFails {
             let snapshot = HomebrewSnapshot(executablePath: "/fake/brew", version: "5.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: [], outdatedPackages: [], taps: [], sectionErrors: [.packages: "fixture unavailable"], controlledPath: "", commandLineToolsAvailable: true)
             return HomebrewStatus(executablePath: snapshot.executablePath, version: snapshot.version, managerAvailable: true, snapshot: snapshot)
         }
-        return HomebrewStatus(executablePath: "/fake/brew", version: "5.0.0", managerAvailable: true, snapshot: nil)
+        let snapshot = HomebrewSnapshot(executablePath: "/fake/brew", version: "5.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: [], outdatedPackages: [], taps: [], sectionErrors: [:], controlledPath: "", commandLineToolsAvailable: true)
+        return HomebrewStatus(executablePath: snapshot.executablePath, version: snapshot.version, managerAvailable: true, snapshot: snapshot)
     }
 
     func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan {
@@ -468,7 +477,7 @@ actor FakeBatchProvider: BatchOperationProviding {
         case .uninstall: .uninstallPackage
         }
         let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(
-            "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"executeSupported\":true,\"executable\":true,\"alreadyInstalled\":\(operation == .install && alreadyInstalledNames.contains(identity.name))}".utf8
+            "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"packageName\":\"\(identity.name)\",\"installedVersion\":\"1.0.0\",\"targetVersion\":\"2.0.0\",\"executeSupported\":true,\"executable\":true,\"alreadyInstalled\":\(operation == .install && alreadyInstalledNames.contains(identity.name))}".utf8
         ))
         let plan = NodeActionPlan(id: UUID(), request: .init(action: action, subject: identity.name),
                               payload: payload, generatedAt: Date(),
@@ -513,6 +522,7 @@ actor FakeBatchProvider: BatchOperationProviding {
         }
         try Task.checkCancellation()
         if refreshFails { throw Failure.refresh }
+        if let snapshot = npmRefreshSnapshot { return snapshot }
         return NodeSnapshot(
             summary: .init(nodePath: "/fake/node", npmPath: "/fake/npm", nodeVersion: environment.nodeVersion,
                            npmVersion: environment.npmVersion, nvmLoaded: false, globalPrefix: "/fake",

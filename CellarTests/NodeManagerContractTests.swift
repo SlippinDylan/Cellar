@@ -2,6 +2,27 @@ import XCTest
 @testable import Cellar
 
 final class NodeManagerContractTests: XCTestCase {
+    func testUpdatePlanRequiresAnExactBehindTargetAndKeepsScopedPackageParsing() throws {
+        for target in ["2.0.0", "1.0.0", "0.5.0", "git"] {
+            let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data("{\"action\":\"update-latest\",\"packageName\":\"@scope/example\",\"installedVersion\":\"1.0.0\",\"targetVersion\":\"\(target)\",\"executeSupported\":true}".utf8))
+            let plan = NodeActionPlan(id: UUID(), request: .init(action: .updatePackage, subject: "@scope/example"), payload: payload, generatedAt: Date())
+            XCTAssertEqual(plan.canExecute, target == "2.0.0")
+            XCTAssertEqual(plan.exactUpdateSpec, target == "2.0.0" ? "@scope/example@2.0.0" : nil)
+        }
+        let missing = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(#"{"action":"update-latest","executeSupported":true}"#.utf8))
+        let plan = NodeActionPlan(id: UUID(), request: .init(action: .updatePackage, subject: "example"), payload: missing, generatedAt: Date())
+        XCTAssertFalse(plan.canExecute)
+        XCTAssertNil(plan.exactUpdateSpec)
+    }
+
+    func testUpdateVerificationUnknownIsNotSuccessAndRetainsActualExitCode() {
+        let result = NodeOperationResult(operationId: "fixture", action: NodeAction.updatePackage.rawValue, subject: "example", exitCode: 0,
+                                         status: "unknown", logFile: "", detail: "update-verification-unavailable", residues: nil)
+        XCTAssertEqual(result.batchItemStatus, .unknown)
+        let failed = NodeOperationResult(operationId: "fixture", action: NodeAction.updatePackage.rawValue, subject: "example", exitCode: 7,
+                                         status: "unknown", logFile: "", detail: nil, residues: nil)
+        XCTAssertEqual(failed.batchItemStatus, .failed)
+    }
     func testDecodesActualUninstallResidueWarningResponse() throws {
         let result = try JSONDecoder().decode(ManagerEnvelope<NodeOperationResult>.self, from: Data(nodeUninstallResidueResponse.utf8))
         XCTAssertTrue(result.ok)

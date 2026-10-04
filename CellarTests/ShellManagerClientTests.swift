@@ -1,7 +1,93 @@
+import Darwin
 import XCTest
 @testable import Cellar
 
 final class ShellManagerClientTests: XCTestCase {
+    func testTidyRejectsNonUTF8BeforeAnyMovementOrWrite() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let bytes = Data([0xff, 0xfe, 0x0a])
+        try bytes.write(to: fixture.zshrcURL)
+        let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+        try Data("cache".utf8).write(to: cache)
+        let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Non-UTF8 input must refuse before execution") }
+        catch BridgeError.invalidOutput { }
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), bytes)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh").path))
+    }
+
+    func testTidyValidationRunFailureRestoresSafelyAndReturnsPartial() async throws {
+        let fixture = try ShellManagerFixture(validateTidySyntax: { _, _ in throw CocoaError(.fileReadNoSuchFile) })
+        defer { fixture.remove() }
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+        try Data("cache".utf8).write(to: cache)
+        let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+        let result = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory)
+        XCTAssertEqual(result.status, "partial")
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path))
+    }
+
+    @MainActor
+    func testTidyCancellationAwaitsValidationProcessAndRetainsPartialFacts() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarTidyValidation-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let notification = root.appending(path: "started")
+        try Data().write(to: notification)
+        let block = root.appending(path: "block")
+        XCTAssertEqual(mkfifo(block.path, 0o600), 0)
+        let script = root.appending(path: "validate.sh")
+        let pidFile = root.appending(path: "validation.pid")
+        try Data("#!/bin/bash\nprintf '%s' \"$$\" > '\(pidFile.path)'\nprintf ready >> '\(notification.path)'\nread -r task_input < '\(block.path)'\n".utf8).write(to: script)
+        let fileDescriptor = open(notification.path, O_EVTONLY | O_CLOEXEC)
+        let queue = kqueue()
+        XCTAssertGreaterThanOrEqual(fileDescriptor, 0)
+        XCTAssertGreaterThanOrEqual(queue, 0)
+        defer { close(fileDescriptor); close(queue) }
+        var registration = kevent()
+        registration.ident = UInt(fileDescriptor)
+        registration.filter = Int16(EVFILT_VNODE)
+        registration.flags = UInt16(EV_ADD | EV_ONESHOT)
+        registration.fflags = UInt32(NOTE_WRITE | NOTE_EXTEND)
+        XCTAssertEqual(kevent(queue, &registration, 1, nil, 0, nil), 0)
+        let runner = ProcessRunner()
+        let fixture = try ShellManagerFixture(validateTidySyntax: { _, directory in
+            try await runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/bash"), arguments: [script.path],
+                                                environment: ShellEnvironmentResolver(homeDirectory: root).environment(), currentDirectoryURL: directory,
+                                                timeout: .seconds(5))).terminationStatus
+        })
+        defer { fixture.remove() }
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+        try Data("cache".utf8).write(to: cache)
+        let model = fixture.model(activityStore: ActivityStore(applicationSupportRoot: fixture.root))
+        await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
+        let plan = try XCTUnwrap(model.shellPlan)
+        let ownerFinished = expectation(description: "operation owner completes cancellation")
+        let owner = Task { await model.executeShellPlan(confirmed: plan); ownerFinished.fulfill() }
+        let started = await Task.detached {
+            var event = kevent()
+            var deadline = timespec(tv_sec: 3, tv_nsec: 0)
+            return kevent(queue, nil, 0, &event, 1, &deadline) == 1
+        }.value
+        XCTAssertTrue(started)
+        model.operationStore.cancelActiveTask()
+        let timely = await XCTWaiter.fulfillment(of: [ownerFinished], timeout: 2)
+        await owner.value
+        XCTAssertEqual(timely, .completed)
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+        XCTAssertEqual(model.shellActionResult?.operation.status, "partial")
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path))
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+        XCTAssertEqual(kill(pid, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
+    }
+
     @MainActor
     func testPluginSuccessThemeFailurePersistsExactSemanticStepsAfterRestart() async throws {
         let fixture = try ShellManagerFixture()
@@ -385,7 +471,7 @@ private struct ShellManagerFixture {
     let zshrcURL: URL
     let client: ShellManagerClient
 
-    init() throws {
+    init(validateTidySyntax: (@Sendable (URL, URL) async throws -> Int32)? = nil) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "CellarShellManagerTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         homeDirectory = root.appending(path: "home", directoryHint: .isDirectory)
@@ -415,7 +501,7 @@ private struct ShellManagerFixture {
             environmentResolver: ShellEnvironmentResolver(
                 homeDirectory: homeDirectory,
                 temporaryDirectory: root
-            )
+            ), validateTidySyntax: validateTidySyntax
         )
     }
 

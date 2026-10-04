@@ -6,7 +6,7 @@ struct ShellConfigurationFile {
     let metadata: stat
 
     static func read(at url: URL) throws -> Self {
-        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else { throw BridgeError.managerFailure(code: "zshrc-not-regular-file", detail: nil) }
         defer { close(descriptor) }
         var metadata = stat()
@@ -25,7 +25,7 @@ struct ShellConfigurationFile {
     }
 
     func restore(at url: URL, replacing expectedContents: Data) throws {
-        let descriptor = open(url.path, O_RDWR | O_NOFOLLOW | O_CLOEXEC)
+        let descriptor = open(url.path, O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
         defer { close(descriptor) }
         var current = stat()

@@ -3,15 +3,22 @@ import Foundation
 actor ShellManagerClient {
     private let runner: ProcessRunner
     private let environmentResolver: ShellEnvironmentResolver
+    private let validateTidySyntax: @Sendable (URL, URL) async throws -> Int32
     private var consumedConfigurations = Set<UUID>()
     private var tidyConfirmations: [UUID: (candidates: [String], file: ShellConfigurationFile)] = [:]
 
     init(
         runner: ProcessRunner,
-        environmentResolver: ShellEnvironmentResolver = ShellEnvironmentResolver()
+        environmentResolver: ShellEnvironmentResolver = ShellEnvironmentResolver(),
+        validateTidySyntax: (@Sendable (URL, URL) async throws -> Int32)? = nil
     ) {
         self.runner = runner
         self.environmentResolver = environmentResolver
+        self.validateTidySyntax = validateTidySyntax ?? { configuration, directory in
+            try Task.checkCancellation()
+            return try await runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", configuration.path],
+                                                       environment: environmentResolver.environment(), currentDirectoryURL: directory, timeout: .seconds(30))).terminationStatus
+        }
     }
 
     func loadSnapshot(managerDirectory: URL, managerAvailable: Bool) async throws -> ShellStatus {
@@ -248,17 +255,18 @@ actor ShellManagerClient {
     }
 
     private func executeTidy(_ plan: ShellActionPlan, original: ShellConfigurationFile, managerDirectory: URL) async throws -> ShellOperationResult {
+        let expected = try Self.expectedConfiguration(original.contents, request: plan.request)
         var environment = environmentResolver.environment()
         environment["SHELL_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
         let operation: ShellOperationResult = try await request("execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
                                                                managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
-        let validation = Task { try await self.runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", self.zshrcURL.path],
-                                                                        environment: self.environmentResolver.environment(), currentDirectoryURL: managerDirectory)) }
-        let expected = try Self.expectedConfiguration(original.contents, request: plan.request)
         do {
             let current = try ShellConfigurationFile.read(at: zshrcURL)
             guard current.contents == expected else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
-            if try await validation.value.terminationStatus != 0 {
+            let validationFailed: Bool
+            do { validationFailed = try await validateTidySyntax(zshrcURL, managerDirectory) != 0 }
+            catch { validationFailed = true }
+            if validationFailed {
                 try original.restore(at: zshrcURL, replacing: expected)
                 return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
                              logFile: operation.logFile, backupPath: operation.backupPath,
@@ -266,7 +274,6 @@ actor ShellManagerClient {
             }
             return operation
         } catch {
-            _ = await validation.result
             return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
                          logFile: operation.logFile, backupPath: operation.backupPath,
                          detail: String(localized: "Zsh files may have moved, but the shell configuration changed unexpectedly. It was not overwritten. Review diagnostics before trying again."))

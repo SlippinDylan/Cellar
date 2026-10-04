@@ -59,6 +59,9 @@ actor ShellManagerClient {
             throw BridgeError.invalidOutput("Shell Manager 返回了不匹配的操作计划")
         }
         var plan = ShellActionPlan(id: UUID(), request: request, payload: payload, generatedAt: Date())
+        if plan.canExecute, request.action != .installOhMyZsh {
+            _ = try Self.relocateManagedBlocks(regularZshrcContents())
+        }
         if request.action == .tidy {
             plan.candidates = try tidyCandidates()
             tidyConfirmations[plan.id] = (plan.candidates, try ShellConfigurationFile.read(at: zshrcURL))
@@ -168,8 +171,12 @@ actor ShellManagerClient {
         return URL(filePath: home).appending(path: ".zshrc")
     }
 
-    // Mirror the adapter's marker replacement for verification, never for writing.
     static func expectedConfiguration(_ contents: Data, request: ShellActionRequest) throws -> Data {
+        try relocateManagedBlocks(adapterConfiguration(contents, request: request))
+    }
+
+    // Verify the frozen writer's exact output before relocating its managed blocks.
+    static func adapterConfiguration(_ contents: Data, request: ShellActionRequest) throws -> Data {
         guard let text = String(data: contents, encoding: .utf8) else { throw BridgeError.invalidOutput("Invalid UTF-8 shell configuration") }
         let kind: String
         let value: String
@@ -199,6 +206,51 @@ actor ShellManagerClient {
         return Data(lines.joined(separator: "\n").utf8)
     }
 
+    static func relocateManagedBlocks(_ contents: Data) throws -> Data {
+        guard let text = String(data: contents, encoding: .utf8) else { throw BridgeError.invalidOutput("Invalid UTF-8 shell configuration") }
+        let sources: Set<String> = ["source $ZSH/oh-my-zsh.sh", "source \"$ZSH/oh-my-zsh.sh\"", "source \"${ZSH}/oh-my-zsh.sh\"", ". \"$ZSH/oh-my-zsh.sh\""]
+        var body: [String] = []
+        var blocks: [String] = []
+        var block: String?
+        var seen = Set<String>()
+        var sourceIndex: Int?
+        for line in text.components(separatedBy: "\n").dropLast(text.hasSuffix("\n") ? 1 : 0) {
+            if line.hasPrefix("# >>> omz-manager ") {
+                guard block == nil, ["plugins", "theme", "compdump"].contains(where: { line == "# >>> omz-manager \($0) >>>" }), seen.insert(line).inserted else {
+                    throw BridgeError.managerFailure(code: "invalid-managed-block", detail: nil)
+                }
+                block = line.replacingOccurrences(of: ">>>", with: "<<<")
+                blocks.append(line)
+            } else if let end = block {
+                guard line.trimmingCharacters(in: .whitespaces).hasPrefix("#") || !line.contains("oh-my-zsh.sh") else {
+                    throw BridgeError.managerFailure(code: "shell-init-ambiguous", detail: nil)
+                }
+                blocks.append(line)
+                if line == end { block = nil }
+            } else {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if !trimmed.hasPrefix("#"), trimmed.contains("oh-my-zsh.sh") {
+                    guard sources.contains(trimmed), sourceIndex == nil else { throw BridgeError.managerFailure(code: "shell-init-ambiguous", detail: nil) }
+                    sourceIndex = body.count
+                } else if sourceIndex == nil, !trimmed.isEmpty, !trimmed.hasPrefix("#") {
+                    // Only complete assignment lines before initialization are supported. This
+                    // excludes conditional loaders, functions, continuations and quoted fake sources.
+                    guard trimmed.range(of: #"^(export )?[A-Za-z_][A-Za-z0-9_]*=[^;`\\&|<>]*$"#, options: .regularExpression) != nil,
+                          !trimmed.contains("$("), !trimmed.contains("<<"),
+                          trimmed.filter({ $0 == "\"" }).count.isMultiple(of: 2),
+                          trimmed.filter({ $0 == "'" }).count.isMultiple(of: 2),
+                          trimmed.filter({ $0 == "(" }).count == trimmed.filter({ $0 == ")" }).count else {
+                        throw BridgeError.managerFailure(code: "shell-init-ambiguous", detail: nil)
+                    }
+                }
+                body.append(line)
+            }
+        }
+        guard block == nil, let sourceIndex else { throw BridgeError.managerFailure(code: "shell-init-unavailable", detail: nil) }
+        body.insert(contentsOf: blocks, at: sourceIndex)
+        return Data((body.joined(separator: "\n") + "\n").utf8)
+    }
+
     func execute(_ plan: ShellActionPlan, managerDirectory: URL) async throws -> ShellOperationResult {
         guard plan.canExecute else {
             throw BridgeError.managerFailure(
@@ -216,42 +268,92 @@ actor ShellManagerClient {
             }
             return try await executeTidy(plan, original: confirmation.file, managerDirectory: managerDirectory)
         }
+        if plan.request.action == .installPlugin {
+            return try await executePlugin(plan, managerDirectory: managerDirectory)
+        }
         var environment = environmentResolver.environment()
         environment["SHELL_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
-        var rollbackRequest = plan.request
-        if plan.request.action == .installPlugin {
-            guard let url = TerminalPluginSource.repository(plan.request.subject) else { throw BridgeError.managerFailure(code: "invalid-plugin-url", detail: nil) }
-            let snapshot = try await loadSnapshot(managerDirectory: managerDirectory, managerAvailable: true)
-            let installed = Set(snapshot.defaultPluginNames + snapshot.installedCustomPlugins)
-            var plugins: [String] = []
-            for name in snapshot.activePlugins where installed.contains(name) && !plugins.contains(name) { plugins.append(name) }
-            if !plugins.contains("git") { plugins.append("git") }
-            let name = url.lastPathComponent
-            if !plugins.contains(name) { plugins.append(name) }
-            rollbackRequest = .init(action: .setPlugins, subject: plugins.joined(separator: ","))
-        }
-        let original = [.setPlugins, .switchTheme, .installPlugin].contains(plan.request.action) ? try regularZshrcContents() : nil
+        let original = [.setPlugins, .switchTheme].contains(plan.request.action) ? try ShellConfigurationFile.read(at: zshrcURL) : nil
+        if let original { _ = try Self.expectedConfiguration(original.contents, request: plan.request) }
         do {
-            return try await request(
+            let operation: ShellOperationResult = try await request(
                 "execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
                 managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800)
             )
+            if let original { try await finishConfiguration(original: original, request: plan.request, managerDirectory: managerDirectory) }
+            return operation
         } catch {
             if let original,
-               (try regularZshrcContents()) == (try Self.expectedConfiguration(original, request: rollbackRequest)) {
-                let validation = Task {
-                    try await self.runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", self.zshrcURL.path],
-                                                            environment: self.environmentResolver.environment(), currentDirectoryURL: managerDirectory))
-                }
-                if try await validation.value.terminationStatus != 0 {
-                    // Restore only the exact adapter-produced file; never overwrite an intervening edit.
-                    guard (try regularZshrcContents()) == (try Self.expectedConfiguration(original, request: rollbackRequest)) else { throw error }
-                    try original.write(to: zshrcURL, options: .atomic)
-                    throw BridgeError.managerFailure(code: "shell-syntax-restored", detail: String(localized: "Shell syntax validation failed. The previous configuration was restored."))
-                }
+               (try regularZshrcContents()) == (try Self.adapterConfiguration(original.contents, request: plan.request)) {
+                try await finishConfiguration(original: original, request: plan.request, managerDirectory: managerDirectory)
             }
             throw error
         }
+    }
+
+    private func executePlugin(_ plan: ShellActionPlan, managerDirectory: URL) async throws -> ShellOperationResult {
+        guard let url = TerminalPluginSource.repository(plan.request.subject) else { throw BridgeError.managerFailure(code: "invalid-plugin-url", detail: nil) }
+        let original = try ShellConfigurationFile.read(at: zshrcURL)
+        _ = try Self.relocateManagedBlocks(original.contents)
+        let snapshot = try await loadSnapshot(managerDirectory: managerDirectory, managerAvailable: true)
+        let installed = Set(snapshot.defaultPluginNames + snapshot.installedCustomPlugins)
+        var plugins = snapshot.activePlugins.filter { installed.contains($0) }
+        for name in ["git", url.lastPathComponent] where !plugins.contains(name) { plugins.append(name) }
+        let staging = try ShellPluginStaging(home: zshrcURL.deletingLastPathComponent())
+        var environment = environmentResolver.environment()
+        environment["SHELL_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
+        environment["SHELL_MANAGER_PLUGIN_STAGING"] = staging.directory.path
+        environment["SHELL_MANAGER_PLUGIN_OWNER"] = staging.token
+        environment["SHELL_MANAGER_PLUGIN_IDENTITY"] = staging.identity
+        let operation: ShellOperationResult
+        do {
+            operation = try await request("execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
+                managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
+            try Task.checkCancellation()
+            guard original.matches(try ShellConfigurationFile.read(at: zshrcURL)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+            try staging.publish(name: url.lastPathComponent)
+        } catch {
+            try staging.cleanup()
+            throw error
+        }
+        do {
+            try staging.cleanup()
+            try staging.verifyPublished(name: url.lastPathComponent)
+            let selection = try await self.plan(.init(action: .setPlugins, subject: plugins.joined(separator: ",")), managerDirectory: managerDirectory)
+            guard original.matches(try ShellConfigurationFile.read(at: zshrcURL)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+            try staging.verifyPublished(name: url.lastPathComponent)
+            _ = try await execute(selection, managerDirectory: managerDirectory)
+            return operation
+        } catch {
+            // The cloned plugin is already published; never delete it or claim rollback.
+            return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
+                         logFile: operation.logFile, backupPath: operation.backupPath, detail: error.localizedDescription)
+        }
+    }
+
+    private func relocateConfiguration(original: ShellConfigurationFile, request: ShellActionRequest) throws -> ShellConfigurationFile {
+        let produced = try Self.adapterConfiguration(original.contents, request: request)
+        let expected = try Self.expectedConfiguration(original.contents, request: request)
+        let current = try ShellConfigurationFile.read(at: zshrcURL)
+        guard current.contents == produced else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
+        try current.replacingContents(expected).restore(at: zshrcURL, replacing: produced, matching: current)
+        return try ShellConfigurationFile.read(at: zshrcURL)
+    }
+
+    private func finishConfiguration(original: ShellConfigurationFile, request: ShellActionRequest, managerDirectory: URL) async throws {
+        let relocated = try relocateConfiguration(original: original, request: request)
+        // Completing validation/rollback is mandatory even when the adapter was cancelled.
+        let validation = Task {
+            try await self.runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", self.zshrcURL.path],
+                environment: self.environmentResolver.environment(), currentDirectoryURL: managerDirectory, timeout: .seconds(30)))
+        }
+        let valid: Bool
+        do { valid = try await validation.value.terminationStatus == 0 } catch { valid = false }
+        guard valid else {
+            try original.restore(at: zshrcURL, replacing: relocated.contents, matching: relocated)
+            throw BridgeError.managerFailure(code: "shell-syntax-restored", detail: String(localized: "Shell syntax validation failed. The previous configuration was restored."))
+        }
+        guard relocated.matches(try ShellConfigurationFile.read(at: zshrcURL)) else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
     }
 
     private func executeTidy(_ plan: ShellActionPlan, original: ShellConfigurationFile, managerDirectory: URL) async throws -> ShellOperationResult {
@@ -261,13 +363,12 @@ actor ShellManagerClient {
         let operation: ShellOperationResult = try await request("execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
                                                                managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
         do {
-            let current = try ShellConfigurationFile.read(at: zshrcURL)
-            guard current.contents == expected else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
+            let current = try relocateConfiguration(original: original, request: plan.request)
             let validationFailed: Bool
             do { validationFailed = try await validateTidySyntax(zshrcURL, managerDirectory) != 0 }
             catch { validationFailed = true }
             if validationFailed {
-                try original.restore(at: zshrcURL, replacing: expected)
+                try original.restore(at: zshrcURL, replacing: expected, matching: current)
                 return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
                              logFile: operation.logFile, backupPath: operation.backupPath,
                              detail: String(localized: "Zsh files were moved, but syntax validation failed. The previous shell configuration and attributes were restored."))

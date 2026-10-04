@@ -3,6 +3,44 @@ import XCTest
 
 @MainActor
 final class ActivityStoreTests: XCTestCase {
+    func testByteBudgetEvictsOldestAndRetainsNewestAcrossFailedWritesAndRestart() throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ActivityStore(applicationSupportRoot: root)
+        let names = (0..<100).map { "package-\($0)-" + String(repeating: "x", count: 200) }
+        var newest: ActivitySummary?
+        for index in 0..<60 {
+            let record = summary(date: Date(timeIntervalSince1970: Double(index)), names: names)
+            store.append(record)
+            XCTAssertNil(store.persistenceError)
+            XCTAssertEqual(store.summaries.first?.id, record.id)
+            XCTAssertLessThanOrEqual(try Data(contentsOf: store.fileURL).count, ActivityStore.maximumFileBytes)
+            newest = record
+        }
+        XCTAssertLessThan(store.summaries.count, 60)
+        let directory = store.fileURL.deletingLastPathComponent()
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path) }
+        for index in 60..<90 {
+            let record = summary(date: Date(timeIntervalSince1970: Double(index)), names: names)
+            store.append(record)
+            XCTAssertEqual(store.persistenceError, .writeFailed)
+            XCTAssertEqual(store.summaries.first?.id, record.id)
+            newest = record
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
+        store.retrySaving()
+        XCTAssertNil(store.persistenceError)
+        let restored = ActivityStore(applicationSupportRoot: root)
+        restored.restore()
+        XCTAssertEqual(restored.summaries, store.summaries)
+        XCTAssertEqual(restored.summaries.first?.id, newest?.id)
+        XCTAssertLessThanOrEqual(try Data(contentsOf: store.fileURL).count, ActivityStore.maximumFileBytes)
+        XCTAssertEqual(restored.summaries.map(\.date), restored.summaries.map(\.date).sorted(by: >))
+        let json = try String(contentsOf: store.fileURL, encoding: .utf8)
+        for raw in ["stdout", "stderr", "TOKEN", "/Users", "command"] { XCTAssertFalse(json.contains(raw)) }
+    }
+
     func testHomebrewNonPackageScopesAcceptOnlySemanticTargets() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

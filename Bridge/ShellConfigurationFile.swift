@@ -14,7 +14,14 @@ struct ShellConfigurationFile {
             throw BridgeError.managerFailure(code: "zshrc-not-regular-file", detail: nil)
         }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-        return Self(contents: try handle.readToEnd() ?? Data(), metadata: metadata)
+        let contents = try handle.read(upToCount: 2 * 1_024 * 1_024 + 1) ?? Data()
+        var after = stat()
+        let snapshot = Self(contents: contents, metadata: metadata)
+        guard contents.count <= 2 * 1_024 * 1_024, fstat(descriptor, &after) == 0, contents.count == after.st_size,
+              snapshot.matches(Self(contents: contents, metadata: after)), snapshot.pathStillReferences(after, at: url) else {
+            throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil)
+        }
+        return snapshot
     }
 
     func matches(_ other: Self) -> Bool {
@@ -24,14 +31,20 @@ struct ShellConfigurationFile {
             && metadata.st_mtimespec.tv_sec == other.metadata.st_mtimespec.tv_sec && metadata.st_mtimespec.tv_nsec == other.metadata.st_mtimespec.tv_nsec
     }
 
-    func restore(at url: URL, replacing expectedContents: Data) throws {
+    func replacingContents(_ data: Data) -> Self { Self(contents: data, metadata: metadata) }
+
+    func restore(at url: URL, replacing expectedContents: Data, matching expectedFile: Self? = nil) throws {
         let descriptor = open(url.path, O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
         guard descriptor >= 0 else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
         defer { close(descriptor) }
         var current = stat()
         guard fstat(descriptor, &current) == 0, current.st_mode & S_IFMT == S_IFREG else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
+        if let expectedFile {
+            guard expectedFile.matches(Self(contents: expectedContents, metadata: current)) else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
+        }
         let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
-        guard try handle.readToEnd() == expectedContents, pathStillReferences(current, at: url) else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
+        guard current.st_size == expectedContents.count, try handle.read(upToCount: expectedContents.count + 1) == expectedContents,
+              pathStillReferences(current, at: url) else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
         try handle.seek(toOffset: 0)
         try handle.write(contentsOf: contents)
         try handle.truncate(atOffset: UInt64(contents.count))

@@ -105,8 +105,9 @@ struct NodeEnvironmentResolver: Sendable {
     private func resolveAlias(_ name: String, aliasRoot: URL, visited: Set<String> = []) -> String? {
         guard !visited.contains(name) else { return nil }
         let aliasURL = aliasRoot.appending(path: name)
-        guard let data = FileManager.default.contents(atPath: aliasURL.path),
-              let rawValue = String(data: data, encoding: .utf8)?.split(whereSeparator: \.isWhitespace).first
+        guard aliasURL.standardizedFileURL.path.hasPrefix(aliasRoot.standardizedFileURL.path + "/"),
+              let snapshot = try? NodeConfigurationFile.read(at: aliasURL, maximumBytes: 4096),
+              let rawValue = String(data: snapshot.contents, encoding: .utf8)?.split(whereSeparator: \.isWhitespace).first
         else { return name == "default" ? nil : name }
 
         let value = String(rawValue)

@@ -43,6 +43,9 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 - CLT/Homebrew setup 测试注入状态探测、latest stable Release metadata、下载、SHA-256、package signature、Gatekeeper assessment 和 system opener。必须分别断言 digest 缺失/无效/不匹配及两项 trust check 失败均不调用 opener，并返回原因和官方链接。只使用 fixture 与临时目录，不请求系统 CLT UI，不打开 Installer，不写 `/opt/homebrew`。
 - Batch coordinator 测试使用 fake typed operations，断言同 provider/type、顺序执行、项目失败后继续、取消后停止未开始项、无回滚声明和正确 post-refresh。
 - Activity 持久化测试注入临时 Application Support，断言最多 100 条、结构化本地化数据、凭证/原始输出不落盘和损坏数据隔离。
+- Activity 同时遵守 1 MiB 编码上限；合并待重试摘要后按最旧优先淘汰，保留可单独表示的最新摘要。覆盖连续大批次、写入失败重试和重启恢复。
+- Shell 插件测试使用假 clone 和独立 staging，验证发布时目的地并发出现、失败清理和符号链接不逃逸；配置夹具包含官方模板初始化及假 loader，直接断言 source 时看到的插件、主题和 compdump。
+- Node 配置特殊文件测试在独立 helper 进程内设置 deadline，验证无 writer FIFO、超限、替换及 descriptor 回收，不通过 sleep 判定正确性。
 - Localization 检查必须覆盖 String Catalog 中 English、简体中文和繁体中文的缺失项，并搜索新增的非本地化用户字符串。
 - `node .github/scripts/validate-localizations.mjs` 无需启动 App，检查全部 catalog 翻译、格式占位与全部可达页面源码。新增用户可见来源时同步扩展脚本的 `presentationSources`；保留但不可达的旧 provider 页面不属于当前 UI。
 - 测试结束后不得留下 `~/Library/Application Support/Cellar/`、npm cache 变更或全局包变更。

@@ -3,6 +3,106 @@ import XCTest
 @testable import Cellar
 
 final class ShellManagerClientTests: XCTestCase {
+    func testPluginPublishNeverReplacesExternalDestinationAndCleanupDoesNotFollowLinks() throws {
+        for kind in ["directory", "symlink", "file"] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+            let clone = staging.directory.appending(path: "repository")
+            try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)
+            let outside = fixture.root.appending(path: "outside")
+            try Data("external".utf8).write(to: outside)
+            try FileManager.default.createSymbolicLink(at: clone.appending(path: "escape"), withDestinationURL: outside)
+            let final = staging.directory.deletingLastPathComponent().appending(path: "raced")
+            if kind == "directory" { try FileManager.default.createDirectory(at: final, withIntermediateDirectories: false) }
+            if kind == "file" { try Data("external".utf8).write(to: final) }
+            if kind == "symlink" { try FileManager.default.createSymbolicLink(at: final, withDestinationURL: outside) }
+            let before = try FileManager.default.attributesOfItem(atPath: final.path)[.systemFileNumber] as? NSNumber
+            XCTAssertThrowsError(try staging.publish(name: "raced"))
+            try staging.cleanup()
+            XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: final.path)[.systemFileNumber] as? NSNumber, before)
+            XCTAssertEqual(try String(contentsOf: outside, encoding: .utf8), "external")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staging.directory.path))
+        }
+    }
+
+    func testPluginStagingPublishesAtomicallyAndRejectsRedirectedParentsOrMarkerDrift() throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+        let clone = staging.directory.appending(path: "repository")
+        try FileManager.default.createDirectory(at: clone, withIntermediateDirectories: true)
+        try Data("plugin".utf8).write(to: clone.appending(path: "plugin.zsh"))
+        let inode = try FileManager.default.attributesOfItem(atPath: clone.path)[.systemFileNumber] as? NSNumber
+        XCTAssertThrowsError(try staging.publish(name: "../escape"))
+        try staging.publish(name: "published")
+        let final = staging.directory.deletingLastPathComponent().appending(path: "published")
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: final.path)[.systemFileNumber] as? NSNumber, inode)
+        try staging.cleanup()
+        XCTAssertEqual(try String(contentsOf: final.appending(path: "plugin.zsh"), encoding: .utf8), "plugin")
+        let changed = try ShellPluginStaging(home: fixture.homeDirectory)
+        try Data("foreign".utf8).write(to: changed.directory.appending(path: ".cellar-owner"))
+        XCTAssertThrowsError(try changed.cleanup())
+        let parent = final.deletingLastPathComponent()
+        let moved = fixture.root.appending(path: "moved-plugins")
+        try FileManager.default.moveItem(at: parent, to: moved)
+        try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: moved)
+        XCTAssertThrowsError(try ShellPluginStaging(home: fixture.homeDirectory))
+        XCTAssertThrowsError(try changed.publish(name: "escape"))
+    }
+
+    func testMissingMultipleCommentedAndConditionalInitializationRejectBeforeWrites() async throws {
+        for source in ["", "# source $ZSH/oh-my-zsh.sh\n", "source $ZSH/oh-my-zsh.sh\nsource \"$ZSH/oh-my-zsh.sh\"\n",
+                       "if true; then\nsource $ZSH/oh-my-zsh.sh\nfi\n", "source $OTHER/oh-my-zsh.sh\n", "FOO=bar &&\nsource $ZSH/oh-my-zsh.sh\n"] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let original = Data(("ZSH_THEME=\"robbyrussell\"\nplugins=(git)\n" + source).utf8)
+            try original.write(to: fixture.zshrcURL)
+            do { _ = try await fixture.client.planConfiguration(plugins: ["example"], theme: "agnoster", managerDirectory: fixture.managerDirectory); XCTFail("Ambiguous init must refuse") }
+            catch { }
+            XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+            XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: fixture.homeDirectory.path).contains { $0.hasPrefix(".zshrc.bak") })
+        }
+    }
+
+    func testPluginCloneFailurePreservesDestinationCreatedAfterPreflight() async throws {
+        for cloneExit in [0, 1] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let original = try Data(contentsOf: fixture.zshrcURL)
+            let module = fixture.managerDirectory.appending(path: "lib/app_json_execute.sh")
+            let fakeGit = fixture.root.appending(path: "fake-git")
+            try Data("#!/bin/bash\n/bin/mkdir repository\nprintf clone > repository/fixture\n/bin/mkdir -p \"$HOME/.oh-my-zsh/custom/plugins/raced\"\nprintf external > \"$HOME/.oh-my-zsh/custom/plugins/raced/owner\"\nexit \(cloneExit)\n".utf8).write(to: fakeGit)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeGit.path)
+            let script = try String(contentsOf: module, encoding: .utf8).replacingOccurrences(of: "/usr/bin/git clone", with: "'\(fakeGit.path)' clone")
+            try Data(script.utf8).write(to: module)
+            let plan = try await fixture.client.plan(.init(action: .installPlugin, subject: "https://github.com/example/raced"), managerDirectory: fixture.managerDirectory)
+            do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Clone failure or occupied publish must fail") }
+            catch { }
+            let parent = fixture.homeDirectory.appending(path: ".oh-my-zsh/custom/plugins")
+            XCTAssertEqual(try String(contentsOf: parent.appending(path: "raced/owner"), encoding: .utf8), "external")
+            XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: parent.path).contains { $0.hasPrefix(".cellar-plugin-") })
+            XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        }
+    }
+
+    func testManagedValuesAreVisibleWhenOfficialTemplateSourcesOhMyZsh() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let loader = fixture.homeDirectory.appending(path: ".oh-my-zsh/oh-my-zsh.sh")
+        try Data("print -r -- \"$ZSH_THEME|${(j:,:)plugins}|$ZSH_COMPDUMP\" > \"$HOME/seen\"\n".utf8).write(to: loader)
+        try Data("export ZSH=\"$HOME/.oh-my-zsh\"\nZSH_THEME=\"robbyrussell\"\nplugins=(git)\nsource $ZSH/oh-my-zsh.sh\n".utf8).write(to: fixture.zshrcURL)
+        let plan = try await fixture.client.planConfiguration(plugins: ["git", "example"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
+        let result = await fixture.client.executeConfiguration(plan, managerDirectory: fixture.managerDirectory)
+        XCTAssertNil(result.failure)
+        let tidy = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+        _ = try await fixture.client.execute(tidy, managerDirectory: fixture.managerDirectory)
+        let run = try await ProcessRunner().run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-f", fixture.zshrcURL.path],
+            environment: ShellEnvironmentResolver(homeDirectory: fixture.homeDirectory, temporaryDirectory: fixture.root).environment(), currentDirectoryURL: fixture.root))
+        XCTAssertEqual(run.terminationStatus, 0, run.errorText)
+        XCTAssertEqual(try String(contentsOf: fixture.homeDirectory.appending(path: "seen"), encoding: .utf8), "agnoster|example,git|\(fixture.homeDirectory.path)/.zsh/zcompdump\n")
+    }
+
     func testTidyRejectsNonUTF8BeforeAnyMovementOrWrite() async throws {
         let fixture = try ShellManagerFixture()
         defer { fixture.remove() }
@@ -10,8 +110,7 @@ final class ShellManagerClientTests: XCTestCase {
         try bytes.write(to: fixture.zshrcURL)
         let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
         try Data("cache".utf8).write(to: cache)
-        let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
-        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Non-UTF8 input must refuse before execution") }
+        do { _ = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory); XCTFail("Non-UTF8 input must refuse before planning") }
         catch BridgeError.invalidOutput { }
         XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), bytes)
         XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
@@ -130,7 +229,7 @@ final class ShellManagerClientTests: XCTestCase {
         for theme in ["robbyrussell", "agnoster"] {
             let fixture = try ShellManagerFixture()
             defer { fixture.remove() }
-            try Data("ZSH_THEME=\"robbyrussell\"\nplugins=(example)\n".utf8).write(to: fixture.zshrcURL)
+            try Data("ZSH_THEME=\"robbyrussell\"\nplugins=(example)\nsource $ZSH/oh-my-zsh.sh\n".utf8).write(to: fixture.zshrcURL)
             let initial = try await fixture.client.loadSnapshot(managerDirectory: fixture.managerDirectory, managerAvailable: true)
             XCTAssertTrue(TerminalConfigurationSelection.hasChanges(plugins: ["example", "git"], theme: theme, snapshot: initial))
             let plan = try await fixture.client.planConfiguration(plugins: ["example", "git"], theme: theme, managerDirectory: fixture.managerDirectory)
@@ -297,28 +396,13 @@ final class ShellManagerClientTests: XCTestCase {
         let original = try Data(contentsOf: fixture.zshrcURL)
         let request = ShellActionRequest(action: .installPlugin, subject: "https://github.com/fixture/newplugin")
         let plan = try await fixture.client.plan(request, managerDirectory: fixture.managerDirectory)
-        let snapshot = try await fixture.client.loadSnapshot(managerDirectory: fixture.managerDirectory, managerAvailable: true)
-        let expected = try ShellManagerClient.expectedConfiguration(original, request: .init(action: .setPlugins, subject: "git,newplugin"))
-        let payload: [String: Any] = ["zshVersion": "fixture", "ohMyZshInstalled": true, "ohMyZshPath": snapshot.ohMyZshPath,
-                                     "zshrcPath": fixture.zshrcURL.path, "zshrcExists": true, "currentTheme": "robbyrussell",
-                                     "activePlugins": ["git"], "installedCustomPlugins": ["example"], "availableThemes": ["robbyrussell", "agnoster"],
-                                     "defaultPluginNames": [], "runtimeDirectory": fixture.managerDirectory.path]
-        let envelope = try JSONSerialization.data(withJSONObject: ["ok": true, "schemaVersion": 1, "command": "snapshot", "data": payload])
-        let script = """
-        #!/bin/bash
-        if [ "$2" = snapshot ]; then
-          printf '%s' '\(envelope.base64EncodedString())' | /usr/bin/base64 -D
-        else
-          printf '%s' '\(expected.base64EncodedString())' | /usr/bin/base64 -D > "$HOME/.zshrc"
-          printf '%s\\n' '{"ok":false,"schemaVersion":1,"command":"execute","error":{"code":"action-failed"}}'
-          exit 1
-        fi
-        """
-        let adapter = fixture.managerDirectory.appending(path: "app-json.sh")
-        try Data(script.utf8).write(to: adapter)
-        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Failed plugin configuration must restore") }
-        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "shell-syntax-restored") }
+        let module = fixture.managerDirectory.appending(path: "lib/app_json_execute.sh")
+        let script = try String(contentsOf: module, encoding: .utf8).replacingOccurrences(of: "/usr/bin/git clone --depth=1 \"$url\" repository", with: "/bin/mkdir repository && printf fixture > repository/newplugin.plugin.zsh")
+        try Data(script.utf8).write(to: module)
+        let result = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory)
+        XCTAssertEqual(result.status, "partial")
         XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".oh-my-zsh/custom/plugins/newplugin/newplugin.plugin.zsh").path))
     }
 
     func testTidyListsExactCandidatesAndDoesNotChangeZprofileBody() async throws {
@@ -494,7 +578,7 @@ private struct ShellManagerFixture {
         try Data().write(to: themes.appending(path: "robbyrussell.zsh-theme"))
         try Data().write(to: themes.appending(path: "agnoster.zsh-theme"))
         zshrcURL = homeDirectory.appending(path: ".zshrc")
-        try Data("ZSH_THEME=\"robbyrussell\"\nplugins=(git)\n".utf8).write(to: zshrcURL)
+        try Data("ZSH_THEME=\"robbyrussell\"\nplugins=(git)\nsource $ZSH/oh-my-zsh.sh\n".utf8).write(to: zshrcURL)
 
         client = ShellManagerClient(
             runner: ProcessRunner(),

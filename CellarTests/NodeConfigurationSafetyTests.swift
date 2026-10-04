@@ -2,6 +2,38 @@ import XCTest
 @testable import Cellar
 
 final class NodeConfigurationSafetyTests: XCTestCase {
+    func testRegistryReferencedConfigurationAndSameContentReplacementInvalidatePlans() async throws {
+        let fixture = try NodeConfigurationFixture()
+        defer { fixture.remove() }
+        let referenced = fixture.root.appending(path: "registry-config")
+        try Data("registry=https://registry.example.test/\n".utf8).write(to: referenced)
+        try Data("globalconfig=\(referenced.path)\n".utf8).write(to: fixture.root.appending(path: ".npmrc"))
+        let request = NodeActionRequest(action: .setRegistry, subject: "https://registry.example.test/")
+        let plan = try await fixture.client.plan(request, managerDirectory: fixture.root)
+        let bytes = try Data(contentsOf: referenced)
+        try FileManager.default.removeItem(at: referenced)
+        try bytes.write(to: referenced)
+        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Replacement must invalidate even when contents match") }
+        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "registry-state-changed") }
+        XCTAssertFalse(try fixture.calls().contains("execute"))
+        try Data(repeating: 32, count: 65_537).write(to: referenced)
+        do { _ = try await fixture.client.plan(request, managerDirectory: fixture.root); XCTFail("Referenced config must be bounded") }
+        catch { }
+    }
+
+    func testProjectAndRegistryFingerprintRejectOversizedInputsBeforeManagerReads() async throws {
+        for name in ["package.json", ".nvmrc", ".npmrc"] {
+            let fixture = try NodeConfigurationFixture()
+            defer { fixture.remove() }
+            try Data(repeating: 32, count: 2 * 1_024 * 1_024 + 1).write(to: fixture.root.appending(path: name))
+            let request: NodeActionRequest = name == ".npmrc" ? .init(action: .setRegistry, subject: "https://registry.example.test/")
+                : .init(action: .writeProjectNVMRC, subject: fixture.root.path, value: "v24.0.0")
+            do { _ = try await fixture.client.plan(request, managerDirectory: fixture.root); XCTFail("Oversized fingerprint input must refuse") }
+            catch { }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "calls.log").path))
+        }
+    }
+
     func testLogMaintenanceListsExactCandidatesAndRefusesChangedInventory() async throws {
         let fixture = try NodeConfigurationFixture()
         defer { fixture.remove() }

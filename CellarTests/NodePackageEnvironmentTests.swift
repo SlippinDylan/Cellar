@@ -2,6 +2,32 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    func testOrdinaryInstallPinsConfirmedVersionWhenLatestOrCustomTagMoves() async throws {
+        for name in ["example", "example@next", "@scope/example", "@scope/example@next"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planPackage(.init(name: name, environment: fixture.context), action: .installPackage, managerDirectory: fixture.root)
+            try Data().write(to: fixture.root.appending(path: "latest-changes-during-execute"))
+            let result = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+            XCTAssertEqual(result.batchItemStatus, .succeeded)
+            XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: "written-version"), encoding: .utf8), "3.0.0\n")
+            let writes = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n").filter { $0.hasPrefix("execute|") }
+            XCTAssertEqual(writes.count, 1)
+            XCTAssertTrue(writes[0].hasSuffix("install \(try XCTUnwrap(plan.payload.packageName))@3.0.0"))
+        }
+    }
+
+    func testOrdinaryInstallVerifiesExactTargetOrReportsUnknown() async throws {
+        for marker in ["wrong-installed-target", "verification-unavailable"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planPackage(.init(name: "@scope/example@next", environment: fixture.context), action: .installPackage, managerDirectory: fixture.root)
+            try Data().write(to: fixture.root.appending(path: marker))
+            let result = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+            XCTAssertEqual(result.batchItemStatus, marker == "wrong-installed-target" ? .failed : .unknown)
+        }
+    }
+
     func testUpdateWritesExactConfirmedScopedVersionWhenLatestChangesDuringExecution() async throws {
         let fixture = try PackageManagerFixture()
         defer { fixture.remove() }
@@ -163,7 +189,7 @@ final class NodePackageEnvironmentTests: XCTestCase {
         let before = try String(contentsOf: fixture.log, encoding: .utf8)
         XCTAssertFalse(before.contains("execute|"))
         let result = try await coordinator.execute(plan)
-        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .failed])
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.unknown, .failed])
         let calls = try String(contentsOf: fixture.log, encoding: .utf8)
         let writes = calls.split(separator: "\n").filter { $0.hasPrefix("execute|") }
         XCTAssertEqual(writes.count, 1)
@@ -351,10 +377,10 @@ final class NodePackageEnvironmentTests: XCTestCase {
         XCTAssertEqual(result.status, "ok")
         let calls = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n").map(String.init)
         let selectedPath = fixture.selectedBin.resolvingSymlinksInPath().path
-        XCTAssertEqual(calls.count, 7)
+        XCTAssertEqual(calls.count, 9)
         let fields = calls.map { $0.components(separatedBy: "|") }
-        XCTAssertEqual(fields.map { $0[0] }, ["summary", "plan", "summary", "summary", "plan", "summary", "execute"])
-        XCTAssertEqual(fields.map { $0[1] }, ["0", "0", "0", "0", "0", "0", "1"])
+        XCTAssertEqual(fields.map { $0[0] }, ["summary", "plan", "summary", "summary", "plan", "summary", "execute", "summary", "packages"])
+        XCTAssertEqual(fields.map { $0[1] }, ["0", "0", "0", "0", "0", "0", "1", "0", "0"])
         for call in fields {
             let firstPath = try XCTUnwrap(call[2].split(separator: ":").first)
             XCTAssertEqual(URL(filePath: String(firstPath)).resolvingSymlinksInPath().path, selectedPath)
@@ -532,15 +558,22 @@ private struct PackageManagerFixture {
           [ ! -e '\#(root.path)/target-ahead' ] || target_version=0.5.0
           [ ! -e '\#(root.path)/target-current' ] || target_version=1.0.0
           [ ! -e '\#(root.path)/target-unknown' ] || target_version=git
-          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","targetVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$4" "$installed_version" "$target_version"
+          package_name="$4"
+          case "$4" in *@next|*@latest) package_name="${4%@*}" ;; esac
+          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","targetVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$package_name" "$installed_version" "$target_version"
         elif [ "$2" = execute ]; then
-          if [ "$4" = one ] && [ -e '\#(root.path)/change-root-after-first' ]; then /usr/bin/touch '\#(root.path)/global-root-changed'; fi
+          if [ "$4" = one ] || [ "$4" = one@3.0.0 ]; then
+            [ ! -e '\#(root.path)/change-root-after-first' ] || /usr/bin/touch '\#(root.path)/global-root-changed'
+          fi
           package_name="$4"
           written_version=3.0.0
           case "$4" in
             *@[0-9]*) package_name="${4%@*}"; written_version="${4##*@}" ;;
           esac
-          if [ "$3" = update-latest ] && [ -e '\#(root.path)/latest-changes-during-execute' ]; then written_version=0.5.0; fi
+          case "$4" in
+            *@[0-9]*) ;;
+            *) [ ! -e '\#(root.path)/latest-changes-during-execute' ] || written_version=0.5.0 ;;
+          esac
           [ ! -e '\#(root.path)/wrong-installed-target' ] || written_version=4.0.0
           printf '%s\n' "$package_name" > '\#(root.path)/written-name'
           printf '%s\n' "$written_version" > '\#(root.path)/written-version'

@@ -123,6 +123,7 @@ actor HomebrewClient {
             sectionErrors[.taps] = error.localizedDescription
         }
 
+        try Task.checkCancellation()
         return HomebrewSnapshot(
             executablePath: brewURL.path,
             version: try requiredLine(versionOutput, label: "version"),

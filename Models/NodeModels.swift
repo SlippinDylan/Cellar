@@ -226,6 +226,16 @@ struct NodeActionPlan: Identifiable, Sendable {
               SemanticVersionStatus(current: payload.installedVersion, available: target) == .behind else { return nil }
         return "\(packageName)@\(target)"
     }
+
+    var exactInstallSpec: String? {
+        guard request.action == .installPackage, DiscoverBatchInput.validNPMSpec(request.subject),
+              let packageName = payload.packageName, let target = payload.targetVersion,
+              SemanticVersionStatus(current: target, available: target) == .current else { return nil }
+        let scoped = request.subject.hasPrefix("@")
+        let name = request.subject.dropFirst(scoped ? 1 : 0).split(separator: "@", maxSplits: 1)[0]
+        guard packageName == (scoped ? "@" : "") + name else { return nil }
+        return "\(packageName)@\(target)"
+    }
 }
 
 struct NodePackageDestination: Equatable, Sendable {
@@ -255,7 +265,7 @@ struct NodeOperationResult: Decodable, Sendable {
             return verification == .partiallySucceeded && exitCode != 0 ? .failed : verification
         }
         guard exitCode == 0 else { return .failed }
-        if action == NodeAction.updatePackage.rawValue, status == "unknown" { return .unknown }
+        if [NodeAction.installPackage.rawValue, NodeAction.updatePackage.rawValue].contains(action), status == "unknown" { return .unknown }
         if status == "ok" { return .succeeded }
         if action == NodeAction.uninstallPackage.rawValue, status == "warn", detail == "residue-detected" {
             return .partiallySucceeded

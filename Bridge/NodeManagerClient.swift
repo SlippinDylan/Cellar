@@ -69,6 +69,7 @@ actor NodeManagerClient {
             )
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 
+        try Task.checkCancellation()
         let outdatedError = outdatedResult.failure?.localizedDescription
         return NodeSnapshot(
             summary: summary,
@@ -202,13 +203,28 @@ actor NodeManagerClient {
 
     private func registryFingerprint(environment: [String: String], managerDirectory: URL) throws -> String {
         guard let home = environment["HOME"] else { throw BridgeError.managerFailure(code: "registry-home-unavailable", detail: nil) }
-        let files = [URL(filePath: home).appending(path: ".npmrc"), managerDirectory.appending(path: ".npmrc"),
-                     URL(filePath: home).appending(path: ".nvm/alias/default")]
+        var files = [URL(filePath: home).appending(path: ".npmrc"), managerDirectory.appending(path: ".npmrc")]
+        if let bin = environment["PATH"]?.split(separator: ":").first, bin.hasPrefix(home + "/.nvm/versions/node/") {
+            files.append(URL(filePath: String(bin)).deletingLastPathComponent().appending(path: "etc/npmrc"))
+        }
         var material = Data()
-        for file in files {
-            material.append(Data(file.path.utf8))
-            do { material.append(try Data(contentsOf: file)) }
-            catch let error as CocoaError where error.code == .fileReadNoSuchFile { material.append(Data("missing".utf8)) }
+        try appendConfigurationFile(URL(filePath: home).appending(path: ".nvm/alias/default"), to: &material)
+        var visited = Set<String>()
+        while !files.isEmpty {
+            let file = files.removeFirst().standardizedFileURL
+            guard visited.insert(file.path).inserted else { continue }
+            guard visited.count <= 16 else { throw BridgeError.managerFailure(code: "registry-configuration-limit", detail: nil) }
+            guard let snapshot = try appendConfigurationFile(file, to: &material, maximumBytes: 65_536) else { continue }
+            guard let contents = String(data: snapshot.contents, encoding: .utf8) else { throw BridgeError.managerFailure(code: "registry-configuration-encoding", detail: nil) }
+            for line in contents.split(separator: "\n") {
+                let parts = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard parts.count == 2, ["userconfig", "globalconfig", "prefix"].contains(parts[0].lowercased()) else { continue }
+                let value = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    .replacingOccurrences(of: "${HOME}", with: home)
+                guard value.hasPrefix("/"), !value.contains("${") else { throw BridgeError.managerFailure(code: "registry-configuration-path", detail: nil) }
+                let reference = URL(filePath: value)
+                files.append(parts[0].lowercased() == "prefix" ? reference.appending(path: "etc/npmrc") : reference)
+            }
         }
         return SHA256.hash(data: material).description
     }
@@ -223,14 +239,24 @@ actor NodeManagerClient {
         }
         var material = Data()
         for file in files {
-            material.append(Data(file.resolvingSymlinksInPath().path.utf8))
-            do {
-                let attributes = try FileManager.default.attributesOfItem(atPath: file.path)
-                material.append(Data(String(describing: attributes[.type]).utf8))
-                material.append(try Data(contentsOf: file))
-            } catch let error as CocoaError where error.code == .fileReadNoSuchFile { material.append(Data("missing".utf8)) }
+            try appendConfigurationFile(file, to: &material)
         }
         return SHA256.hash(data: material).description
+    }
+
+    @discardableResult
+    private func appendConfigurationFile(_ file: URL, to material: inout Data, maximumBytes: Int? = nil) throws -> NodeConfigurationFile? {
+        let cap = maximumBytes ?? (file.lastPathComponent == "package.json" ? 1_048_576 : file.lastPathComponent == ".npmrc" ? 65_536 : 4_096)
+        material.append(Data(file.standardizedFileURL.path.utf8))
+        material.append(0)
+        let snapshot = try NodeConfigurationFile.read(at: file, maximumBytes: cap)
+        if let snapshot {
+            material.append(Data(snapshot.identity.utf8))
+            material.append(0)
+            material.append(snapshot.contents)
+        } else { material.append(Data("missing".utf8)) }
+        material.append(0)
+        return snapshot
     }
 
     private func execute(
@@ -321,21 +347,20 @@ actor NodeManagerClient {
                   plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: finalEnvironment.summary, environment: finalEnvironment.environment, managerDirectory: managerDirectory))
             else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
             let result = try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
-            if plan.request.action == .updatePackage {
-                return await verifyPackageUpdate(result, plan: plan, context: environment, managerDirectory: managerDirectory)
-            }
-            return result
+            return await verifyPackageWrite(result, plan: plan, context: environment, managerDirectory: managerDirectory)
         }
         return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
     }
 
-    private func verifyPackageUpdate(_ result: NodeOperationResult, plan: NodeActionPlan, context: NodeEnvironmentContext,
+    private func verifyPackageWrite(_ result: NodeOperationResult, plan: NodeActionPlan, context: NodeEnvironmentContext,
                                      managerDirectory: URL) async -> NodeOperationResult {
         var status = result.status
         var detail = result.detail
-        if result.action != NodeAction.installPackage.rawValue || result.subject != plan.request.subject {
+        let action = plan.request.action == .updatePackage ? "update" : "install"
+        guard let packageName = plan.payload.packageName else { preconditionFailure("Package execution requires a validated exact target") }
+        if result.action != NodeAction.installPackage.rawValue || result.subject != packageName {
             status = "unknown"
-            detail = "update-result-unavailable"
+            detail = "\(action)-result-unavailable"
         } else if result.exitCode == 0 && result.status == "ok" {
             do {
                 let current = try await validatedPackageEnvironment(context, managerDirectory: managerDirectory, requireMatchingNPMVersion: false)
@@ -343,16 +368,16 @@ actor NodeManagerClient {
                     throw BridgeError.managerFailure(code: "npm-update-destination-changed", detail: nil)
                 }
                 let inventory: NodePackageInventory = try await request("packages", managerDirectory: managerDirectory, environment: current.environment)
-                if inventory.dependencies?[plan.request.subject]?.version != plan.payload.targetVersion {
+                if inventory.dependencies?[packageName]?.version != plan.payload.targetVersion {
                     status = "failed"
-                    detail = "update-target-mismatch"
+                    detail = "\(action)-target-mismatch"
                 }
             } catch {
                 status = "unknown"
-                detail = "update-verification-unavailable"
+                detail = "\(action)-verification-unavailable"
             }
         }
-        return NodeOperationResult(operationId: result.operationId, action: NodeAction.updatePackage.rawValue, subject: plan.request.subject,
+        return NodeOperationResult(operationId: result.operationId, action: plan.request.action.rawValue, subject: plan.request.subject,
                                    exitCode: result.exitCode, status: status, logFile: result.logFile, detail: detail, residues: result.residues)
     }
 
@@ -534,6 +559,10 @@ actor NodeManagerClient {
     }
 
     private func executeArguments(for plan: NodeActionPlan) throws -> [String] {
+        if plan.request.action == .installPackage {
+            guard let spec = plan.exactInstallSpec else { throw BridgeError.managerFailure(code: "npm-install-target-unavailable", detail: nil) }
+            return [NodeAction.installPackage.rawValue, spec]
+        }
         if plan.request.action == .updatePackage {
             guard let spec = plan.exactUpdateSpec else { throw BridgeError.managerFailure(code: "npm-update-not-behind", detail: nil) }
             // Frozen update-latest resolves latest again; pinned install enforces and verifies the confirmed version.

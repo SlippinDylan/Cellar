@@ -15,16 +15,16 @@ install_omz_once() {
 
 install_plugin_once() {
     local url="$1"
-    local name=""
-    local destination=""
-    name="$(derive_plugin_name_from_url "$url")" || return 1
-    destination="$CUSTOM_PLUGINS_DIR/$name"
-    mkdir -p "$CUSTOM_PLUGINS_DIR" || return 1
-    /usr/bin/git clone --depth=1 "$url" "$destination" || {
-        safe_remove_plugin_destination "$destination"
-        return 1
-    }
-    sync_plugins_config "$name"
+    # The App owns staging and publishes with renameatx_np(RENAME_EXCL). Pin this
+    # process's cwd before cloning; never write or remove the final destination.
+    [ -n "${SHELL_MANAGER_PLUGIN_STAGING:-}" ] && [ -n "${SHELL_MANAGER_PLUGIN_OWNER:-}" ] || return 1
+    (
+        cd -P "$SHELL_MANAGER_PLUGIN_STAGING" || exit 1
+        [ "$(/usr/bin/stat -f '%d:%i' .)" = "${SHELL_MANAGER_PLUGIN_IDENTITY:-}" ] || exit 1
+        [ -f .cellar-owner ] && [ ! -L .cellar-owner ] || exit 1
+        [ "$(/bin/cat .cellar-owner)" = "$SHELL_MANAGER_PLUGIN_OWNER" ] || exit 1
+        /usr/bin/git clone --depth=1 "$url" repository
+    )
 }
 
 set_plugin_selection() {

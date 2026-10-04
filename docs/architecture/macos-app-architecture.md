@@ -83,6 +83,8 @@ merge official versions / updates / partial errors
 
 Hosted XCTest 仍通过测试进程环境禁止自动刷新。一个 provider、一个分区或一项线上检查失败时，只更新对应 error state，不清空已经成功的数据。
 
+启动与手动本机刷新由一个 `OperationStore` 可取消 owner 覆盖 Manager 安装、三个 provider 子读取及进程回收；toolbar、Activity 和 Command-Period 共用取消入口。已经成功的 provider 独立保留，取消记录为 cancelled，不作为 provider 读取错误。写操作后的必要状态复查仍使用原来的不可取消收尾。
+
 Home 的本机读取跳过 Homebrew/npm outdated 查询，先发布版本、清单和配置。本机刷新结束后，视图生命周期通过 `OperationStore` 登记一个可取消任务，并发持有两个 provider 的 outdated 查询和四个官方版本来源，各自独立发布结果、状态与检查时间；菜单/toolbar 的取消到达全部子读取，进程回收和子任务结束前继续拒绝退出。离开 Home 或新一轮刷新会取消旧任务，旧结果不能覆盖新任务状态，失效的 loading 状态会明确结束。同一次已完成的本机刷新不重复检查，空闲时没有循环。本机 Homebrew/Node 读取失败时保留先前成功快照与其时间，并单独显示刷新失败；outdated 失败只改变相应更新状态，不清空核心数据。npm outdated 保留核心快照的精确 Node/npm 可执行路径，先验证入口仍可执行，再复验路径、版本与全局目录，不按版本或 nvm default 重新选择环境。既有完整快照 API 继续供操作前后校验使用。
 
 快速返回 Home 时，新请求只等待此前 Home owner 的取消与清理完成，随后复验自身生命周期、刷新时间和操作槽；不等待其他模块的任务，也不在其他任务结束后自动启动过期检查。同一轮健康的重叠请求共享已有 owner。owner 先释放操作槽再完成，确保有效的接管请求不会因旧槽仍忙而永久跳过；菜单取消同时撤销尚未接管的 Home 请求。
@@ -149,9 +151,11 @@ npm 更新复用安装的会话 Registry 与 canonical destination 绑定，在�
 
 Activity store 保存最多 100 条结构化、可本地化的用户摘要。持久模型包含稳定 operation kind、provider scope、目标显示标识、时间、状态和 per-item outcomes；不保存命令行、完整 stdout/stderr、环境、token、registry credential 或不必要的绝对用户路径。
 
+计数与 1 MiB 编码上限同时生效：每次合并新记录、待重试记录及历史并按 ID 去重后，从最旧摘要开始淘汰，直到原子写入的完整集合满足两个上限。可单独表示的最新摘要始终保留；仅单条无法表示的摘要才是 invalidSummary。待保存集合与载入后的合并集合使用同一规则，因此待保存的旧记录也可能按预算被淘汰。
+
 原始输出只在当前 App 会话的内存诊断对象或既有受控 Manager 日志中存在。UI 的“复制诊断”显式组合可公开信息，持久化前执行 sanitizer。Activity 文件位于 Cellar 自有 Application Support 范围，并通过可注入根目录测试；损坏数据作为独立读取错误处理，不阻止环境状态加载。
 
-当前 `ActivityStore` 将 schema v2 摘要（兼容读取 v1 数据）原子写入 `~/Library/Application Support/Cellar/Activity/activity.json`，保留最近 100 条并限制单文件大小为 1 MiB。持久目标使用 provider 包标识；npm 仅保留 Node/npm 版本与由版本派生的标识，不保留原始环境标识或安装路径。损坏或不支持版本的文件移到同一自有目录中的唯一 `.isolated` 文件并公开独立错误；写入失败保留原文件，并在内存中保留有序、按 ID 去重、最多 100 条的待保存摘要；这些摘要继续在历史中显示。下一次成功写入原子保存新记录、待保存记录与已有历史的合并结果后，才清空待保存集合；失败重试不会丢弃之前的待保存记录。旧 `ActivityEntry` 不迁移、不持久化。Hosted XCTest 不加载真实 Activity store。 Terminal 的插件/主题 Apply 使用 `.shell` scope 与有限语义步骤，逐项持久化成功、部分完成、失败或取消；不保存插件名、主题名、路径或诊断原文。
+当前 `ActivityStore` 将 schema v2 摘要（兼容读取 v1 数据）原子写入 `~/Library/Application Support/Cellar/Activity/activity.json`，保留最近 100 条并限制单文件大小为 1 MiB。持久目标使用 provider 包标识；npm 仅保留 Node/npm 版本与由版本派生的标识，不保留原始环境标识或安装路径。损坏或不支持版本的文件移到同一自有目录中的唯一 `.isolated` 文件并公开独立错误；写入失败保留原文件，并在内存中保留有序、按 ID 去重、最多 100 条的待保存摘要；这些摘要继续在历史中显示。下一次成功写入原子保存新记录、待保存记录与已有历史的合并结果后，才清空待保存集合；失败重试继续合并之前的待保存记录，并按相同计数和字节预算淘汰最旧项。旧 `ActivityEntry` 不迁移、不持久化。Hosted XCTest 不加载真实 Activity store。 Terminal 的插件/主题 Apply 使用 `.shell` scope 与有限语义步骤，逐项持久化成功、部分完成、失败或取消；不保存插件名、主题名、路径或诊断原文。
 
 Homebrew 的 Tap 与元数据任务使用明确的 provider scope 和有限操作类型，Tap 只保存安全的 owner/repository 标识，元数据目标由有限语义范围在展示时生成；诊断同样保留 Homebrew 身份。doctor 使用共享的当前会话诊断 store 与视图，stdout/stderr 分开且各自限制 16,000 字符，始终提示敏感信息与截断。冻结 Node adapter 的 post-install/post-uninstall/update verification unavailable 原因表示写入结果不能复验，逐项记为 unknown；latest verification unavailable 保留已知变化并记为部分完成。协议边界只兼容冻结卸载已知的 operation-shaped 错误（exitCode 0、failed、post-uninstall-state-unavailable），不接受其他缺少 code 的错误。
 
@@ -191,6 +195,10 @@ Command Line Tools service 只检测状态并执行 Apple 文档规定的 `xcode
 
 Tools 的 Runtime 从官方 Node 发布索引读取最多 100 个支持 macOS arm64 的具体版本，与 npm Registry 查询分离；缺少 nvm 只显示官方指引。恢复 nvm default 会先确认它能解析到已安装版本。Project 只读取用户通过系统目录选择器选择的项目；写入确认绑定 `.nvmrc`、`package.json`、nvm default 与受控环境，执行前复验并消费一次。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。日志维护列出精确旧日志候选，确认后目录清单变化会拒绝执行。
 
+Node 配置指纹通过 `O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开普通文件，读取前后核对 metadata、路径与 inode；`.nvmrc`/alias 上限 4 KiB，npm 配置上限 64 KiB，`package.json` 上限 1 MiB。FIFO、设备、目录、符号链接、超限、替换和读取期间变化均拒绝，文件描述符在所有路径关闭。Registry 包含默认安装的 global config 及显式引用的 userconfig/globalconfig/prefix 配置，引用集合最多 16 个文件。
+
+普通 npm install 与 update 都把已确认的 packageName 和 targetVersion 组成精确安装参数；名称和标签只保留为请求身份。执行前仍复验原目标版本、安装状态、有效 Registry、精确 Node/npm 入口和全局目录；执行后核对该目标的实际版本，无法复验为 unknown，版本不匹配为 failed。
+
 npm 目录能力只针对全局包：
 
 - Library/Updates identity 包含当前受控 Node environment；
@@ -206,6 +214,10 @@ npm 目录能力只针对全局包：
 Settings 与主窗口共享同一 `AppModel` 和 `OperationStore`。Terminal 的内置插件直接枚举已安装 Oh My Zsh 的插件目录，不使用快照中的推荐列表；自定义插件只接受规范化 GitHub HTTPS repository URL，主题只来自本机安装。一次 Apply 绑定原 `.zshrc` 和有序 typed plugin/theme plans，在一个可取消任务中执行；第二项使用第一项预期生成的精确文件内容作为基线，不接受外部漂移或第二次确认。每项保留原 adapter 的状态 token、备份、marker 与 `zsh -n`。语法失败时，仅在文件仍等于本项生成内容的条件下恢复本项原文；后续失败保留之前完成项与备份，不承诺整体事务回滚。符号链接或非普通 `.zshrc` 拒绝写入；不运行 `chsh`。
 
 Zsh tidy 位于 Tools，只移动确认列出的受限文件到 `~/.zsh`；Bridge 拒绝符号链接候选、重定向的整理目录和已占用的目标文件，复验候选清单与 adapter 状态 token，不修改 `.zprofile` 正文。Oh My Zsh 安装继续设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
+
+插件克隆先进入同一批准父目录下的独有 staging，adapter 在核验 marker/device/inode 后固定工作目录；Swift 以 `renameatx_np(RENAME_EXCL)` 原子发布，既有最终目录永不替换或删除。清理仅限已证明归属的 staging；发布后配置失败保留插件并报告 partial。
+
+插件、主题与 tidy 的受管块必须位于唯一有效的 Oh My Zsh 初始化之前。Bridge 先验证冻结 writer 的精确输出，再通过普通文件/no-follow/身份复验边界迁移受管块并执行语法检查；不增加或复制 source。接受 `source $ZSH/oh-my-zsh.sh`、双引号包围路径的 `$ZSH`/`${ZSH}` 形式和 `. "$ZSH/oh-my-zsh.sh"`；初始化之前只接受注释、空行及完整单行赋值。缺失、重复、条件执行、动态 loader 或其他歧义布局在写入前拒绝。原备份、精确回滚和 tidy 已移动文件的 partial 语义保留。
 
 ## 进程、网络与文件边界
 

@@ -167,24 +167,30 @@ final class AppModel: ObservableObject {
             operationStore.end(operationID)
         }
 
+        var cancelled = false
         do {
-            let installedManagers = try await service.installManagers()
-            managers = installedManagers
-
-            async let homebrewResult: Void = refreshHomebrewState(snapshot: installedManagers)
-            async let nodeResult: Void = refreshNodeState(snapshot: installedManagers)
-            async let shellResult = capture { try await service.loadShell(snapshot: installedManagers) }
-            let results = await (homebrewResult, nodeResult, shellResult)
-
-            shell = assign(results.2, name: "Shell")
-            refreshedAt = Date()
+            cancelled = try await operationStore.performCancellable(operationID: operationID) {
+                try Task.checkCancellation()
+                let installedManagers = try await self.service.installManagers()
+                self.managers = installedManagers
+                try Task.checkCancellation()
+                async let homebrewResult: Void = self.refreshHomebrewState(snapshot: installedManagers)
+                async let nodeResult: Void = self.refreshNodeState(snapshot: installedManagers)
+                async let shellResult: Void = self.refreshShellState(snapshot: installedManagers)
+                _ = await (homebrewResult, nodeResult, shellResult)
+                if !Task.isCancelled { self.refreshedAt = Date() }
+                return Task.isCancelled
+            }
         } catch {
-            homebrewRefreshFailed = true
-            nodeRefreshFailed = true
-            homebrewUpdateState = .failed
-            nodeUpdateState = .failed
-            errorMessages.append(failureMessage(error))
-            refreshedAt = Date()
+            cancelled = error is CancellationError || Task.isCancelled
+            if !cancelled {
+                homebrewRefreshFailed = true
+                nodeRefreshFailed = true
+                homebrewUpdateState = .failed
+                nodeUpdateState = .failed
+                errorMessages.append(failureMessage(error))
+            }
+            if !cancelled { refreshedAt = Date() }
         }
 
         activities.removeAll { $0.id == activityID }
@@ -192,16 +198,17 @@ final class AppModel: ObservableObject {
             id: activityID,
             date: Date(),
             title: "刷新本机环境",
-            outcome: errorMessages.isEmpty ? .succeeded : .failed,
-            detail: errorMessages.isEmpty ? "已读取全部环境状态" : errorMessages.joined(separator: "；")
+            outcome: cancelled ? .cancelled : errorMessages.isEmpty ? .succeeded : .failed,
+            detail: cancelled ? String(localized: ActivityItemReason.cancelledByUser.message) : errorMessages.isEmpty ? "已读取全部环境状态" : errorMessages.joined(separator: "；")
         ))
         activityStore?.append(ActivitySummary(id: activityID, operation: .refresh, scope: nil,
                                              targetDisplayNames: [], date: Date(),
-                                             status: errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: [], reason: errorMessages.isEmpty ? nil : .stateUnavailable))
+                                             status: cancelled ? .cancelled : errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: [], reason: cancelled ? .cancelledByUser : errorMessages.isEmpty ? nil : .stateUnavailable))
     }
 
     private func refreshHomebrewState(snapshot: SnapshotStatus) async {
         let result = await capture { try await self.service.loadHomebrew(snapshot: snapshot, includingOutdated: false) }
+        if case .failure(let error) = result, error is CancellationError || Task.isCancelled { return }
         applyHomebrewReadResult(result)
     }
 
@@ -209,7 +216,17 @@ final class AppModel: ObservableObject {
         let result = await capture {
             try await self.service.loadNode(snapshot: snapshot, preferredNodeVersion: self.preferredNodeVersion, includingOutdated: false)
         }
+        if case .failure(let error) = result, error is CancellationError || Task.isCancelled { return }
         applyNodeReadResult(result)
+    }
+
+    private func refreshShellState(snapshot: SnapshotStatus) async {
+        let result = await capture { try await self.service.loadShell(snapshot: snapshot) }
+        switch result {
+        case .success(let snapshot): shell = snapshot
+        case .failure(let error):
+            if !(error is CancellationError) && !Task.isCancelled { errorMessages.append(failureMessage(error)) }
+        }
     }
 
     func applyHomebrewReadResult(_ result: Result<HomebrewStatus, Error>) {
@@ -343,16 +360,6 @@ final class AppModel: ObservableObject {
         let context = operationStore.currentOperation?.context
         activityDiagnostics.record(operation: context?.operation ?? .configuration, scope: context?.scope, detail: error.localizedDescription)
         return String(localized: ActivityItemReason(error: error, preparing: preparing).message)
-    }
-
-    private func assign<Value>(_ result: Result<Value, Error>, name: String) -> Value? {
-        switch result {
-        case .success(let value):
-            return value
-        case .failure(let error):
-            errorMessages.append(failureMessage(error))
-            return nil
-        }
     }
 
 }

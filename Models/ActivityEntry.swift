@@ -6,6 +6,7 @@ struct ActivityEntry: Identifiable, Sendable {
         case succeeded
         case partiallySucceeded
         case failed
+        case cancelled
 
         var label: String {
             switch self {
@@ -13,6 +14,7 @@ struct ActivityEntry: Identifiable, Sendable {
             case .succeeded: "成功"
             case .partiallySucceeded: "部分完成"
             case .failed: "失败"
+            case .cancelled: "已取消"
             }
         }
     }

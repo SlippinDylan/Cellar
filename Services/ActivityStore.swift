@@ -86,7 +86,7 @@ final class ActivityStore: ObservableObject {
         }
         do {
             let sanitized = try envelope.summaries.map(ActivitySummarySanitizer.sanitize)
-            summaries = Self.boundedUnique(pendingSummaries + sanitized)
+            summaries = try Self.encodedCollection(pendingSummaries + sanitized).summaries
             blockedError = nil
         } catch {
             try isolate(.corruptData)
@@ -96,16 +96,15 @@ final class ActivityStore: ObservableObject {
     func record(_ summary: ActivitySummary) throws(ActivityStoreError) {
         if let blockedError { throw blockedError }
         let sanitized = try ActivitySummarySanitizer.sanitize(summary)
-        let updated = Self.boundedUnique([sanitized] + pendingSummaries + summaries)
+        let collection = try Self.encodedCollection([sanitized] + pendingSummaries + summaries)
+        let updated = collection.summaries
         do {
-            let data = try JSONEncoder().encode(PersistedActivityEnvelope(summaries: updated))
-            guard data.count <= Self.maximumFileBytes else { throw ActivityStoreError.invalidSummary }
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: fileURL, options: .atomic)
+            try collection.data.write(to: fileURL, options: .atomic)
         } catch let error as ActivityStoreError {
             throw error
         } catch {
-            pendingSummaries = Self.boundedUnique([sanitized] + pendingSummaries)
+            pendingSummaries = updated
             summaries = updated
             throw .writeFailed
         }
@@ -133,6 +132,18 @@ final class ActivityStore: ObservableObject {
     private static func boundedUnique(_ records: [ActivitySummary]) -> [ActivitySummary] {
         var identifiers: Set<UUID> = []
         return Array(records.filter { identifiers.insert($0.id).inserted }.prefix(100))
+    }
+
+    private static func encodedCollection(_ records: [ActivitySummary]) throws(ActivityStoreError) -> (summaries: [ActivitySummary], data: Data) {
+        var updated = boundedUnique(records)
+        do {
+            while true {
+                let data = try JSONEncoder().encode(PersistedActivityEnvelope(summaries: updated))
+                if data.count <= maximumFileBytes { return (updated, data) }
+                guard updated.count > 1 else { throw ActivityStoreError.invalidSummary }
+                updated.removeLast()
+            }
+        } catch { throw .invalidSummary }
     }
 }
 

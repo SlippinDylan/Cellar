@@ -370,6 +370,7 @@ actor FakeBatchProvider: BatchOperationProviding {
     let alreadyInstalledNames: Set<String>
     let registries: [String: URL]
     let changeDestinationAfterName: String?
+    let changeDestinationAfterPlanName: String?
     let pausedPlanName: String?
     let onPlan: @Sendable () -> Void
     var plannedNames: [String] = []
@@ -395,7 +396,7 @@ actor FakeBatchProvider: BatchOperationProviding {
          onRefresh: @escaping @Sendable () -> Void = {}, protectedNames: Set<String> = [],
          npmWarningNames: Set<String> = [], homebrewPackagesRefreshFails: Bool = false, planFailureNames: Set<String> = [],
          alreadyInstalledNames: Set<String> = [], registries: [String: URL] = [:], changeDestinationAfterName: String? = nil,
-         pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}) {
+         pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}, changeDestinationAfterPlanName: String? = nil) {
         self.failingNames = failingNames
         self.refreshFails = refreshFails
         self.pausedName = pausedName
@@ -405,6 +406,7 @@ actor FakeBatchProvider: BatchOperationProviding {
         self.alreadyInstalledNames = alreadyInstalledNames
         self.registries = registries
         self.changeDestinationAfterName = changeDestinationAfterName
+        self.changeDestinationAfterPlanName = changeDestinationAfterPlanName
         self.pausedPlanName = pausedPlanName
         self.onPlan = onPlan
         self.unknownNames = unknownNames
@@ -468,10 +470,12 @@ actor FakeBatchProvider: BatchOperationProviding {
         let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(
             "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"executeSupported\":true,\"executable\":true,\"alreadyInstalled\":\(operation == .install && alreadyInstalledNames.contains(identity.name))}".utf8
         ))
-        return NodeActionPlan(id: UUID(), request: .init(action: action, subject: identity.name),
+        let plan = NodeActionPlan(id: UUID(), request: .init(action: action, subject: identity.name),
                               payload: payload, generatedAt: Date(),
-                              confirmedPackageDestination: operation == .install ? .init(nodeExecutable: identity.environment.identifier, npmExecutable: "/fake/npm", globalPrefix: destination, globalRoot: destination) : nil,
-                              confirmedInstallRegistry: operation == .install ? registries[identity.name] ?? CatalogWebsites.npmRegistry : nil)
+                              confirmedPackageDestination: operation != .uninstall ? .init(nodeExecutable: identity.environment.identifier, npmExecutable: "/fake/npm", globalPrefix: destination, globalRoot: destination) : nil,
+                              confirmedInstallRegistry: operation != .uninstall ? registries[identity.name] ?? CatalogWebsites.npmRegistry : nil)
+        if identity.name == changeDestinationAfterPlanName { destination = "/changed" }
+        return plan
     }
 
     func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult {

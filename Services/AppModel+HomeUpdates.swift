@@ -102,7 +102,7 @@ extension AppModel {
             if Task.isCancelled || error is CancellationError { homebrewUpdateState = previousState }
             else {
                 homebrew = HomebrewStatus(executablePath: status.executablePath, version: status.version,
-                                          managerAvailable: status.managerAvailable, snapshot: core.replacingOutdated(packages: [], error: error.localizedDescription))
+                                          managerAvailable: status.managerAvailable, snapshot: core.replacingOutdated(packages: core.outdatedPackages, error: error.localizedDescription))
                 homebrewUpdateState = .failed
                 homebrewOutdatedCheckedAt = Date()
             }
@@ -128,7 +128,9 @@ extension AppModel {
             guard refreshedAt == localRefresh, activeOutdatedRefreshID == refreshID else { return }
             if Task.isCancelled || error is CancellationError { nodeUpdateState = previousState }
             else {
-                node = core.replacingOutdated(packages: [:], error: error.localizedDescription)
+                node = NodeSnapshot(summary: core.summary, configuration: core.configuration, packages: core.packages,
+                                    installations: core.installations, managerStatus: core.managerStatus, logs: core.logs,
+                                    outdatedError: error.localizedDescription, maintenanceError: core.maintenanceError)
                 nodeUpdateState = .failed
                 nodeOutdatedCheckedAt = Date()
             }

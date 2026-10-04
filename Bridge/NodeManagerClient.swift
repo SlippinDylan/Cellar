@@ -168,15 +168,19 @@ actor NodeManagerClient {
             throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
         }
         let validated = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
-        let registry = action == .installPackage ? try await packageRegistry(identity.name, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory) : nil
+        let registry = action != .uninstallPackage ? try await packageRegistry(identity.name, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory) : nil
         let plan = try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
                                   environment: validated.environment)
-        guard action == .uninstallPackage || action == .installPackage else { return plan }
-        if action == .installPackage {
+        if action != .uninstallPackage {
             let final = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
             guard try packageDestination(validated.summary) == packageDestination(final.summary),
                   registry == (try await packageRegistry(identity.name, summary: final.summary, environment: final.environment, managerDirectory: managerDirectory))
-            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
+            else { throw BridgeError.managerFailure(code: action == .updatePackage ? "npm-update-state-changed" : "npm-install-state-changed", detail: nil) }
+            if action == .updatePackage {
+                guard plan.payload.packageName == identity.name,
+                      SemanticVersionStatus(current: plan.payload.installedVersion, available: plan.payload.targetVersion) == .behind
+                else { throw BridgeError.managerFailure(code: "npm-update-not-behind", detail: nil) }
+            }
         }
         return NodeActionPlan(id: plan.id, request: plan.request, payload: plan.payload, generatedAt: plan.generatedAt,
                               confirmedPackageDestination: try packageDestination(validated.summary),
@@ -201,21 +205,26 @@ actor NodeManagerClient {
             else { throw BridgeError.managerFailure(code: "npm-uninstall-state-changed", detail: nil) }
             return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
         }
-        if plan.request.action == .installPackage {
+        if plan.request.action == .installPackage || plan.request.action == .updatePackage {
+            let changedCode = plan.request.action == .updatePackage ? "npm-update-state-changed" : "npm-install-state-changed"
             guard let confirmed = plan.confirmedPackageDestination,
                   confirmed == (try packageDestination(validated.summary)),
                   plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory))
-            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
+            else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
             let currentPlan = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: validated.environment)
             guard currentPlan.canExecute,
                   currentPlan.payload.packageName == plan.payload.packageName,
                   currentPlan.payload.targetVersion == plan.payload.targetVersion,
                   currentPlan.payload.installedVersion == plan.payload.installedVersion
-            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
+            else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
+            if plan.request.action == .updatePackage {
+                guard SemanticVersionStatus(current: currentPlan.payload.installedVersion, available: currentPlan.payload.targetVersion) == .behind
+                else { throw BridgeError.managerFailure(code: "npm-update-not-behind", detail: nil) }
+            }
             let finalEnvironment = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
             guard confirmed == (try packageDestination(finalEnvironment.summary)),
                   plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: finalEnvironment.summary, environment: finalEnvironment.environment, managerDirectory: managerDirectory))
-            else { throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil) }
+            else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
             return try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
         }
         return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)

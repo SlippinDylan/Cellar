@@ -1,6 +1,6 @@
 import Foundation
 
-enum LibraryHomebrewSubtype: String, CaseIterable {
+enum LibraryHomebrewSubtype: String, CaseIterable, Sendable {
     case all, formula, cask
 }
 

@@ -2,6 +2,18 @@ import XCTest
 @testable import Cellar
 
 final class HomebrewClientTests: XCTestCase {
+    func testUpgradeRejectsChangedInstalledOrAvailableVersionBeforeWriting() async throws {
+        for marker in ["outdated-current-changed", "outdated-installed-changed"] {
+            let fixture = try FakeBrewFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planUpgrade([.init(name: "acme/tools/demo", kind: .formula)])
+            try Data().write(to: fixture.directoryURL.appending(path: marker))
+            do { _ = try await fixture.client.execute(plan); XCTFail("Confirmed upgrade versions changed") }
+            catch { guard case HomebrewClientError.invalidPlan = error else { return XCTFail("Expected upgrade state refusal") } }
+            let calls = try String(contentsOf: fixture.logURL, encoding: .utf8)
+            XCTAssertFalse(calls.contains("upgrade --formula"))
+        }
+    }
     @MainActor
     func testFormulaBatchWithUnavailablePackagesFailsFinalReconciliation() async throws {
         let fixture = try FakeBrewFixture()
@@ -441,7 +453,11 @@ private struct FakeBrewFixture {
             elif [ -f "$state_dir/formula-removed" ] || [ -f "$state_dir/formula-upgraded" ]; then
               printf '%s\n' '{"formulae":[],"casks":[]}'
             else
-              printf '%s\n' '{"formulae":[{"name":"acme/tools/demo","installed_versions":["1.0.0"],"current_version":"2.0.0","pinned":false,"pinned_version":null}],"casks":[]}'
+              outdated_installed=1.0.0
+              outdated_current=2.0.0
+              [ ! -f "$state_dir/outdated-installed-changed" ] || outdated_installed=1.5.0
+              [ ! -f "$state_dir/outdated-current-changed" ] || outdated_current=2.1.0
+              printf '{"formulae":[{"name":"acme/tools/demo","installed_versions":["%s"],"current_version":"%s","pinned":false,"pinned_version":null}],"casks":[]}\n' "$outdated_installed" "$outdated_current"
             fi
             ;;
           "tap-info --installed --json=v1")

@@ -2,6 +2,58 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    func testUpdateBindsScopeRegistryDestinationAndTargetBeforeOpeningWriteGate() async throws {
+        for changed in ["scope-registry-changed", "global-root-changed", "global-prefix-changed", "target-version-changed", "package-version-changed"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planPackage(.init(name: "@scope/example", environment: fixture.context), action: .updatePackage, managerDirectory: fixture.root)
+            XCTAssertEqual(plan.confirmedInstallRegistry?.absoluteString, "https://scope.fixture.invalid/")
+            XCTAssertEqual(plan.confirmedPackageDestination?.globalRoot, "/fake")
+            try Data().write(to: fixture.root.appending(path: changed))
+            do {
+                _ = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+                XCTFail("Changed update binding must refuse writes: \(changed)")
+            } catch {
+                guard case BridgeError.managerFailure(let code, _) = error else { return XCTFail("Expected typed update refusal") }
+                XCTAssertEqual(code, "npm-update-state-changed")
+            }
+            let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+            XCTAssertFalse(calls.contains("execute|"))
+            XCTAssertFalse(calls.contains("|1|"))
+        }
+    }
+
+    func testUpdateRejectsCurrentAheadAndUnknownRegistryVersions() async throws {
+        for marker in ["target-current", "target-ahead", "target-unknown"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            try Data().write(to: fixture.root.appending(path: marker))
+            do {
+                _ = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .updatePackage, managerDirectory: fixture.root)
+                XCTFail("Only behind can be updated")
+            } catch {
+                guard case BridgeError.managerFailure(let code, _) = error else { return XCTFail("Expected typed version refusal") }
+                XCTAssertEqual(code, "npm-update-not-behind")
+            }
+            let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+            XCTAssertFalse(calls.contains("execute|"))
+            XCTAssertFalse(calls.contains("|1|"))
+        }
+    }
+
+    func testUpdateKeepsOriginalPlanExpiryAfterBindingRevalidation() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .updatePackage, managerDirectory: fixture.root)
+        let expired = NodeActionPlan(id: plan.id, request: plan.request, payload: plan.payload, generatedAt: Date().addingTimeInterval(-301), confirmedPackageDestination: plan.confirmedPackageDestination, confirmedInstallRegistry: plan.confirmedInstallRegistry)
+        do { _ = try await fixture.client.executePackage(expired, environment: fixture.context, managerDirectory: fixture.root); XCTFail("Old update confirmation must expire") }
+        catch {
+            guard case BridgeError.managerFailure(let code, _) = error else { return XCTFail("Expected expiry refusal") }
+            XCTAssertEqual(code, "plan-expired")
+        }
+        XCTAssertFalse(try String(contentsOf: fixture.log, encoding: .utf8).contains("execute|"))
+    }
+
     func testScopedInstallBindsActualScopeRegistryAndRejectsItsPostConfirmationChange() async throws {
         let fixture = try PackageManagerFixture()
         defer { fixture.remove() }
@@ -302,7 +354,7 @@ final class NodePackageEnvironmentTests: XCTestCase {
         let calls = try String(contentsOf: fixture.log, encoding: .utf8)
         XCTAssertFalse(calls.contains("execute|"))
         XCTAssertFalse(calls.contains("|1|"))
-        XCTAssertEqual(calls.split(separator: "\n").count, 3)
+        XCTAssertEqual(calls.split(separator: "\n").count, 4)
     }
 
     func testNodeRemovedBeforeSummaryReturnsCannotFallBackToDefault() async throws {
@@ -427,7 +479,12 @@ private struct PackageManagerFixture {
           fi
           installed_version=1.0.0
           [ ! -e '\#(root.path)/package-version-changed' ] || installed_version=2.0.0
-          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$4" "$installed_version"
+          target_version=3.0.0
+          [ ! -e '\#(root.path)/target-version-changed' ] || target_version=4.0.0
+          [ ! -e '\#(root.path)/target-ahead' ] || target_version=0.5.0
+          [ ! -e '\#(root.path)/target-current' ] || target_version=1.0.0
+          [ ! -e '\#(root.path)/target-unknown' ] || target_version=git
+          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","targetVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$4" "$installed_version" "$target_version"
         elif [ "$2" = execute ]; then
           if [ "$4" = one ] && [ -e '\#(root.path)/change-root-after-first' ]; then /usr/bin/touch '\#(root.path)/global-root-changed'; fi
           printf '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fake","action":"%s","subject":"%s","exitCode":0,"status":"ok","logFile":"/fake/log"}}\n' "$3" "$4"

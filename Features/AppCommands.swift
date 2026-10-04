@@ -4,6 +4,7 @@ struct AppCommands: Commands {
     @FocusedValue(\.libraryActions) private var libraryActions
     @FocusedValue(\.catalogSearchAction) private var catalogSearchAction
     @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
+    @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
     let updateController: ApplicationUpdateController
@@ -32,6 +33,10 @@ struct AppCommands: Commands {
                 .disabled(catalogSearchAction == nil)
             Button("Batch Install…") { discoverBatchAction?() }
                 .disabled(model.selectedDestination != .discover || discoverBatchAction == nil || model.isBusy)
+            Button("Update All…") { packageUpdateActions?.updateAll() }
+                .disabled(model.selectedDestination != .updates || packageUpdateActions?.canUpdateAll != true || model.isBusy)
+            Button("Check for Package Updates") { packageUpdateActions?.checkUpdates() }
+                .disabled(model.selectedDestination != .updates || packageUpdateActions == nil || model.isBusy || model.refreshedAt == nil)
             Button { libraryActions?.toggleManage() } label: {
                 Text(libraryActions?.isManaging == true ? LocalizedStringResource("Finish Managing Library") : LocalizedStringResource("Manage Library…"))
             }

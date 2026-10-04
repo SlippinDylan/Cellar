@@ -312,10 +312,14 @@ actor HomebrewClient {
         guard validatedTargets.allSatisfy(outdated.contains) else {
             throw HomebrewClientError.invalidPlan("升级目标已经变化，请刷新后重试")
         }
+        let packages = snapshot.outdatedPackages.filter { validatedTargets.contains($0.identity) }
+        guard packages.allSatisfy({ !$0.installedVersions.isEmpty && $0.currentVersion?.isEmpty == false }) else {
+            throw HomebrewClientError.invalidPlan("无法确认升级目标的可用版本")
+        }
         return plan(
             action: .upgrade,
             targets: validatedTargets,
-            stateFingerprint: identitiesFingerprint(validatedTargets)
+            stateFingerprint: upgradeFingerprint(packages)
         )
     }
 
@@ -477,7 +481,7 @@ actor HomebrewClient {
         case .upgrade:
             let snapshot = try await loadSnapshot()
             guard snapshot.sectionErrors[.outdated] == nil,
-                  identitiesFingerprint(plan.targets) == plan.stateFingerprint
+                  upgradeFingerprint(snapshot.outdatedPackages.filter { plan.targets.contains($0.identity) }) == plan.stateFingerprint
             else {
                 throw HomebrewClientError.invalidPlan("升级状态已经变化，请刷新后重试")
             }
@@ -543,8 +547,10 @@ actor HomebrewClient {
             .joined(separator: "||")
     }
 
-    private func identitiesFingerprint(_ identities: [HomebrewPackageIdentity]) -> String {
-        identities.map { "\($0.kind.rawValue):\($0.name)" }.sorted().joined(separator: "|")
+    private func upgradeFingerprint(_ packages: [HomebrewOutdatedPackage]) -> String {
+        packages.map {
+            [$0.identity.kind.rawValue, $0.identity.name, $0.installedVersions.sorted().joined(separator: ","), $0.currentVersion ?? ""].joined(separator: "|")
+        }.sorted().joined(separator: "||")
     }
 
     private func scanResidualPaths(in artifacts: [HomebrewCaskArtifact]) -> [HomebrewResidualPath] {

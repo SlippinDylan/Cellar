@@ -15,6 +15,7 @@ export const presentationSources = [
   'Features/Discover/DiscoverBatchInstallSheet.swift',
   'Features/Library/LibraryView.swift',
   'Features/Library/LibraryUninstallConfirmation.swift',
+  'Features/Updates/UpdatesView.swift',
   'Features/Settings/SettingsView.swift',
   'Models/AppDestination.swift',
   'Models/ApplicationLanguage.swift',

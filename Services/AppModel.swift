@@ -237,6 +237,11 @@ final class AppModel: ObservableObject {
         setBatchWorking(plan.intent.scope, true)
         defer { setBatchWorking(plan.intent.scope, false) }
         let result = try await batchCoordinator.execute(plan)
+        applyBatchResult(result)
+        return result
+    }
+
+    func applyBatchResult(_ result: BatchExecutionResult) {
         switch result.refreshedState {
         case .homebrew(let status):
             homebrew = status
@@ -251,7 +256,7 @@ final class AppModel: ObservableObject {
             nodeUpdateState = snapshot.outdatedError == nil ? .available : .failed
         case nil:
             if result.refreshStatus == .failed {
-                switch plan.intent.scope {
+                switch result.outcome.intent.scope {
                 case .homebrew:
                     homebrewRefreshFailed = true
                     homebrewUpdateState = .failed
@@ -261,8 +266,10 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        if result.refreshedState != nil { refreshedAt = Date() }
-        return result
+        if result.refreshedState != nil {
+            refreshedAt = Date()
+            checkedOutdatedRefresh = refreshedAt
+        }
     }
 
     private func setBatchWorking(_ scope: BatchScope, _ working: Bool) {

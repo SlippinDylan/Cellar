@@ -98,6 +98,10 @@ enum NodeAction: String, Codable, Sendable {
     case uninstallNode = "node-uninstall"
     case cleanup
     case writeProjectNVMRC = "project-nvmrc"
+
+    var isRegistryConfiguration: Bool {
+        [.setRegistry, .deleteRegistry, .setScopeRegistry, .deleteScopeRegistry].contains(self)
+    }
 }
 
 struct NodeActionRequest: Sendable, Equatable {
@@ -157,6 +161,10 @@ struct NodeActionPlanPayload: Decodable, Sendable {
     let packageJsonExists: Bool?
     let enginesNode: String?
     let nvmrcIsSymlink: Bool?
+    let effectiveRegistry: String?
+    let userRegistry: String?
+    let projectRegistry: String?
+    let globalRegistry: String?
 }
 
 struct NodeActionPlan: Identifiable, Sendable {
@@ -167,15 +175,17 @@ struct NodeActionPlan: Identifiable, Sendable {
     // Session-only confirmation state, never part of the Manager JSON or Activity storage.
     let confirmedPackageDestination: NodePackageDestination?
     let confirmedInstallRegistry: URL?
+    let maintenanceCandidates: [String]
 
     init(id: UUID, request: NodeActionRequest, payload: NodeActionPlanPayload, generatedAt: Date,
-         confirmedPackageDestination: NodePackageDestination? = nil, confirmedInstallRegistry: URL? = nil) {
+         confirmedPackageDestination: NodePackageDestination? = nil, confirmedInstallRegistry: URL? = nil, maintenanceCandidates: [String] = []) {
         self.id = id
         self.request = request
         self.payload = payload
         self.generatedAt = generatedAt
         self.confirmedPackageDestination = confirmedPackageDestination
         self.confirmedInstallRegistry = confirmedInstallRegistry
+        self.maintenanceCandidates = maintenanceCandidates
     }
 
     var canExecute: Bool {

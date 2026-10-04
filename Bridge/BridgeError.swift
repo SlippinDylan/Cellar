@@ -10,15 +10,17 @@ enum BridgeError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .executableNotFound(let name):
-            "找不到可执行文件：\(name)"
+            return String(localized: "Executable unavailable: \(name)")
         case .invalidOutput(let detail):
-            "命令返回了无法识别的数据：\(detail)"
+            return String(localized: "The provider returned unrecognized data: \(detail)")
         case .managerFailure(let code, let detail):
-            detail.map { "Manager 执行失败（\(code)）：\($0)" } ?? "Manager 执行失败：\(code)"
+            if let detail { return String(localized: "Provider task failed (\(code)): \(detail)") }
+            return String(localized: "Provider task failed: \(code)")
         case .processTimedOut(let executable):
-            "命令执行超时并已终止：\(executable)"
+            return String(localized: "The task timed out and was stopped: \(executable)")
         case .unsupportedSchema(let version):
-            "不支持 Manager JSON schema v\(version)"
+            let value = String(version)
+            return String(localized: "Unsupported Manager schema: \(value)")
         }
     }
 }

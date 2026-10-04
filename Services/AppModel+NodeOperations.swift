@@ -12,17 +12,17 @@ extension AppModel {
             operationStore.end(operationID)
         }
         do {
-            nodePlan = try await service.planNode(
-                request,
-                snapshot: managers,
-                preferredNodeVersion: preferredNodeVersion
-            )
+            nodePlan = try await operationStore.performCancellable(operationID: operationID) {
+                try await self.service.planNode(request, snapshot: managers, preferredNodeVersion: self.preferredNodeVersion)
+            }
+            if let plan = nodePlan, !plan.canExecute { nodeOperationError = String(localized: plan.blockingMessage) }
         } catch {
             nodeOperationError = error.localizedDescription
         }
     }
 
-    func executeNodePlan() async {
+    func executeNodePlan(confirmed: NodeActionPlan? = nil) async {
+        if let confirmed, nodePlan?.id != confirmed.id { return }
         guard let plan = nodePlan, plan.canExecute, !isBusy, let managers else { return }
         nodePlan = nil
         isNodeWorking = true
@@ -89,7 +89,8 @@ extension AppModel {
         }
     }
 
-    func dismissNodePlan() {
+    func dismissNodePlan(confirmed: NodeActionPlan? = nil) {
+        if let confirmed, nodePlan?.id != confirmed.id { return }
         nodePlan = nil
     }
 
@@ -128,6 +129,16 @@ extension AppModel {
                 npmVersion: snapshot.summary.npmVersion
             )) }
             names = plan.payload.packageName.map { [$0] } ?? []
+        case .installNode, .useNode, .setDefaultNode, .uninstallNode:
+            scope = node.map { snapshot in .nodeRuntime(NodeEnvironmentContext(identifier: snapshot.summary.nodeVersion,
+                                                                                nodeVersion: snapshot.summary.nodeVersion,
+                                                                                npmVersion: snapshot.summary.npmVersion)) }
+            names = scope == nil ? [] : [plan.payload.normalizedVersion ?? plan.request.subject]
+        case .setRegistry, .deleteRegistry, .setScopeRegistry, .deleteScopeRegistry, .cleanup, .writeProjectNVMRC:
+            scope = node.map { snapshot in .npm(NodeEnvironmentContext(identifier: snapshot.summary.nodeVersion,
+                                                                       nodeVersion: snapshot.summary.nodeVersion,
+                                                                       npmVersion: snapshot.summary.npmVersion)) }
+            names = []
         default:
             scope = nil
             names = []

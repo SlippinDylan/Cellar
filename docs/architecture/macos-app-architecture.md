@@ -17,7 +17,7 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 当前源码已经实现：
 
 - Home/Library/Discover/Updates/Tools 与底部 Activity 的原生任务导航、独立 Settings scene 和 General/Sources/Terminal/About 四个 pane；
-- Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates 已接入可见范围内的直接单项更新与一次确认的批量更新；Tools/Activity、Sources 与 Terminal 仍显示明确的未开放占位；既有 provider 页面和业务实现保留供后续任务接入，不再作为主窗口路由；
+- Home 已显示 Homebrew 与 Node/npm/nvm 的本机摘要、独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates 已接入可见范围内的直接单项更新与一次确认的批量更新；Tools 已接入环境安装、Runtime、Project、Diagnostics、Maintenance 五类任务，Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；Activity 页面仍显示明确的未开放占位；既有 provider 页面和业务实现保留，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - shell/Settings 的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条诊断 Activity；
@@ -26,7 +26,7 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责窗�
 - 强类型计划、确认、单写操作、post-refresh、部分失败和进程组取消基础；
 - Manager 版本化安装、Sparkle、arm64/macOS 26 构建边界。
 
-1.0 仍需将目录、batch、持久 Activity 和 provider 设置接入对应任务页面，并完成这些页面的 String Catalog。完成前，目标架构不能被描述为当前已交付实现。
+1.0 仍需完成 Activity 页面、最终交互与人工验收。完成前，目标架构不能被描述为当前已交付实现。
 
 ## 分层与依赖
 
@@ -183,6 +183,8 @@ Command Line Tools service 只检测状态并执行 Apple 文档规定的 `xcode
 
 `NodeManagerClient` 继续使用 schema v1。核心本地读取与 `outdated`/线上版本错误分开。Mutation 只有在单次执行环境中打开 JSON execute gate，项目 `.nvmrc` 使用额外 project-write gate。
 
+Tools 的 Runtime 从官方 Node 发布索引读取最多 100 个支持 macOS arm64 的具体版本，与 npm Registry 查询分离；缺少 nvm 只显示官方指引。恢复 nvm default 会先确认它能解析到已安装版本。Project 只读取用户通过系统目录选择器选择的项目；写入确认绑定 `.nvmrc`、`package.json`、nvm default 与受控环境，执行前复验并消费一次。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。日志维护列出精确旧日志候选，确认后目录清单变化会拒绝执行。
+
 npm 目录能力只针对全局包：
 
 - Library/Updates identity 包含当前受控 Node environment；
@@ -195,9 +197,9 @@ npm 目录能力只针对全局包：
 
 冻结的 `omz-manager.sh` 与来源逐字节一致。Cellar-owned `app-json.sh` 和模块继续作为独立 schema v1 adapter，不驱动交互菜单。
 
-Settings > Terminal 读取内置/已安装插件与本机主题。自定义插件只接受规范化 GitHub HTTPS repository URL。一次 Apply 生成 typed plan，覆盖 `.zshrc` 状态 token，执行前复验，修改前备份普通文件并用 `zsh -n` 验证。符号链接或非普通 `.zshrc` 拒绝写入；不运行 `chsh`。
+Settings 与主窗口共享同一 `AppModel` 和 `OperationStore`。Terminal 的内置插件直接枚举已安装 Oh My Zsh 的插件目录，不使用快照中的推荐列表；自定义插件只接受规范化 GitHub HTTPS repository URL，主题只来自本机安装。一次 Apply 绑定原 `.zshrc` 和有序 typed plugin/theme plans，在一个可取消任务中执行；第二项使用第一项预期生成的精确文件内容作为基线，不接受外部漂移或第二次确认。每项保留原 adapter 的状态 token、备份、marker 与 `zsh -n`。语法失败时，仅在文件仍等于本项生成内容的条件下恢复本项原文；后续失败保留之前完成项与备份，不承诺整体事务回滚。符号链接或非普通 `.zshrc` 拒绝写入；不运行 `chsh`。
 
-Zsh tidy 位于 Tools，只移动计划列出的受限文件到 `~/.zsh`，不删除用户数据。Oh My Zsh 安装继续设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
+Zsh tidy 位于 Tools，只移动确认列出的受限文件到 `~/.zsh`；Bridge 拒绝符号链接候选、重定向的整理目录和已占用的目标文件，复验候选清单与 adapter 状态 token，不修改 `.zprofile` 正文。Oh My Zsh 安装继续设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
 
 ## 进程、网络与文件边界
 

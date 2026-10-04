@@ -28,7 +28,9 @@ extension AppModel {
             operationStore.end(operationID)
         }
         do {
-            let report = try await service.diagnoseHomebrew()
+            let report = try await operationStore.performCancellable(operationID: operationID) {
+                try await self.service.diagnoseHomebrew()
+            }
             homebrewDiagnosticReport = report
             homebrewDiagnostics = report.diagnostics
         } catch {
@@ -85,7 +87,8 @@ extension AppModel {
         }
     }
 
-    func executeHomebrewPlan() async {
+    func executeHomebrewPlan(confirmed: HomebrewActionPlan? = nil) async {
+        if let confirmed, homebrewPlan?.id != confirmed.id { return }
         guard let plan = homebrewPlan, plan.canExecute, !isBusy else { return }
         homebrewPlan = nil
         isHomebrewWorking = true
@@ -169,7 +172,8 @@ extension AppModel {
         }
     }
 
-    func dismissHomebrewPlan() {
+    func dismissHomebrewPlan(confirmed: HomebrewActionPlan? = nil) {
+        if let confirmed, homebrewPlan?.id != confirmed.id { return }
         homebrewPlan = nil
     }
 
@@ -191,7 +195,7 @@ extension AppModel {
             operationStore.end(operationID)
         }
         do {
-            homebrewPlan = try await operation()
+            homebrewPlan = try await operationStore.performCancellable(operationID: operationID) { try await operation() }
         } catch {
             homebrewOperationError = error.localizedDescription
         }

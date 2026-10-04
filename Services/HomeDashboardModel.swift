@@ -127,6 +127,16 @@ final class HomeDashboardModel: ObservableObject {
         if setupState == .requestingCommandLineTools { setupState = .commandLineToolsRequested }
     }
 
+    func refreshSetupStatus(environment: [String: String] = ProcessInfo.processInfo.environment) async {
+        guard environment["XCTestConfigurationFilePath"] == nil, !operationStore.hasActiveOperations else { return }
+        let id = operationStore.begin()
+        defer { operationStore.end(id) }
+        let refreshID = UUID()
+        activeRefreshID = refreshID
+        commandLineTools = .loading
+        await refreshPrerequisites(refreshID: refreshID)
+    }
+
     func openHomebrewInstaller(installation: HomebrewInstallationState) async {
         guard installation == .notInstalled, canBeginSetup else { return }
         setupState = .preparingInstaller

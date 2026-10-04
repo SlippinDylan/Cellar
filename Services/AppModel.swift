@@ -36,6 +36,9 @@ final class AppModel: ObservableObject {
     @Published var shellActionResult: ShellActionResult?
     @Published var shellOperationError: String?
     @Published var isShellWorking = false
+    @Published var selectedToolsCategory: ToolsCategory = .environment
+    @Published var terminalConfigurationPlan: ShellConfigurationPlan?
+    @Published var terminalConfigurationResult: ShellConfigurationResult?
 
     let service: SystemProbeService
     let operationStore: OperationStore

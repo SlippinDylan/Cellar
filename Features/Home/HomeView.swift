@@ -96,6 +96,7 @@ struct HomeView: View {
                 } else {
                     Text(model.refreshedAt == nil ? LocalizedStringResource("Node Environment Not Read") : LocalizedStringResource("Node Environment Unavailable"))
                     Text("Select an installed Node environment in Tools or follow the official guide.")
+                    Button("Open Runtime Tools") { model.openRuntimeTools() }
                     HomeOnlineVersionRow(title: "Node", currentVersion: nil, state: dashboard.onlineVersion(for: .node), checkedAt: dashboard.onlineCheckedAt[.node])
                     HomeOnlineVersionRow(title: "npm", currentVersion: nil, state: dashboard.onlineVersion(for: .npm), checkedAt: dashboard.onlineCheckedAt[.npm])
                 }
@@ -104,6 +105,7 @@ struct HomeView: View {
                 else if dashboard.nvmInstalled == false {
                     Label("nvm Not Installed", systemImage: "minus.circle")
                     Text("Install nvm using the official guide, then refresh the local environment.")
+                    Button("Open Environment Setup") { model.selectedToolsCategory = .environment; model.selectedDestination = .tools }
                 }
                 HomeOnlineVersionRow(title: "nvm", currentVersion: nil, state: dashboard.onlineVersion(for: .nvm), checkedAt: dashboard.onlineCheckedAt[.nvm])
                 HomeTimestampRow(title: "Local Refresh", date: model.nodeRefreshedAt)
@@ -242,7 +244,7 @@ private struct HomeTimestampRow: View {
     }
 }
 
-private extension HomeSetupFailure {
+extension HomeSetupFailure {
     var message: LocalizedStringResource {
         switch self {
         case .commandLineTools: LocalizedStringResource("Command Line Tools installation could not be requested. Use Apple’s official guide or refresh and try again.")

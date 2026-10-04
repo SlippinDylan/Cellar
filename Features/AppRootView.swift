@@ -76,6 +76,7 @@ struct AppRootView: View {
         else if model.selectedDestination == .library { LibraryView(model: model) }
         else if model.selectedDestination == .discover { DiscoverView(model: model) }
         else if model.selectedDestination == .updates { UpdatesView(model: model) }
+        else if model.selectedDestination == .tools { ToolsView(model: model) }
         else { ShellPlaceholderView(destination: model.selectedDestination) }
     }
 

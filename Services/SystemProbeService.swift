@@ -117,6 +117,22 @@ actor SystemProbeService {
         try await shellClient.execute(plan, managerDirectory: shellManagerDirectory(snapshot))
     }
 
+    func planTerminalConfiguration(plugins: [String], theme: String, snapshot: SnapshotStatus) async throws -> ShellConfigurationPlan {
+        try await shellClient.planConfiguration(plugins: plugins, theme: theme, managerDirectory: shellManagerDirectory(snapshot))
+    }
+
+    func executeTerminalConfiguration(_ plan: ShellConfigurationPlan, snapshot: SnapshotStatus) async -> ShellConfigurationResult {
+        await shellClient.executeConfiguration(plan, managerDirectory: shellManagerDirectory(snapshot))
+    }
+
+    func runtimeInstallations(preferredVersion: String?) -> [NodeInstallation] {
+        environmentResolver.installations(preferredNodeVersion: preferredVersion)
+    }
+
+    func controlledNodePath(preferredVersion: String?) -> String {
+        environmentResolver.environment(preferredNodeVersion: preferredVersion)["PATH", default: ""]
+    }
+
     func loadNode(
         snapshot: SnapshotStatus,
         preferredNodeVersion: String? = nil,
@@ -169,6 +185,10 @@ actor SystemProbeService {
     func effectiveNPMRegistry(_ specOrQuery: String, environment: NodeEnvironmentContext) async throws -> URL {
         let snapshot = try await installManagers()
         return try await nodeClient.effectivePackageRegistry(specOrQuery, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
+    func scopeRegistryLayers(_ scope: String, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NPMRegistryLayers {
+        try await nodeClient.scopeRegistryLayers(scope, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
     }
 
     func executeNPMPackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NodeOperationResult {

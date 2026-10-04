@@ -48,6 +48,7 @@ struct ShellActionPlan: Identifiable, Sendable {
     let request: ShellActionRequest
     let payload: ShellActionPlanPayload
     let generatedAt: Date
+    var candidates: [String] = []
 
     var canExecute: Bool { payload.executable }
 }

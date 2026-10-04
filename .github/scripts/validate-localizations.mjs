@@ -17,13 +17,30 @@ export const presentationSources = [
   'Features/Library/LibraryUninstallConfirmation.swift',
   'Features/Updates/UpdatesView.swift',
   'Features/Settings/SettingsView.swift',
+  'Features/Settings/SourcesSettingsView.swift',
+  'Features/Settings/TerminalSettingsView.swift',
+  'Features/Settings/TapTaskConfirmation.swift',
+  'Features/Settings/ShellTaskConfirmation.swift',
+  'Features/Tools/ToolsView.swift',
+  'Features/Tools/EnvironmentSetupView.swift',
+  'Features/Tools/RuntimeToolsView.swift',
+  'Features/Tools/ProjectToolsView.swift',
+  'Features/Tools/DiagnosticsToolsView.swift',
+  'Features/Tools/MaintenanceToolsView.swift',
+  'Features/Tools/ProviderTaskPresentation.swift',
+  'Features/Tools/NodeTaskConfirmation.swift',
+  'Models/ToolsModels.swift',
+  'Models/ConfigurationModels.swift',
+  'Services/RuntimeToolsModel.swift',
+  'Bridge/ShellManagerClient.swift',
+  'Bridge/BridgeError.swift',
   'Models/AppDestination.swift',
   'Models/ApplicationLanguage.swift',
 ];
 export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant'];
 
-const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
-const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
+const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|Toggle|DisclosureGroup|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
+const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning|registryLayer)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
 const discoverPresentationLiteral = /\b(?:guidance\s*\(|message:)\s*"((?:\\.|[^"\\])*)"/g;
 const signature = value => value.match(/%(?:\d+\$)?(?:[-+0 #]*)(?:\d+|\*)?(?:\.\d+)?(?:hh|ll|[hlz])?[@diuoxXfFeEgGcCs]/g) ?? [];
 

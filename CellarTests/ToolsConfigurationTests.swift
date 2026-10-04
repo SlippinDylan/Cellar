@@ -1,0 +1,120 @@
+import XCTest
+@testable import Cellar
+
+final class ToolsConfigurationTests: XCTestCase {
+    func testOfficialRuntimeCatalogIsSeparateFromRegistryAndBoundedToArm64() async throws {
+        let payload = (0..<130).map { ["version": "v24.0.\($0)", "files": ["osx-arm64-tar"]] }
+            + [["version": "v22.0.0", "files": ["osx-x64-tar"]], ["version": "latest", "files": ["osx-arm64-tar"]]]
+        let transport = FakeCatalogTransport(body: try JSONSerialization.data(withJSONObject: payload))
+        let client = OfficialNodeReleaseClient(http: CatalogHTTPClient(transport: transport))
+        let releases = try await client.releases()
+        XCTAssertEqual(releases.count, 100)
+        XCTAssertFalse(releases.contains { $0.version == "latest" || $0.version == "v22.0.0" })
+        let requests = await transport.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].url, CatalogWebsites.url(host: "nodejs.org", path: "/dist/index.json"))
+        XCTAssertEqual(requests[0].allowedOrigins, ["https://nodejs.org"])
+        XCTAssertEqual(requests[0].maximumBytes, 2 * 1_024 * 1_024)
+    }
+
+    @MainActor
+    func testRuntimeReadIsExplicitAndHonorsSharedOperationSlot() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarToolsStateTests-\(UUID())")
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: root)
+        let store = OperationStore()
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root),
+                                         nodeClient: NodeManagerClient(runner: runner, environmentResolver: resolver),
+                                         shellClient: ShellManagerClient(runner: runner, environmentResolver: ShellEnvironmentResolver(homeDirectory: root)),
+                                         environmentResolver: resolver)
+        let model = AppModel(service: service, operationStore: store)
+        let counter = RuntimeReadCounter()
+        let runtime = RuntimeToolsModel(loadReleases: { await counter.read() })
+        let initial = await counter.count
+        XCTAssertEqual(initial, 0)
+        model.openRuntimeTools()
+        XCTAssertEqual(model.selectedDestination, .tools)
+        XCTAssertEqual(model.selectedToolsCategory, .runtime)
+        for category in ToolsCategory.allCases { model.selectedToolsCategory = category; XCTAssertEqual(model.selectedToolsCategory, category) }
+        let busy = store.begin()
+        await runtime.refresh(model: model)
+        let whileBusy = await counter.count
+        XCTAssertEqual(whileBusy, 0)
+        store.end(busy)
+        await runtime.refresh(model: model)
+        let afterAction = await counter.count
+        XCTAssertEqual(afterAction, 1)
+        XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))
+    }
+
+    func testReachableTaskSurfacesDoNotPresentCommandsOrNVMRemoteInstall() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let files = ["Features/Tools/RuntimeToolsView.swift", "Features/Tools/EnvironmentSetupView.swift", "Features/Tools/MaintenanceToolsView.swift", "Features/Tools/ProjectToolsView.swift",
+                     "Features/Settings/SourcesSettingsView.swift", "Features/Settings/TerminalSettingsView.swift"]
+        for file in files {
+            let source = try String(contentsOf: root.appending(path: file), encoding: .utf8)
+            for forbidden in [".installNVM", "bash -c", "curl |", "sudo", "chsh", "Text(\"Generate Plan", "Text(\"Execute Plan", "command.arguments", "DEFAULT_PLUGIN_SPECS"] {
+                XCTAssertFalse(source.contains(forbidden), "\(file): \(forbidden)")
+            }
+        }
+        let rootView = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
+        XCTAssertTrue(rootView.contains(".tools { ToolsView(model: model) }"))
+        let app = try String(contentsOf: root.appending(path: "CellarApp.swift"), encoding: .utf8)
+        XCTAssertTrue(app.contains("SettingsView(model: model"))
+    }
+
+    func testDiagnosticsRedactsCredentialsAndSecrets() {
+        let result = DiagnosticText.sanitized("https://user:secret@example.test/ token=secret Authorization: Bearer private cookie=session")
+        XCTAssertFalse(result.contains("user:secret"))
+        XCTAssertFalse(result.contains("token=secret"))
+        XCTAssertFalse(result.contains("Bearer private"))
+        XCTAssertFalse(result.contains("private"))
+        XCTAssertFalse(result.contains("cookie=session"))
+    }
+    func testToolsCategoriesAndMaintenanceAllowlist() {
+        XCTAssertEqual(ToolsCategory.allCases, [.environment, .runtime, .project, .diagnostics, .maintenance])
+        XCTAssertEqual(NodeMaintenanceAction.allCases.map(\.rawValue), ["npm-cache-verify", "npm-cache-clean", "node-gyp-cache", "orphan-bins", "nvm-old-versions", "logs"])
+        XCTAssertFalse(NodeMaintenanceAction.allCases.map(\.rawValue).contains("cleanup"))
+    }
+
+    func testCustomPluginRequiresExactCredentialFreeGitHubRepository() {
+        XCTAssertEqual(TerminalPluginSource.repository("https://github.com/owner/plugin.git")?.absoluteString, "https://github.com/owner/plugin")
+        for value in ["http://github.com/o/r", "https://user@github.com/o/r", "https://github.com/o/r/tree/main", "https://github.com/o/r?token=x", "https://github.com/o/r#x", "https://github.com:443/o/r", "https://gitlab.com/o/r", "https://github.com/../r", "https://github.com/o/r%2fmore"] {
+            XCTAssertNil(TerminalPluginSource.repository(value), value)
+        }
+    }
+
+    func testRegistryKeepsUserHTTPAndRejectsCredentialsAndMalformedScopes() {
+        XCTAssertEqual(SourceConfiguration.registryURL("http://registry.example.test/")?.scheme, "http")
+        XCTAssertNil(SourceConfiguration.registryURL("https://user:secret@example.test/"))
+        XCTAssertNil(SourceConfiguration.registryURL("https://example.test/#token"))
+        XCTAssertTrue(SourceConfiguration.validScope("@company"))
+        for scope in ["company", "@", "@company/name", "@Company", "@a b", "@../bad"] { XCTAssertFalse(SourceConfiguration.validScope(scope), scope) }
+    }
+
+    func testCurrentAndDefaultRuntimeCannotBeRemoved() {
+        XCTAssertFalse(RuntimeProtection.canUninstall(.init(version: "v22.0.0", directory: "/fixture", isActive: true, isDefault: false)))
+        XCTAssertFalse(RuntimeProtection.canUninstall(.init(version: "v22.0.0", directory: "/fixture", isActive: false, isDefault: true)))
+        XCTAssertTrue(RuntimeProtection.canUninstall(.init(version: "v22.0.0", directory: "/fixture", isActive: false, isDefault: false)))
+    }
+
+    func testBlockedRuntimeAndProjectActionsHaveSpecificVisibleReasons() throws {
+        for (reason, message) in [
+            ("cannot-uninstall-current-node", LocalizedStringResource("The current Cellar Node version cannot be removed.")),
+            ("cannot-uninstall-default-node", LocalizedStringResource("The nvm default Node version cannot be removed.")),
+            ("project-nvmrc-not-regular-file", LocalizedStringResource("The project .nvmrc must be a regular file. Symbolic links are not changed."))
+        ] {
+            let data = try JSONSerialization.data(withJSONObject: ["action": "node-uninstall", "executable": false, "blockedReason": reason])
+            let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: data)
+            let plan = NodeActionPlan(id: UUID(), request: .init(action: .uninstallNode, subject: "v22.0.0"), payload: payload, generatedAt: Date())
+            XCTAssertFalse(plan.canExecute)
+            XCTAssertEqual(String(localized: plan.blockingMessage), String(localized: message))
+        }
+    }
+}
+
+private actor RuntimeReadCounter {
+    private(set) var count = 0
+    func read() -> [OfficialNodeRelease] { count += 1; return [] }
+}

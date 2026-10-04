@@ -18,8 +18,7 @@ struct CellarApp: App {
         }
 
         Settings {
-            SettingsView(updateController: updateController, relaunchController: .shared,
-                         operationStore: model.operationStore)
+            SettingsView(model: model, updateController: updateController, relaunchController: .shared)
         }
     }
 }

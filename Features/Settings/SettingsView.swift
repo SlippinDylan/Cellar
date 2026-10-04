@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct SettingsView: View {
+    @ObservedObject var model: AppModel
     let updateController: ApplicationUpdateController
     @ObservedObject var relaunchController: ApplicationRelaunchController
     @ObservedObject var operationStore: OperationStore
@@ -10,11 +11,12 @@ struct SettingsView: View {
     @State private var showsRestartConfirmation = false
     @State private var showsRestartBlocked = false
 
-    init(updateController: ApplicationUpdateController, relaunchController: ApplicationRelaunchController,
-         operationStore: OperationStore, defaults: UserDefaults = .standard) {
+    init(model: AppModel, updateController: ApplicationUpdateController, relaunchController: ApplicationRelaunchController,
+         defaults: UserDefaults = .standard) {
+        self.model = model
         self.updateController = updateController
         self.relaunchController = relaunchController
-        self.operationStore = operationStore
+        operationStore = model.operationStore
         _pane = AppStorage(wrappedValue: .general, "settings.pane", store: defaults)
         _pendingLanguage = State(initialValue: relaunchController.selectedLanguage)
     }
@@ -23,17 +25,27 @@ struct SettingsView: View {
         TabView(selection: $pane) {
             Tab("General", systemImage: "gearshape", value: .general) { generalPane }
             Tab("Sources", systemImage: "network", value: .sources) {
-                ContentUnavailableView("Sources", systemImage: "network", description: Text("Source settings are not available yet."))
+                SourcesSettingsView(model: model)
             }
             Tab("Terminal", systemImage: "terminal", value: .terminal) {
-                ContentUnavailableView("Terminal", systemImage: "terminal", description: Text("Terminal settings are not available yet."))
+                TerminalSettingsView(model: model)
             }
             Tab("About", systemImage: "info.circle", value: .about) {
                 AboutView(updateController: updateController)
             }
         }
         .scenePadding()
-        .frame(width: 560, height: 400)
+        .frame(width: 640, height: 520)
+        .safeAreaInset(edge: .top) {
+            if let task = operationStore.activeTask {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Working on Environment")
+                    Spacer()
+                    Button("Cancel Task") { operationStore.cancelActiveTask() }.disabled(!task.canCancel)
+                }.padding(.horizontal)
+            }
+        }
         .onReceive(relaunchController.$selectedLanguage) { language in
             pendingLanguage = language
         }

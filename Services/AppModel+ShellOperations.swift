@@ -12,13 +12,16 @@ extension AppModel {
             operationStore.end(operationID)
         }
         do {
-            shellPlan = try await service.planShell(request, snapshot: managers)
+            shellPlan = try await operationStore.performCancellable(operationID: operationID) {
+                try await self.service.planShell(request, snapshot: managers)
+            }
         } catch {
             shellOperationError = error.localizedDescription
         }
     }
 
-    func executeShellPlan() async {
+    func executeShellPlan(confirmed: ShellActionPlan? = nil) async {
+        if let confirmed, shellPlan?.id != confirmed.id { return }
         guard let plan = shellPlan, plan.canExecute, !isBusy, let managers else { return }
         shellPlan = nil
         isShellWorking = true
@@ -83,7 +86,8 @@ extension AppModel {
         }
     }
 
-    func dismissShellPlan() {
+    func dismissShellPlan(confirmed: ShellActionPlan? = nil) {
+        if let confirmed, shellPlan?.id != confirmed.id { return }
         shellPlan = nil
     }
 

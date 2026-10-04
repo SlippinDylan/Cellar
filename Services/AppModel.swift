@@ -109,7 +109,7 @@ final class AppModel: ObservableObject {
         if let intent = batchCoordinator.activeIntent {
             switch intent.scope {
             case .homebrew: return "正在处理 Homebrew 任务"
-            case .npm: return "正在处理 Node 任务"
+            case .npm, .nodeRuntime: return "正在处理 Node 任务"
             }
         }
         return nil
@@ -238,10 +238,17 @@ final class AppModel: ObservableObject {
         defer { setBatchWorking(plan.intent.scope, false) }
         let result = try await batchCoordinator.execute(plan)
         switch result.refreshedState {
-        case .homebrew(let status): homebrew = status
-        case .npm(let snapshot):
+        case .homebrew(let status):
+            homebrew = status
+            homebrewRefreshFailed = false
+            homebrewRefreshedAt = Date()
+            homebrewUpdateState = status.snapshot.map { $0.sectionErrors[.outdated] == nil ? .available : .failed } ?? .notLoaded
+        case .npm(let snapshot), .nodeRuntime(let snapshot):
             node = snapshot
             preferredNodeVersion = snapshot.summary.nodeVersion
+            nodeRefreshFailed = false
+            nodeRefreshedAt = Date()
+            nodeUpdateState = snapshot.outdatedError == nil ? .available : .failed
         case nil: break
         }
         if result.refreshedState != nil { refreshedAt = Date() }
@@ -251,7 +258,7 @@ final class AppModel: ObservableObject {
     private func setBatchWorking(_ scope: BatchScope, _ working: Bool) {
         switch scope {
         case .homebrew: isHomebrewWorking = working
-        case .npm: isNodeWorking = working
+        case .npm, .nodeRuntime: isNodeWorking = working
         }
     }
 

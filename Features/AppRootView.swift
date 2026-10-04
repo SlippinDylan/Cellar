@@ -73,6 +73,7 @@ struct AppRootView: View {
 
     @ViewBuilder private var destinationContent: some View {
         if model.selectedDestination == .home { HomeView(model: model) }
+        else if model.selectedDestination == .library { LibraryView(model: model) }
         else { ShellPlaceholderView(destination: model.selectedDestination) }
     }
 

@@ -30,6 +30,11 @@ struct NPMPackageIdentity: Hashable, Codable, Sendable {
     let environment: NodeEnvironmentContext
 }
 
+struct NodeRuntimeIdentity: Hashable, Codable, Sendable {
+    let version: String
+    let environment: NodeEnvironmentContext
+}
+
 enum CatalogItemIdentity: Hashable, Codable, Sendable {
     case homebrew(HomebrewPackageIdentity)
     case npm(NPMPackageIdentity)
@@ -267,11 +272,21 @@ enum BatchOperation: String, Codable, Sendable {
 enum BatchItem: Hashable, Codable, Sendable {
     case homebrew(HomebrewPackageIdentity)
     case npm(NPMPackageIdentity)
+    case nodeRuntime(NodeRuntimeIdentity)
 
     var scope: BatchScope {
         switch self {
         case .homebrew(let identity): .homebrew(identity.kind)
         case .npm(let identity): .npm(identity.environment)
+        case .nodeRuntime(let identity): .nodeRuntime(identity.environment)
+        }
+    }
+
+    var displayIdentifier: String {
+        switch self {
+        case .homebrew(let identity): identity.name
+        case .npm(let identity): identity.name
+        case .nodeRuntime(let identity): identity.version
         }
     }
 }
@@ -279,6 +294,7 @@ enum BatchItem: Hashable, Codable, Sendable {
 enum BatchScope: Hashable, Codable, Sendable {
     case homebrew(HomebrewPackageKind)
     case npm(NodeEnvironmentContext)
+    case nodeRuntime(NodeEnvironmentContext)
 }
 
 struct BatchIntent: Equatable, Sendable {
@@ -288,9 +304,11 @@ struct BatchIntent: Equatable, Sendable {
 
     init?(operation: BatchOperation, items: [BatchItem]) {
         guard let scope = items.first?.scope,
+              items.count <= 100,
               items.allSatisfy({ $0.scope == scope }),
               Set(items).count == items.count
         else { return nil }
+        if case .nodeRuntime = scope, operation != .uninstall { return nil }
         self.operation = operation
         self.scope = scope
         self.items = items
@@ -385,6 +403,7 @@ struct ActivityItemSummary: Equatable, Codable, Sendable {
 enum ActivityScope: Hashable, Codable, Sendable {
     case homebrew(HomebrewPackageKind)
     case npm(NodeEnvironmentContext)
+    case nodeRuntime(NodeEnvironmentContext)
 }
 
 struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {

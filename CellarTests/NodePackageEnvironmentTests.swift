@@ -2,6 +2,77 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    func testAbsoluteEnvironmentIdentityRejectsAnotherInstallationWithSameVersion() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let wrong = NodeEnvironmentContext(identifier: fixture.root.appending(path: "other/bin/node").path,
+                                           nodeVersion: fixture.context.nodeVersion, npmVersion: fixture.context.npmVersion)
+        do {
+            _ = try await fixture.client.planPackage(.init(name: "example", environment: wrong), action: .uninstallPackage, managerDirectory: fixture.root)
+            XCTFail("Identical versions must not replace executable identity")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-environment-changed") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("plan|"))
+        XCTAssertFalse(calls.contains("execute|"))
+    }
+
+    func testRuntimeUninstallRechecksConfirmedStateBeforeOpeningWriteGate() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let identity = NodeRuntimeIdentity(version: "v18.0.0", environment: fixture.context)
+        let plan = try await fixture.client.planRuntimeUninstall(identity, managerDirectory: fixture.root)
+        XCTAssertTrue(plan.canExecute)
+        XCTAssertFalse(try String(contentsOf: fixture.log, encoding: .utf8).contains("execute|"))
+        try Data().write(to: fixture.root.appending(path: "runtime-plan-changed"))
+        do {
+            _ = try await fixture.client.executeRuntimeUninstall(plan, environment: fixture.context, managerDirectory: fixture.root)
+            XCTFail("Changed inventory must refuse the confirmed uninstall")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-uninstall-state-changed") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
+
+    func testRuntimeUninstallPreservesProviderCurrentAndDefaultProtection() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        for version in ["v22.0.0", "v20.0.0"] {
+            let plan = try await fixture.client.planRuntimeUninstall(.init(version: version, environment: fixture.context), managerDirectory: fixture.root)
+            XCTAssertFalse(plan.canExecute)
+            do {
+                _ = try await fixture.client.executeRuntimeUninstall(plan, environment: fixture.context, managerDirectory: fixture.root)
+                XCTFail("Provider-protected runtime cannot execute")
+            } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-uninstall-state-changed") }
+        }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
+
+    func testRuntimeUninstallUsesOneInvocationGateAfterRevalidation() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planRuntimeUninstall(.init(version: "v18.0.0", environment: fixture.context), managerDirectory: fixture.root)
+        let result = try await fixture.client.executeRuntimeUninstall(plan, environment: fixture.context, managerDirectory: fixture.root)
+        XCTAssertEqual(result.action, "node-uninstall")
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n").map { $0.components(separatedBy: "|") }
+        XCTAssertEqual(calls.map { $0[0] }, ["summary", "plan", "summary", "plan", "execute"])
+        XCTAssertEqual(calls.map { $0[1] }, ["0", "0", "0", "0", "1"])
+    }
+
+    func testPackageUninstallRefusesChangedConfirmedInstalledVersion() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .uninstallPackage, managerDirectory: fixture.root)
+        try Data().write(to: fixture.root.appending(path: "package-version-changed"))
+        do {
+            _ = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
+            XCTFail("An installed package change invalidates uninstall confirmation")
+        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "npm-uninstall-state-changed") }
+        let calls = try String(contentsOf: fixture.log, encoding: .utf8)
+        XCTAssertFalse(calls.contains("execute|"))
+        XCTAssertFalse(calls.contains("|1|"))
+    }
     func testPackageActionUsesExplicitInstallationAndOneInvocationWriteGate() async throws {
         let fixture = try PackageManagerFixture()
         defer { fixture.remove() }
@@ -157,7 +228,20 @@ private struct PackageManagerFixture {
           [ ! -e '\#(root.path)/remove-node-during-summary' ] || /bin/rm '\#(selectedBin.path)/node'
           printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(selectedBin.path)/node","npmPath":"%s","nodeVersion":"v22.0.0","npmVersion":"%s","nvmLoaded":false,"globalPrefix":"/fake","globalRoot":"/fake","registry":"https://registry.npmjs.org"}}\n' "$npm_path" "$npm_version"
         elif [ "$2" = plan ]; then
-          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$4"
+          if [ "$3" = node-uninstall ]; then
+            executable=true
+            current=false
+            default=false
+            [ "$4" != v22.0.0 ] || { executable=false; current=true; }
+            [ "$4" != v20.0.0 ] || { executable=false; default=true; }
+            package_summary='user=1|protected=1|total=2'
+            [ ! -e '\#(root.path)/runtime-plan-changed' ] || package_summary='user=2|protected=1|total=3'
+            printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"node-uninstall","subject":"%s","normalizedVersion":"%s","currentVersion":"v22.0.0","defaultVersion":"v20.0.0","defaultStatus":"resolved","versionDir":"/fixture/%s","versionDirExists":true,"globalPackageSummary":"%s","executeSupported":true,"executable":%s,"protectedByCurrent":%s,"protectedByDefault":%s}}\n' "$4" "$4" "$4" "$package_summary" "$executable" "$current" "$default"
+            exit 0
+          fi
+          installed_version=1.0.0
+          [ ! -e '\#(root.path)/package-version-changed' ] || installed_version=2.0.0
+          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$4" "$installed_version"
         elif [ "$2" = execute ]; then
           printf '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fake","action":"%s","subject":"%s","exitCode":0,"status":"ok","logFile":"/fake/log"}}\n' "$3" "$4"
         else

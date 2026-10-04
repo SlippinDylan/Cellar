@@ -177,6 +177,45 @@ actor NodeManagerClient {
             throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
         }
         let validated = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+        if plan.request.action == .uninstallPackage {
+            let currentPlan = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: validated.environment)
+            guard plan.payload.packageName == plan.request.subject, plan.payload.installedVersion?.isEmpty == false,
+                  currentPlan.canExecute, currentPlan.payload.packageName == plan.payload.packageName,
+                  currentPlan.payload.installedVersion == plan.payload.installedVersion
+            else { throw BridgeError.managerFailure(code: "npm-uninstall-state-changed", detail: nil) }
+        }
+        return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
+    }
+
+    func planRuntimeUninstall(_ identity: NodeRuntimeIdentity, managerDirectory: URL) async throws -> NodeActionPlan {
+        let validated = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
+        let plan = try await plan(.init(action: .uninstallNode, subject: identity.version), managerDirectory: managerDirectory,
+                                  environment: validated.environment)
+        if plan.canExecute {
+            guard plan.payload.normalizedVersion == identity.version, plan.payload.versionDirExists == true,
+                  plan.payload.versionDir?.hasPrefix("/") == true, plan.payload.defaultStatus == "resolved",
+                  plan.payload.currentVersion?.isEmpty == false, plan.payload.defaultVersion?.isEmpty == false,
+                  plan.payload.globalPackageSummary?.isEmpty == false
+            else { throw BridgeError.invalidOutput("Node runtime uninstall state is incomplete") }
+        }
+        return plan
+    }
+
+    func executeRuntimeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeOperationResult {
+        guard plan.request.action == .uninstallNode else {
+            throw BridgeError.managerFailure(code: "not-runtime-uninstall", detail: nil)
+        }
+        let validated = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+        let currentPlan = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: validated.environment)
+        let before = plan.payload
+        let current = currentPlan.payload
+        guard currentPlan.canExecute, current.protectedByCurrent != true, current.protectedByDefault != true,
+              current.normalizedVersion == before.normalizedVersion,
+              current.currentVersion == before.currentVersion, current.defaultVersion == before.defaultVersion,
+              current.defaultStatus == before.defaultStatus, current.versionDir == before.versionDir,
+              current.versionDirExists == before.versionDirExists,
+              current.globalPackageSummary == before.globalPackageSummary
+        else { throw BridgeError.managerFailure(code: "node-uninstall-state-changed", detail: nil) }
         return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
     }
 
@@ -196,6 +235,11 @@ actor NodeManagerClient {
               !requireMatchingNPMVersion || summary.npmVersion == context.npmVersion
         else {
             throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
+        }
+        if context.identifier.hasPrefix("/") {
+            guard URL(filePath: context.identifier).resolvingSymlinksInPath().path
+                    == URL(filePath: summary.nodePath).resolvingSymlinksInPath().path
+            else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
         }
         try validatePackageEntries(summary, installationURL: installationURL)
         return (environment, summary)

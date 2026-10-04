@@ -8,28 +8,37 @@ protocol BatchOperationProviding: Sendable {
     func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan
     func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult
     func refreshNPM(_ environment: NodeEnvironmentContext) async throws -> NodeSnapshot
+    func planNodeUninstall(_ identity: NodeRuntimeIdentity) async throws -> NodeActionPlan
+    func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult
 }
 
 enum BatchOperationError: Error, Equatable {
     case busy
     case invalidPlan
     case planUnavailable
+    case protectedNode
 }
 
 struct BatchPlan: Identifiable, Sendable {
     let id: UUID
     let intent: BatchIntent
     fileprivate let plans: [BatchProviderPlan]
+
+    var homebrewImpacts: [HomebrewActionPlan] {
+        plans.compactMap { if case .homebrew(let plan) = $0 { plan } else { nil } }
+    }
 }
 
 private enum BatchProviderPlan: Sendable {
     case homebrew(HomebrewActionPlan)
     case npm(NodeActionPlan, NodeEnvironmentContext)
+    case nodeRuntime(NodeActionPlan, NodeEnvironmentContext)
 }
 
 enum BatchProviderResult: Sendable {
     case homebrew(HomebrewActionResult)
     case npm(NodeOperationResult)
+    case nodeRuntime(NodeOperationResult)
 }
 
 enum BatchRefreshStatus: String, Codable, Sendable {
@@ -41,6 +50,7 @@ enum BatchRefreshStatus: String, Codable, Sendable {
 enum BatchRefreshedState: Sendable {
     case homebrew(HomebrewStatus)
     case npm(NodeSnapshot)
+    case nodeRuntime(NodeSnapshot)
 }
 
 struct BatchExecutionResult: Sendable {
@@ -89,6 +99,14 @@ final class BatchOperationCoordinator: ObservableObject {
                           plan.canExecute
                     else { throw BatchOperationError.invalidPlan }
                     plans.append(.npm(plan, identity.environment))
+                case .nodeRuntime(let identity):
+                    let plan = try await self.provider.planNodeUninstall(identity)
+                    guard plan.payload.protectedByCurrent != true, plan.payload.protectedByDefault != true
+                    else { throw BatchOperationError.protectedNode }
+                    guard plan.request == NodeActionRequest(action: .uninstallNode, subject: identity.version),
+                          plan.canExecute
+                    else { throw BatchOperationError.invalidPlan }
+                    plans.append(.nodeRuntime(plan, identity.environment))
                 }
             }
             try Task.checkCancellation()
@@ -138,6 +156,10 @@ final class BatchOperationCoordinator: ObservableObject {
                         let result = try await self.provider.executeNPM(providerPlan, environment: environment)
                         results.append(.npm(result))
                         status = result.status == "ok" && result.exitCode == 0 ? .succeeded : .failed
+                    case .nodeRuntime(let providerPlan, let environment):
+                        let result = try await self.provider.executeNodeUninstall(providerPlan, environment: environment)
+                        results.append(.nodeRuntime(result))
+                        status = result.status == "ok" && result.exitCode == 0 ? .succeeded : .failed
                     }
                     outcomes.append(.init(item: item, status: status, userFacingMessage: nil))
                 } catch {
@@ -183,6 +205,7 @@ final class BatchOperationCoordinator: ObservableObject {
         switch scope {
         case .homebrew: .homebrew(try await provider.refreshHomebrew())
         case .npm(let environment): .npm(try await provider.refreshNPM(environment))
+        case .nodeRuntime(let environment): .nodeRuntime(try await provider.refreshNPM(environment))
         }
     }
 }
@@ -210,15 +233,7 @@ private extension BatchScope {
         switch self {
         case .homebrew(let kind): .homebrew(kind)
         case .npm(let environment): .npm(environment)
-        }
-    }
-}
-
-private extension BatchItem {
-    var displayIdentifier: String {
-        switch self {
-        case .homebrew(let identity): identity.name
-        case .npm(let identity): identity.name
+        case .nodeRuntime(let environment): .nodeRuntime(environment)
         }
     }
 }

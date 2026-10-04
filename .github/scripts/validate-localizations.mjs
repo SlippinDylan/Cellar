@@ -10,13 +10,15 @@ export const presentationSources = [
   'Features/ShellPlaceholderView.swift',
   'Features/Home/HomeView.swift',
   'Features/Catalog/CatalogCardView.swift',
+  'Features/Library/LibraryView.swift',
+  'Features/Library/LibraryUninstallConfirmation.swift',
   'Features/Settings/SettingsView.swift',
   'Models/AppDestination.swift',
   'Models/ApplicationLanguage.swift',
 ];
 export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant'];
 
-const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|LabeledContent|ContentUnavailableView|CommandMenu|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
+const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
 const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
 const signature = value => value.match(/%(?:\d+\$)?(?:[-+0 #]*)(?:\d+|\*)?(?:\.\d+)?(?:hh|ll|[hlz])?[@diuoxXfFeEgGcCs]/g) ?? [];
 

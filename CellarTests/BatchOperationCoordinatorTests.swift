@@ -285,6 +285,7 @@ actor FakeBatchProvider: BatchOperationProviding {
     let planFails: Bool
     let unknownNames: Set<String>
     let partialNames: Set<String>
+    let protectedNames: Set<String>
     let pauseRefresh: Bool
     let onRefresh: @Sendable () -> Void
     var refreshContinuation: AsyncStream<Void>.Continuation?
@@ -298,7 +299,7 @@ actor FakeBatchProvider: BatchOperationProviding {
     init(failingNames: Set<String> = [], refreshFails: Bool = false,
          pausedName: String? = nil, onPaused: @escaping @Sendable () -> Void = {}, planFails: Bool = false,
          unknownNames: Set<String> = [], partialNames: Set<String> = [], pauseRefresh: Bool = false,
-         onRefresh: @escaping @Sendable () -> Void = {}) {
+         onRefresh: @escaping @Sendable () -> Void = {}, protectedNames: Set<String> = []) {
         self.failingNames = failingNames
         self.refreshFails = refreshFails
         self.pausedName = pausedName
@@ -306,6 +307,7 @@ actor FakeBatchProvider: BatchOperationProviding {
         self.planFails = planFails
         self.unknownNames = unknownNames
         self.partialNames = partialNames
+        self.protectedNames = protectedNames
         self.pauseRefresh = pauseRefresh
         self.onRefresh = onRefresh
     }
@@ -393,6 +395,16 @@ actor FakeBatchProvider: BatchOperationProviding {
     }
 
     func executedNames() -> [String] { names }
+    func planNodeUninstall(_ identity: NodeRuntimeIdentity) throws -> NodeActionPlan {
+        if planFails { throw Failure.plan }
+        let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(
+            "{\"action\":\"node-uninstall\",\"executable\":true,\"executeSupported\":true,\"protectedByCurrent\":\(protectedNames.contains(identity.version))}".utf8
+        ))
+        return NodeActionPlan(id: UUID(), request: .init(action: .uninstallNode, subject: identity.version), payload: payload, generatedAt: Date())
+    }
+    func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult {
+        try await executeNPM(plan, environment: environment)
+    }
     func executedEnvironments() -> [NodeEnvironmentContext] { environments }
     func refreshCount() -> Int { refreshes }
     func maximumConcurrentCount() -> Int { maximumConcurrent }

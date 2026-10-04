@@ -17,6 +17,7 @@ struct CatalogCardGrid: View {
 struct CatalogCardView: View {
     let state: CatalogCardState
     var isActionEnabled = true
+    var showsPrimaryAction = true
     let action: (CatalogCardAction) -> Void
 
     var body: some View {
@@ -64,7 +65,7 @@ struct CatalogCardView: View {
     }
 
     @ViewBuilder private var controls: some View {
-        if let action = state.primaryAction {
+        if let action = state.primaryAction, showsPrimaryAction {
             let actionTitle = String(localized: action.cardTitle)
             Button(role: action == .uninstall ? .destructive : nil) { self.action(action) } label: { Text(action.cardTitle) }
                 .buttonStyle(.bordered)

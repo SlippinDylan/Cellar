@@ -170,6 +170,14 @@ actor SystemProbeService {
         try await nodeClient.loadPackageSnapshot(environment, managerDirectory: nodeManagerDirectory(snapshot))
     }
 
+    func planNodeUninstall(_ identity: NodeRuntimeIdentity, snapshot: SnapshotStatus) async throws -> NodeActionPlan {
+        try await nodeClient.planRuntimeUninstall(identity, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
+    func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NodeOperationResult {
+        try await nodeClient.executeRuntimeUninstall(plan, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
     func terminateAllProcesses() async {
         await runner.terminateAll()
     }

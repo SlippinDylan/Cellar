@@ -2,6 +2,27 @@ import XCTest
 @testable import Cellar
 
 final class HomebrewClientTests: XCTestCase {
+    @MainActor
+    func testCaskStandardBatchUsesConservativeFlagsAndNeverDeletesArtifacts() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let coordinator = BatchOperationCoordinator(provider: HomebrewFixtureBatchProvider(client: fixture.client), operationStore: OperationStore())
+        let identity = HomebrewPackageIdentity(name: "acme/apps/sample", kind: .cask)
+        let intent = try XCTUnwrap(BatchIntent(operation: .uninstall, items: [.homebrew(identity)]))
+        let plan = try await coordinator.prepare(intent)
+        XCTAssertEqual(plan.homebrewImpacts.first?.action, .uninstallCask)
+        let before = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertFalse(before.contains("uninstall --cask"))
+        let result = try await coordinator.execute(plan)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded])
+        let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertTrue(log.contains("uninstall --cask acme/apps/sample|1|1|1"))
+        for forbidden in ["--zap", "autoremove", "cleanup", "rm "] { XCTAssertFalse(log.contains(forbidden), forbidden) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.directoryURL.appending(path: "Library/Preferences/com.acme.sample.plist").path))
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let providerSource = try String(contentsOf: root.appending(path: "Services/ProviderBatchOperations.swift"), encoding: .utf8)
+        XCTAssertTrue(providerSource.contains("planHomebrewCaskUninstall(identity.name, zap: false)"))
+    }
     func testCoreSnapshotDoesNotRunOutdatedAndEnrichmentPreservesTypedIdentity() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
@@ -421,7 +442,7 @@ private struct FakeBrewFixture {
             printf '%s\n' 'completed'
             [ ! -f "$state_dir/uninstall-reports-failure" ] || exit 1
             ;;
-          "uninstall --cask --zap acme/apps/sample")
+          "uninstall --cask --zap acme/apps/sample"|"uninstall --cask acme/apps/sample")
             touch "$state_dir/cask-removed"
             printf '%s\n' 'completed'
             ;;
@@ -468,4 +489,27 @@ private struct FakeBrewFixture {
     func remove() {
         try? FileManager.default.removeItem(at: directoryURL)
     }
+}
+
+private struct HomebrewFixtureBatchProvider: BatchOperationProviding {
+    enum Unsupported: Error { case operation }
+    let client: HomebrewClient
+
+    func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan {
+        guard operation == .uninstall else { throw Unsupported.operation }
+        switch identity.kind {
+        case .formula: return try await client.planFormulaUninstall(identity.name)
+        case .cask: return try await client.planCaskUninstall(identity.name, zap: false)
+        }
+    }
+    func executeHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionResult { try await client.execute(plan) }
+    func refreshHomebrew() async throws -> HomebrewStatus {
+        let snapshot = try await client.loadSnapshot()
+        return HomebrewStatus(executablePath: snapshot.executablePath, version: snapshot.version, managerAvailable: true, snapshot: snapshot)
+    }
+    func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan { throw Unsupported.operation }
+    func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult { throw Unsupported.operation }
+    func refreshNPM(_ environment: NodeEnvironmentContext) async throws -> NodeSnapshot { throw Unsupported.operation }
+    func planNodeUninstall(_ identity: NodeRuntimeIdentity) async throws -> NodeActionPlan { throw Unsupported.operation }
+    func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult { throw Unsupported.operation }
 }

@@ -40,4 +40,14 @@ struct ProviderBatchOperations: BatchOperationProviding {
         let managers = try await service.installManagers()
         return try await service.loadNPMPackageEnvironment(environment, snapshot: managers)
     }
+
+    func planNodeUninstall(_ identity: NodeRuntimeIdentity) async throws -> NodeActionPlan {
+        let managers = try await service.installManagers()
+        return try await service.planNodeUninstall(identity, snapshot: managers)
+    }
+
+    func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult {
+        let managers = try await service.installManagers()
+        return try await service.executeNodeUninstall(plan, environment: environment, snapshot: managers)
+    }
 }

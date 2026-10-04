@@ -116,14 +116,16 @@ enum ActivitySummarySanitizer {
         else { throw .invalidSummary }
         let scope: ActivityScope?
         switch summary.scope {
-        case .npm(let environment):
+        case .npm(let environment), .nodeRuntime(let environment):
             guard validVersion(environment.nodeVersion), validVersion(environment.npmVersion) else { throw .invalidSummary }
             // Persist versions as semantic context; identifiers may contain private installation paths.
-            scope = .npm(NodeEnvironmentContext(
+            let sanitizedEnvironment = NodeEnvironmentContext(
                 identifier: "nvm:\(environment.nodeVersion)",
                 nodeVersion: environment.nodeVersion,
                 npmVersion: environment.npmVersion
-            ))
+            )
+            if case .nodeRuntime = summary.scope { scope = .nodeRuntime(sanitizedEnvironment) }
+            else { scope = .npm(sanitizedEnvironment) }
         case .homebrew, nil:
             scope = summary.scope
         }
@@ -143,6 +145,8 @@ enum ActivitySummarySanitizer {
         guard !name.isEmpty, name.utf8.count <= 214 else { return false }
         let components = name.split(separator: "/", omittingEmptySubsequences: false)
         switch scope {
+        case .nodeRuntime:
+            return validVersion(name)
         case .npm:
             guard name.hasPrefix("@") ? components.count == 2 : components.count == 1 else { return false }
         case .homebrew:

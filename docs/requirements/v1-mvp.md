@@ -13,7 +13,7 @@
 | App shell | Home、Library、Discover、Updates、Tools；左下方依次为 Settings 和 Activity；Settings 位于主窗口内 |
 | 目录体验 | Formula、Cask、npm 卡片；本地库、官方搜索、网站链接、语义版本状态 |
 | Home | Homebrew 与 Node/npm/nvm 的本地状态、线上版本、数量、具体更新摘要和内联 setup |
-| Library | 已安装软件的统一查看、搜索、scope、单项与同类型批量卸载 |
+| Library | 已安装软件的统一查看、搜索、scope 与单项卸载 |
 | Discover | 有界的 Homebrew/npm 搜索，以及单项和单 provider/type 批量安装 |
 | Updates | scope 决定影响范围；单项和 typed batch 更新；npm ahead/unknown 不降级 |
 | Tools | CLT/Homebrew/nvm setup，Node runtime，项目 `.nvmrc`，诊断，受限维护与 Zsh tidy |

@@ -36,7 +36,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 
 ### 能力边界
 
-- Homebrew 可以查询、搜索和管理 Formula/Cask、诊断、配置和 Tap；支持 typed batch install/update/uninstall。批量一次只处理一个 provider/type，顺序执行并保留逐项结果。
+- Homebrew 可以查询、搜索和管理 Formula/Cask、诊断、配置和 Tap；支持 typed batch install/update 和单项 uninstall。批量一次只处理一个 provider/type，顺序执行并保留逐项结果。
 - 单项安装/更新从卡片直接开始；批量、卸载、zap、清理和配置修改按产品矩阵进行一次任务专用确认。内部计划、状态指纹和 post-refresh 继续作为安全边界。写操作不是事务，界面和 Activity 必须保留部分完成结果。
 - Command Line Tools 只通过 `xcode-select --install` 请求系统对话框。Homebrew 只接受官方 latest stable Release 的精确 `Homebrew.pkg` 及其有效官方 SHA-256；digest、package signature 和 Gatekeeper assessment 任一缺失或失败都必须 fail closed、不得打开，并报告原因及 Homebrew 官方链接。全部通过后才交给系统 Installer；Cellar 不执行远端安装脚本、不收集密码、不调用自己的 `sudo` 或 Helper。
 - 不修改 `.zprofile`，不执行 Homebrew cleanup，不自动删除孤儿依赖，也不由 App 自行 `rm` Cask 残留。
@@ -46,7 +46,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - Shell 通过 App 专用 schema v1 adapter 查询和修改 Oh My Zsh、插件、主题及受限 Zsh 文件布局；不得驱动交互菜单或执行协议外的 Shell 命令。
 - 主导航固定为 Home、Library、Discover、Updates、Tools；侧边栏左下方依次为 Settings 和 Activity，Activity 固定在最底部。Settings 是主窗口 detail 页面，包含 General、Sources、Terminal、About；不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
 - 卡片本体不导航，只显示关键信息、一个主动作和系统浏览器网站链接。普通 UI 不显示原始命令或内部计划术语。
-- Activity 最多持久化 100 条去敏结构化摘要；原始输出只保留在当前会话诊断或既有受控日志。底层可取消时必须提供用户取消。
+- Activity 最多持久化 100 条去敏结构化摘要；原始输出只保留在当前会话诊断或既有受控日志。运行中任务不提供用户手动停止；内部取消只用于任务所有者结束、超时和生命周期回收。
 - 用户可见字符串进入 String Catalog，支持 English、简体中文、繁体中文和默认 Follow System。
 
 ### Node 环境

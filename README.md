@@ -8,23 +8,23 @@ Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理
 
 | 入口 | 用途 |
 |---|---|
-| Home | Homebrew 与 Node/npm/nvm 的本地状态、线上版本、数量和具体更新摘要 |
+| Home | Homebrew、Node/npm/nvm 与终端环境的关键状态、版本、数量和可更新数量 |
 | Library | 统一查看、搜索和管理已安装的 Formula、Cask 与 npm 全局包 |
 | Discover | 搜索 Homebrew 与 npm Registry，单项或同 provider/type 批量安装 |
 | Updates | 按 All、Homebrew、npm、Formula 或 Cask scope 查看和执行更新 |
 | Tools | CLT/Homebrew/nvm setup、Node runtime、项目 `.nvmrc`、诊断与受限维护 |
-| Activity | 当前任务、取消、最近最多 100 条持久摘要、筛选与复制 |
+| Activity | 当前任务进度、最近最多 100 条持久摘要、筛选与复制 |
 
 主窗口侧边栏左下方依次为 Settings 和 Activity，Activity 固定在最底部。Settings 是主窗口内的设置页面，包含 General、Sources、Terminal 和 About；App 菜单或 Command-Comma 会前置或重建主窗口并选择 Settings，不打开独立设置窗口。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
 
-目录使用简洁卡片：名称、Formula/Cask/npm 类型、当前/可用版本、语义更新状态、最多两行说明、一个主动作和系统浏览器网站链接。卡片本体不承担跳转。
+目录使用简洁卡片：名称后显示 Formula/Cask/NPM 类型 Tag 与小号网站箭头，不显示软件图标；已安装软件显示当前版本，需要更新时显示“当前 → 新版本”与更新箭头，未安装软件显示待安装版本。卡片保留最多两行说明和一个主动作，网站由系统浏览器打开，卡片本体不承担跳转。
 
 ## 操作与安全
 
 - npm 只管理全局包，并始终标明目标 Node 环境。
-- 单项安装/更新从卡片开始；批量、卸载、zap、清理和配置修改使用任务专用确认。
-- 批量任务一次只处理一个 provider/type，逐项顺序执行；某项失败后继续，用户取消则停止未开始项。
-- 写操作不是事务，不承诺回滚。Cellar 会保留成功、失败、已取消和 post-refresh 后的真实状态。
+- 单项安装/更新从卡片开始；批量安装/更新、单项卸载、zap、清理和配置修改使用任务专用确认。
+- 批量任务一次只处理一个 provider/type，逐项顺序执行；某项失败后继续。已开始的任务不提供手动停止，运行至完成。
+- 写操作不是事务，不承诺回滚。Cellar 会保留成功、失败、内部中断和 post-refresh 后的真实状态。
 - Formula/Cask 卸载禁止 Homebrew 自动更新和 autoremove。Cellar 不执行 Homebrew cleanup，不自行删除 Cask artifact 或孤儿依赖。
 - Cellar 不运行自己的 `sudo` 或 Privileged Helper，不收集管理员密码，不修改 `.zprofile`，不运行 `chsh`。
 

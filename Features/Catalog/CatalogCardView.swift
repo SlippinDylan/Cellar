@@ -2,11 +2,12 @@ import SwiftUI
 
 struct CatalogCardGrid: View {
     let states: [CatalogCardState]
+    var minimumCardWidth: CGFloat = 260
     var isActionEnabled = true
     let action: (CatalogCardState, CatalogCardAction) -> Void
 
     var body: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), alignment: .top)], alignment: .leading, spacing: 16) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumCardWidth), alignment: .top)], alignment: .leading, spacing: 16) {
             ForEach(states) { state in
                 CatalogCardView(state: state, isActionEnabled: isActionEnabled) { action(state, $0) }
             }
@@ -23,22 +24,14 @@ struct CatalogCardView: View {
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
-                Label(state.displayName, systemImage: state.identity.providerScope.cardSymbol)
-                    .font(.headline)
-                    .textSelection(.enabled)
-                Text(state.identity.providerScope.cardTitle)
-                    .foregroundStyle(.secondary)
+                header
                 if let description = state.description {
                     Text(description)
                         .lineLimit(2)
                         .truncationMode(.tail)
                         .accessibilityLabel(Text(description))
                 }
-                VStack(alignment: .leading, spacing: 4) {
-                    if let version = state.currentVersion { Text("Installed: \(version)") }
-                    if let version = state.availableVersion { Text("Available: \(version)") }
-                    CatalogVersionStatusView(status: state.versionStatus)
-                }
+                versionSummary
                 if let environment = state.nodeEnvironment {
                     Text("Node Environment: \(environment.nodeVersion) · npm \(environment.npmVersion)")
                         .foregroundStyle(.secondary)
@@ -52,10 +45,7 @@ struct CatalogCardView: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 12) { controls }
-                    VStack(alignment: .leading, spacing: 12) { controls }
-                }
+                controls
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
@@ -64,33 +54,73 @@ struct CatalogCardView: View {
         .controlSize(.regular)
     }
 
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text(state.displayName)
+                .font(.headline)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .textSelection(.enabled)
+
+            Text(state.identity.providerScope.tagTitle)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.quaternary, in: Capsule())
+                .fixedSize()
+                .layoutPriority(1)
+                .accessibilityLabel(Text(state.identity.providerScope.cardTitle))
+
+            if let website = state.websiteURL {
+                WebsiteLink(destination: website, title: LocalizedStringResource("Website for \(state.displayName)"))
+                .layoutPriority(1)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var updateVersion: String? {
+        state.versionStatus == .behind && state.currentVersion != nil ? state.availableVersion : nil
+    }
+
+    @ViewBuilder private var versionSummary: some View {
+        if let version = state.currentVersion ?? state.availableVersion {
+            let display = updateVersion.map { "\(version) → \($0)" } ?? version
+            HStack(spacing: 6) {
+                Text(display)
+                    .textSelection(.enabled)
+                if updateVersion != nil {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(Text(state.versionStatus.cardTitle))
+        }
+    }
+
     @ViewBuilder private var controls: some View {
         if let action = state.primaryAction, showsPrimaryAction {
             let actionTitle = String(localized: action.cardTitle)
             Button(role: action == .uninstall ? .destructive : nil) { self.action(action) } label: { Text(action.cardTitle) }
-                .buttonStyle(.bordered)
+                .buttonStyle(.glass)
                 .disabled(!isActionEnabled || state.progress != .idle)
                 .accessibilityLabel(Text("\(actionTitle) \(state.displayName)"))
-        }
-        if let website = state.websiteURL {
-            Link(destination: website) { Label("Website", systemImage: "arrow.up.right").frame(minHeight: 28) }
-                .accessibilityLabel(Text("Website for \(state.displayName)"))
-                .accessibilityHint("Opens in the default browser")
-        }
-    }
-}
-
-struct CatalogVersionStatusView: View {
-    let status: SemanticVersionStatus
-
-    var body: some View {
-        Label { Text(status.cardTitle) } icon: {
-            Image(systemName: status.cardSymbol).foregroundStyle(status.cardColor)
         }
     }
 }
 
 extension CatalogProviderScope {
+    var tagTitle: LocalizedStringResource {
+        switch self {
+        case .homebrewFormula: LocalizedStringResource("Formula")
+        case .homebrewCask: LocalizedStringResource("Cask")
+        case .npm: LocalizedStringResource("NPM")
+        }
+    }
+
     var cardTitle: LocalizedStringResource {
         switch self {
         case .homebrewFormula: LocalizedStringResource("Homebrew · Formula")
@@ -99,13 +129,6 @@ extension CatalogProviderScope {
         }
     }
 
-    var cardSymbol: String {
-        switch self {
-        case .homebrewFormula: "shippingbox"
-        case .homebrewCask: "app"
-        case .npm: "shippingbox.fill"
-        }
-    }
 }
 
 extension SemanticVersionStatus {
@@ -118,23 +141,6 @@ extension SemanticVersionStatus {
         }
     }
 
-    var cardSymbol: String {
-        switch self {
-        case .behind: "arrow.up.circle"
-        case .current: "checkmark.circle"
-        case .ahead: "arrow.up.forward.circle"
-        case .unknown: "questionmark.circle"
-        }
-    }
-
-    var cardColor: Color {
-        switch self {
-        case .behind: .orange
-        case .current: .green
-        case .ahead: .blue
-        case .unknown: .secondary
-        }
-    }
 }
 
 extension CatalogCardAction {
@@ -142,7 +148,7 @@ extension CatalogCardAction {
         switch self {
         case .install: LocalizedStringResource("Install")
         case .update: LocalizedStringResource("Update")
-        case .uninstall: LocalizedStringResource("Uninstall…")
+        case .uninstall: LocalizedStringResource("Uninstall")
         }
     }
 }

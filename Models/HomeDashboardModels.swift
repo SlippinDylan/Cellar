@@ -81,4 +81,17 @@ enum HomeVersion {
         let value = version.hasPrefix("Homebrew ") ? String(version.dropFirst(9)) : version
         return value.hasPrefix("v") ? String(value.dropFirst()) : value
     }
+
+    static func display(current: String, online: OnlineVersionState) -> String {
+        let current = normalized(current)
+        guard case .available(let version) = online else { return current }
+        let available = normalized(version)
+        guard hasUpdate(current: current, online: online) else { return current }
+        return "\(current) → \(available)"
+    }
+
+    static func hasUpdate(current: String, online: OnlineVersionState) -> Bool {
+        guard case .available(let version) = online else { return false }
+        return SemanticVersionStatus(current: normalized(current), available: normalized(version)).allowsUpdate
+    }
 }

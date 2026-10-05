@@ -17,22 +17,13 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Local tools and available updates.").foregroundStyle(.secondary)
-                if model.isRefreshing {
-                    HStack {
-                        ProgressView().controlSize(.small)
-                        Text("Reading Local Environment")
-                    }
-                } else if model.refreshedAt == nil {
-                    Text("Refresh to read the local environment.")
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), alignment: .top)], alignment: .leading, spacing: 16) {
-                    homebrewSection
-                    nodeSection
-                }
+                homebrewSection
+                nodeSection
+                terminalEnvironmentSection
             }
-            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .contentMargins(20, for: .scrollContent)
         .controlSize(.regular)
         .task(id: model.isRefreshing ? nil : model.refreshedAt) {
             guard !model.isRefreshing else { return }
@@ -55,81 +46,252 @@ struct HomeView: View {
     }
 
     private var homebrewSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                commandLineToolsStatus
-                HomeOnlineVersionRow(title: "Homebrew", currentVersion: model.homebrew?.version.map(HomeVersion.normalized), state: dashboard.onlineVersion(for: .homebrew), checkedAt: dashboard.onlineCheckedAt[.homebrew])
-                if let snapshot = model.homebrew?.snapshot {
-                    let summary = HomebrewDashboardSummary(snapshot: snapshot)
-                    if let count = summary.formulaCount { countRow("Formula", count) }
-                    if let count = summary.caskCount { countRow("Cask", count) }
-                    if summary.formulaCount == 0 && summary.caskCount == 0 { Text("No Homebrew packages installed.") }
-                    packageUpdates(summary.updates, state: model.homebrewUpdateState, checkedAt: model.homebrewOutdatedCheckedAt)
-                    if summary.hasPartialFailure { inlineWarning("Some Homebrew information could not be read.") }
-                }
-                if model.homebrewRefreshFailed { inlineWarning("Local Homebrew refresh failed. Previously read information is retained.") }
-                homebrewSetup
-                HomeTimestampRow(title: "Local Refresh", date: model.homebrewRefreshedAt)
-                Link("Homebrew Website", destination: dashboard.officialHomebrewURL)
-                    .frame(minHeight: 28)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-        } label: {
-            Label("Homebrew", systemImage: "mug").font(.title3)
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Homebrew", systemImage: "mug")
+                .font(.title3)
+            let summary = model.homebrew?.snapshot.map(HomebrewDashboardSummary.init)
+            homebrewMetrics(summary)
+            if summary?.hasPartialFailure == true { inlineWarning("Some Homebrew information could not be read.") }
+            if model.homebrewUpdateState == .failed { inlineWarning("Updates could not be checked. Local information is still available.") }
+            if model.homebrewRefreshFailed { inlineWarning("Local Homebrew refresh failed. Previously read information is retained.") }
+            homebrewSetup
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var nodeSection: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                if let snapshot = model.node {
-                    let summary = NodeDashboardSummary(snapshot: snapshot)
-                    HomeOnlineVersionRow(title: "Node", currentVersion: summary.nodeVersion, state: dashboard.onlineVersion(for: .node), checkedAt: dashboard.onlineCheckedAt[.node])
-                    HomeOnlineVersionRow(title: "npm", currentVersion: summary.npmVersion, state: dashboard.onlineVersion(for: .npm), checkedAt: dashboard.onlineCheckedAt[.npm])
-                    if let version = summary.defaultVersion { Text("nvm Default: \(version)") }
-                    else { Text("nvm Default: Unresolved").foregroundStyle(.secondary) }
-                    Text("Current Node Environment: \(summary.nodeVersion)")
-                    countRow("Global npm Packages in This Environment", summary.packageCount)
-                    if summary.packageCount == 0 { Text("No global npm packages in this Node environment.") }
-                    packageUpdates(summary.updates, state: model.nodeUpdateState, checkedAt: model.nodeOutdatedCheckedAt)
-                } else {
-                    Text(model.refreshedAt == nil ? LocalizedStringResource("Node Environment Not Read") : LocalizedStringResource("Node Environment Unavailable"))
-                    Text("Select an installed Node environment in Tools or follow the official guide.")
-                    Button("Open Runtime Tools") { model.openRuntimeTools() }
-                    HomeOnlineVersionRow(title: "Node", currentVersion: nil, state: dashboard.onlineVersion(for: .node), checkedAt: dashboard.onlineCheckedAt[.node])
-                    HomeOnlineVersionRow(title: "npm", currentVersion: nil, state: dashboard.onlineVersion(for: .npm), checkedAt: dashboard.onlineCheckedAt[.npm])
-                }
-                if model.nodeRefreshFailed { inlineWarning("Local Node refresh failed. Previously read information is retained.") }
-                if dashboard.nvmInstalled == true || model.node?.summary.nvmLoaded == true { Label("nvm Available", systemImage: "checkmark.circle") }
-                else if dashboard.nvmInstalled == false {
-                    Label("nvm Not Installed", systemImage: "minus.circle")
-                    Text("Install nvm using the official guide, then refresh the local environment.")
-                    Button("Open Environment Setup") { model.selectedToolsCategory = .environment; model.selectedDestination = .tools }
-                }
-                HomeOnlineVersionRow(title: "nvm", currentVersion: nil, state: dashboard.onlineVersion(for: .nvm), checkedAt: dashboard.onlineCheckedAt[.nvm])
-                HomeTimestampRow(title: "Local Refresh", date: model.nodeRefreshedAt)
-                Link("nvm Installation Guide", destination: CatalogWebsites.nvm)
-                    .frame(minHeight: 28)
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Node", systemImage: "shippingbox").font(.title3)
+            nodeMetrics(model.node.map(NodeDashboardSummary.init))
+            if model.nodeUpdateState == .failed { inlineWarning("Updates could not be checked. Local information is still available.") }
+            if model.nodeRefreshFailed { inlineWarning("Local Node refresh failed. Previously read information is retained.") }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var terminalEnvironmentSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Terminal Environment", systemImage: "terminal")
+                .font(.title3)
+            terminalEnvironmentMetrics
+            terminalEnvironmentSetup
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func homebrewMetrics(_ summary: HomebrewDashboardSummary?) -> some View {
+        HStack(spacing: 0) {
+            let hasHomebrewUpdate = homebrewHasUpdate(summary)
+            StatusMetric(
+                title: String(localized: "Homebrew"),
+                value: homebrewVersion(summary),
+                valueSystemImage: hasHomebrewUpdate ? "arrow.up.circle.fill" : nil,
+                titleLink: dashboard.officialHomebrewURL,
+                titleLinkLabel: "Homebrew Website",
+                systemImage: "mug.fill",
+                tint: summary == nil ? .secondary : .blue
+            )
+            StatusMetricDivider()
+            StatusMetric(
+                title: String(localized: "Formula"),
+                value: metricCount(summary?.formulaCount),
+                systemImage: "shippingbox.fill",
+                tint: summary?.formulaCount == nil ? .secondary : .blue
+            )
+            StatusMetricDivider()
+            StatusMetric(
+                title: String(localized: "Cask"),
+                value: metricCount(summary?.caskCount),
+                systemImage: "app.grid",
+                tint: summary?.caskCount == nil ? .secondary : .purple
+            )
+            StatusMetricDivider()
+            StatusMetric(
+                title: String(localized: "Updates"),
+                value: updateMetricValue(summary?.updates, state: model.homebrewUpdateState),
+                systemImage: "arrow.up.circle.fill",
+                tint: updateMetricTint(summary?.updates, state: model.homebrewUpdateState)
+            )
+        }
+        .frame(maxWidth: .infinity)
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var terminalEnvironmentMetrics: some View {
+        HStack(spacing: 0) {
+            StatusMetric(
+                title: String(localized: "Command Line Tools"),
+                value: commandLineToolsValue,
+                systemImage: "hammer.fill",
+                tint: commandLineToolsTint
+            )
+            StatusMetricDivider()
+            StatusMetric(
+                title: String(localized: "Zsh"),
+                value: zshVersion,
+                systemImage: "terminal.fill",
+                tint: model.shell == nil ? .secondary : .blue
+            )
+            StatusMetricDivider()
+            StatusMetric(
+                title: String(localized: "Oh My Zsh"),
+                value: ohMyZshValue,
+                systemImage: "bolt.fill",
+                tint: ohMyZshTint
+            )
+        }
+        .frame(maxWidth: .infinity)
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func nodeMetrics(_ summary: NodeDashboardSummary?) -> some View {
+        VStack(spacing: 0) {
+            let hasNodeUpdate = summary.map { HomeVersion.hasUpdate(current: $0.nodeVersion, online: dashboard.onlineVersion(for: .node)) } ?? false
+            let hasNPMUpdate = summary.map { HomeVersion.hasUpdate(current: $0.npmVersion, online: dashboard.onlineVersion(for: .npm)) } ?? false
+            HStack(spacing: 0) {
+                StatusMetric(
+                    title: String(localized: "Node"),
+                    value: summary.map { HomeVersion.display(current: $0.nodeVersion, online: dashboard.onlineVersion(for: .node)) } ?? "—",
+                    valueSystemImage: hasNodeUpdate ? "arrow.up.circle.fill" : nil,
+                    systemImage: "shippingbox.fill",
+                    tint: summary == nil ? .secondary : .green
+                )
+                StatusMetricDivider()
+                StatusMetric(
+                    title: String(localized: "npm"),
+                    value: summary.map { HomeVersion.display(current: $0.npmVersion, online: dashboard.onlineVersion(for: .npm)) } ?? "—",
+                    valueSystemImage: hasNPMUpdate ? "arrow.up.circle.fill" : nil,
+                    systemImage: "shippingbox.circle.fill",
+                    tint: summary == nil ? .secondary : .red
+                )
+                StatusMetricDivider()
+                StatusMetric(
+                    title: String(localized: "Global Packages"),
+                    value: metricCount(summary?.packageCount),
+                    systemImage: "square.stack.3d.up.fill",
+                    tint: summary == nil ? .secondary : .blue
+                )
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
-        } label: {
-            Label("Node, npm & nvm", systemImage: "shippingbox").font(.title3)
+
+            Divider()
+                .padding(.horizontal, 12)
+
+            HStack(spacing: 0) {
+                StatusMetric(
+                    title: String(localized: "Updates"),
+                    value: updateMetricValue(summary?.updates, state: model.nodeUpdateState),
+                    systemImage: "arrow.up.circle.fill",
+                    tint: updateMetricTint(summary?.updates, state: model.nodeUpdateState)
+                )
+                StatusMetricDivider()
+                StatusMetric(
+                    title: String(localized: "nvm"),
+                    value: nvmValue,
+                    systemImage: "point.3.connected.trianglepath.dotted",
+                    tint: nvmTint
+                )
+                StatusMetricDivider()
+                StatusMetric(
+                    title: String(localized: "nvm Default"),
+                    value: nvmDefaultValue(summary),
+                    systemImage: "checkmark.seal.fill",
+                    tint: summary?.defaultVersion == nil ? .secondary : .purple
+                )
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var commandLineToolsValue: String {
+        switch dashboard.commandLineTools {
+        case .available(.installed): String(localized: "Installed")
+        case .available(.notInstalled): String(localized: "Not Installed")
+        case .notLoaded, .loading, .failed: "—"
         }
     }
 
-    @ViewBuilder private var commandLineToolsStatus: some View {
+    private var commandLineToolsTint: Color {
         switch dashboard.commandLineTools {
-        case .notLoaded: Text("Command Line Tools Not Checked").foregroundStyle(.secondary)
-        case .loading: Text("Checking Command Line Tools").foregroundStyle(.secondary)
-        case .available(.installed): Label("Command Line Tools Installed", systemImage: "checkmark.circle")
+        case .available(.installed): .green
+        case .available(.notInstalled): .orange
+        case .notLoaded, .loading, .failed: .secondary
+        }
+    }
+
+    private var zshVersion: String {
+        model.shell?.zshVersion?.replacingOccurrences(of: "zsh ", with: "") ?? "—"
+    }
+
+    private var ohMyZshValue: String {
+        guard let shell = model.shell else { return "—" }
+        return shell.ohMyZshInstalled ? String(localized: "Installed") : String(localized: "Not Installed")
+    }
+
+    private var ohMyZshTint: Color {
+        guard let shell = model.shell else { return .secondary }
+        return shell.ohMyZshInstalled ? .purple : .secondary
+    }
+
+    private func homebrewVersion(_ summary: HomebrewDashboardSummary?) -> String {
+        guard let current = summary?.version ?? model.homebrew?.version else {
+            return installation == .notInstalled ? String(localized: "Not Installed") : "—"
+        }
+        return HomeVersion.display(current: current, online: dashboard.onlineVersion(for: .homebrew))
+    }
+
+    private func homebrewHasUpdate(_ summary: HomebrewDashboardSummary?) -> Bool {
+        guard let current = summary?.version ?? model.homebrew?.version else { return false }
+        return HomeVersion.hasUpdate(current: current, online: dashboard.onlineVersion(for: .homebrew))
+    }
+
+    private var nvmAvailable: Bool {
+        dashboard.nvmInstalled == true || model.node?.summary.nvmLoaded == true
+    }
+
+    private var nvmValue: String {
+        if nvmAvailable { return String(localized: "Installed") }
+        if dashboard.nvmInstalled == false { return String(localized: "Not Installed") }
+        return "—"
+    }
+
+    private var nvmTint: Color {
+        if nvmAvailable { return .green }
+        return dashboard.nvmInstalled == false ? .orange : .secondary
+    }
+
+    private func nvmDefaultValue(_ summary: NodeDashboardSummary?) -> String {
+        guard nvmAvailable else { return "—" }
+        return summary?.defaultVersion.map(HomeVersion.normalized) ?? String(localized: "Unresolved")
+    }
+
+    @ViewBuilder private var terminalEnvironmentSetup: some View {
+        switch dashboard.commandLineTools {
         case .available(.notInstalled):
-            Label("Command Line Tools Required", systemImage: "exclamationmark.triangle")
             Text("Homebrew needs Apple’s Command Line Tools. macOS handles the installation.")
             Button("Install Command Line Tools…") { setupRequest = .commandLineTools }
                 .disabled(model.isBusy)
-        case .failed: inlineWarning("Command Line Tools could not be checked. Refresh to try again.")
+        case .failed:
+            inlineWarning("Command Line Tools could not be checked. Refresh to try again.")
+        case .notLoaded, .loading, .available(.installed):
+            EmptyView()
+        }
+
+        switch dashboard.setupState {
+        case .requestingCommandLineTools:
+            HStack {
+                ProgressView().controlSize(.small)
+                Text("Preparing System Installation")
+            }
+        case .commandLineToolsRequested:
+            Text("Installation requested. Finish in the system dialog, then refresh.")
+        case .failed(.commandLineTools):
+            inlineWarning(HomeSetupFailure.commandLineTools.message)
+        case .idle, .preparingInstaller, .installerOpened, .failed(.homebrew):
+            EmptyView()
         }
     }
 
@@ -147,100 +309,35 @@ struct HomeView: View {
             inlineWarning("Homebrew is unavailable. Refresh or use the official recovery guidance; existing files will not be replaced.")
         }
         switch dashboard.setupState {
-        case .requestingCommandLineTools, .preparingInstaller:
+        case .preparingInstaller:
             HStack {
                 ProgressView().controlSize(.small)
                 Text("Preparing System Installation")
             }
-        case .commandLineToolsRequested: Text("Installation requested. Finish in the system dialog, then refresh.")
-        case .failed(let failure): inlineWarning(failure.message)
-        case .idle, .installerOpened: EmptyView()
+        case .failed(.homebrew(let failure)):
+            inlineWarning(HomeSetupFailure.homebrew(failure).message)
+        case .idle, .requestingCommandLineTools, .commandLineToolsRequested, .installerOpened, .failed(.commandLineTools):
+            EmptyView()
         }
     }
 
-    @ViewBuilder private func updatePreview(_ preview: HomeUpdatePreview?) -> some View {
-        if let preview {
-            countRow("Updates", preview.totalCount)
-            if preview.totalCount == 0 { Text("No updates reported by the last check.").foregroundStyle(.secondary) }
-            else {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(preview.names.enumerated()), id: \.offset) { _, name in
-                        Text(name).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
-                    }
-                    if preview.remainingCount > 0 {
-                        let count = String(preview.remainingCount)
-                        Text("And \(count) More").foregroundStyle(.secondary)
-                    }
-                }
-                Button("View Updates") { model.selectedDestination = .updates }
-            }
-        } else { inlineWarning("Updates could not be checked. Local information is still available.") }
+    private func metricCount(_ count: Int?) -> String {
+        count?.formatted() ?? "—"
     }
 
-    @ViewBuilder private func packageUpdates(_ preview: HomeUpdatePreview?, state: HomePackageUpdateState, checkedAt: Date?) -> some View {
-        switch state {
-        case .notLoaded: Text("Package Updates Not Checked").foregroundStyle(.secondary)
-        case .loading:
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Checking Package Updates")
-            }
-        case .available: updatePreview(preview)
-        case .failed: inlineWarning("Updates could not be checked. Local information is still available.")
-        }
-        HomeTimestampRow(title: "Package Updates Check", date: checkedAt)
+    private func updateMetricValue(_ preview: HomeUpdatePreview?, state: HomePackageUpdateState) -> String {
+        guard state == .available, let preview else { return "—" }
+        return preview.totalCount.formatted()
     }
 
-    private func countRow(_ title: LocalizedStringResource, _ count: Int) -> some View {
-        LabeledContent { Text(count, format: .number) } label: { Text(title) }
+    private func updateMetricTint(_ preview: HomeUpdatePreview?, state: HomePackageUpdateState) -> Color {
+        guard state == .available, let preview else { return .secondary }
+        return preview.totalCount == 0 ? .green : .orange
     }
 
     private func inlineWarning(_ message: LocalizedStringResource) -> some View {
         Label { Text(message) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange) }
             .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-private struct HomeOnlineVersionRow: View {
-    let title: LocalizedStringResource
-    let currentVersion: String?
-    let state: OnlineVersionState
-    let checkedAt: Date?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            LabeledContent {
-                if let currentVersion { Text(HomeVersion.normalized(currentVersion)).textSelection(.enabled) }
-                else { Text("Local Version Unavailable").foregroundStyle(.secondary) }
-            } label: { Text(title) }
-            switch state {
-            case .notLoaded: Text("Online Version Not Checked").foregroundStyle(.secondary)
-            case .loading:
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Checking Official Version").foregroundStyle(.secondary)
-                }
-            case .available(let version):
-                Text("Latest: \(version)")
-                if let currentVersion { CatalogVersionStatusView(status: SemanticVersionStatus(current: HomeVersion.normalized(currentVersion), available: version)) }
-            case .unavailable(let reason):
-                Label(reason == "offline" ? LocalizedStringResource("Online Check Unavailable — Offline") : LocalizedStringResource("Online Version Check Failed"), systemImage: "exclamationmark.triangle")
-            }
-            HomeTimestampRow(title: "Online Check", date: checkedAt)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct HomeTimestampRow: View {
-    let title: LocalizedStringResource
-    let date: Date?
-
-    var body: some View {
-        if let date {
-            LabeledContent { Text(date, format: .dateTime.month(.abbreviated).day().hour().minute()) } label: { Text(title) }
-                .foregroundStyle(.secondary)
-        }
     }
 }
 

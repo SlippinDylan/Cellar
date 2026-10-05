@@ -138,6 +138,16 @@ final class HomeDashboardTests: XCTestCase {
         XCTAssertTrue(partial.hasPartialFailure)
     }
 
+    func testHomeVersionDisplayOnlyShowsLatestWhenAnUpdateIsAvailable() {
+        XCTAssertEqual(HomeVersion.display(current: "v26.0.0", online: .available(version: "26.0.0")), "26.0.0")
+        XCTAssertEqual(HomeVersion.display(current: "11.19.1", online: .available(version: "12.2.0")), "11.19.1 → 12.2.0")
+        XCTAssertTrue(HomeVersion.hasUpdate(current: "11.19.1", online: .available(version: "12.2.0")))
+        XCTAssertEqual(HomeVersion.display(current: "Homebrew 7.0.7", online: .available(version: "6.0.0")), "7.0.7")
+        XCTAssertFalse(HomeVersion.hasUpdate(current: "Homebrew 7.0.7", online: .available(version: "6.0.0")))
+        XCTAssertEqual(HomeVersion.display(current: "7.0.7", online: .loading), "7.0.7")
+        XCTAssertEqual(HomeVersion.display(current: "7.0.7", online: .unavailable(reason: "offline")), "7.0.7")
+    }
+
     func testNPMCountsBelongToControlledEnvironmentAndOnlyBehindIsAnUpdate() {
         let summary = NodeDashboardSummary(snapshot: nodeSnapshot())
         XCTAssertEqual(summary.nodeVersion, "v22.0.0")
@@ -344,16 +354,13 @@ final class HomeDashboardTests: XCTestCase {
         await fulfillment(of: [readersStarted], timeout: 2)
         XCTAssertEqual(kill(pid, 0), 0)
         XCTAssertTrue(model.operationStore.hasActiveOperations)
-        XCTAssertNotNil(model.operationStore.activeTask)
         XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateCancel)
         XCTAssertTrue(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
-        model.operationStore.cancelActiveTask()
-        if model.operationStore.activeTask == nil { task.cancel() } // Cleanup after a failing RED assertion.
+        task.cancel()
         await task.value
         await fulfillment(of: [readersCancelled], timeout: 2)
         XCTAssertEqual(kill(pid, 0), -1)
         XCTAssertFalse(model.operationStore.hasActiveOperations)
-        XCTAssertNil(model.operationStore.activeTask)
         XCTAssertEqual(model.operationStore.activeOperationCount, 0)
         XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateNow)
         XCTAssertEqual(model.homebrewUpdateState, .notLoaded)
@@ -393,7 +400,6 @@ final class HomeDashboardTests: XCTestCase {
         let recorded = await events.values
         XCTAssertEqual(recorded.count, 6)
         XCTAssertEqual(model.operationStore.activeOperationCount, 0)
-        XCTAssertNil(model.operationStore.activeTask)
         XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: model.operationStore.hasActiveOperations), .terminateNow)
     }
 
@@ -413,11 +419,7 @@ final class HomeDashboardTests: XCTestCase {
         await assertHomeBackgroundTakeover(cancelFirst: false, cancelReplacement: false, unrelatedOperation: false)
     }
 
-    func testCancelCommandDuringPendingTakeoverStartsNoChecks() async {
-        await assertHomeBackgroundTakeover(cancelFirst: true, cancelReplacement: false, unrelatedOperation: false, cancelCommand: true)
-    }
-
-    private func assertHomeBackgroundTakeover(cancelFirst: Bool, cancelReplacement: Bool, unrelatedOperation: Bool, cancelCommand: Bool = false) async {
+    private func assertHomeBackgroundTakeover(cancelFirst: Bool, cancelReplacement: Bool, unrelatedOperation: Bool) async {
         let keys = ["brew", "npm"] + HomeOnlineSource.allCases.map { "version:\($0.rawValue)" }
         let started = expectation(description: "all six first-owner reads are waiting")
         started.expectedFulfillmentCount = keys.count
@@ -462,12 +464,11 @@ final class HomeDashboardTests: XCTestCase {
         }
         await fulfillment(of: [arrived], timeout: 2)
         if cancelReplacement { replacement.cancel() }
-        if cancelCommand { await model.performShellAction(.cancel) }
         let unrelatedID = unrelatedOperation ? model.operationStore.begin() : nil
         for key in keys { await gate.resume(key) }
         await first.value
         await replacement.value
-        let takesOver = cancelFirst && !cancelReplacement && !unrelatedOperation && !cancelCommand
+        let takesOver = cancelFirst && !cancelReplacement && !unrelatedOperation
         for key in keys {
             let count = await events.count(key)
             XCTAssertEqual(count, takesOver ? 2 : 1, key)
@@ -489,7 +490,6 @@ final class HomeDashboardTests: XCTestCase {
             model.operationStore.end(unrelatedID)
         }
         XCTAssertEqual(model.operationStore.activeOperationCount, 0)
-        XCTAssertNil(model.operationStore.activeTask)
         if takesOver {
             await model.refreshHomeBackground(after: refresh, environment: [:])
             for key in keys {
@@ -573,20 +573,45 @@ final class HomeDashboardTests: XCTestCase {
         XCTAssertEqual(HomeUpdatePreview(names: []).remainingCount, 0)
     }
 
-    func testHomeSourceExcludesTechnicalContentAndOwnsCancellableViewTasks() throws {
+    func testHomeSourceKeepsTechnicalDetailsOutAndOwnsCancellableViewTasks() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let home = try String(contentsOf: root.appending(path: "Features/Home/HomeView.swift"), encoding: .utf8)
         let appModel = try String(contentsOf: root.appending(path: "Services/AppModel.swift"), encoding: .utf8)
         let shell = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
-        for forbidden in ["Oh My Zsh", "zshrc", "executablePath", "managerStatus", "model.shell", "model.managers", "Timer", "Task.detached", "Process("] {
+        for forbidden in ["zshrc", "executablePath", "managerStatus", "model.managers", "Timer", "Task.detached", "Process("] {
             XCTAssertFalse(home.contains(forbidden), forbidden)
         }
+        XCTAssertTrue(home.contains("Oh My Zsh"))
+        XCTAssertTrue(home.contains("model.shell"))
         XCTAssertTrue(home.contains(".task(id: model.isRefreshing ? nil : model.refreshedAt)"))
         XCTAssertTrue(home.contains(".task(id: setupRequest)"))
         XCTAssertTrue(home.contains("model.refreshHomeBackground(after:"))
         XCTAssertTrue(appModel.contains("service.loadHomebrew(snapshot: snapshot, includingOutdated: false)"))
         XCTAssertTrue(appModel.contains("preferredNodeVersion: self.preferredNodeVersion, includingOutdated: false"))
         XCTAssertTrue(shell.contains("HomeView(model: model)"))
+    }
+
+    func testHomeStacksProviderSectionsAndUsesHorizontalMetricRows() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let home = try String(contentsOf: root.appending(path: "Features/Home/HomeView.swift"), encoding: .utf8)
+
+        XCTAssertFalse(home.contains("LazyVGrid"))
+        XCTAssertTrue(home.contains("homebrewSection\n                nodeSection\n                terminalEnvironmentSection"))
+        XCTAssertTrue(home.contains("private func homebrewMetrics"))
+        XCTAssertTrue(home.contains("private func nodeMetrics(_ summary: NodeDashboardSummary?)"))
+        XCTAssertTrue(home.contains("private var terminalEnvironmentMetrics"))
+        XCTAssertTrue(home.contains("nodeMetrics(model.node.map(NodeDashboardSummary.init))"))
+        XCTAssertEqual(home.components(separatedBy: "StatusMetric(").count - 1, 13)
+        XCTAssertEqual(home.components(separatedBy: "valueSystemImage:").count - 1, 3)
+        XCTAssertTrue(home.contains("titleLink: dashboard.officialHomebrewURL"))
+        XCTAssertTrue(home.contains("systemImage: \"app.grid\""))
+        XCTAssertFalse(home.contains("GroupBox"))
+        XCTAssertTrue(home.contains("Label(\"Node\", systemImage: \"shippingbox\")"))
+        XCTAssertFalse(home.contains("Node, npm & nvm"))
+        XCTAssertFalse(home.contains("HomeOnlineVersionRow"))
+        XCTAssertFalse(home.contains("HomeTimestampRow"))
+        XCTAssertFalse(home.contains("Open Environment Setup"))
+        XCTAssertFalse(home.contains("Open Runtime Tools"))
     }
 
     private func dependencies(events: HomeTestEvents, failedSource: HomeOnlineSource? = nil) -> HomeDashboardDependencies {

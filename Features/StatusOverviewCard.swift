@@ -14,6 +14,10 @@ struct StatusOverviewCard<Content: View>: View {
 struct StatusMetric: View {
     let title: String
     let value: String
+    let valueSystemImage: String?
+    let valueSystemImageTint: Color
+    let titleLink: URL?
+    let titleLinkLabel: LocalizedStringResource?
     let detail: String?
     let systemImage: String
     let tint: Color
@@ -21,12 +25,20 @@ struct StatusMetric: View {
     init(
         title: String,
         value: String,
+        valueSystemImage: String? = nil,
+        valueSystemImageTint: Color = .orange,
+        titleLink: URL? = nil,
+        titleLinkLabel: LocalizedStringResource? = nil,
         detail: String? = nil,
         systemImage: String,
         tint: Color
     ) {
         self.title = title
         self.value = value
+        self.valueSystemImage = valueSystemImage
+        self.valueSystemImageTint = valueSystemImageTint
+        self.titleLink = titleLink
+        self.titleLinkLabel = titleLinkLabel
         self.detail = detail
         self.systemImage = systemImage
         self.tint = tint
@@ -40,15 +52,30 @@ struct StatusMetric: View {
                 .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
-                Text(value)
-                    .font(.headline)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .truncationMode(.middle)
+                    if let titleLink, let titleLinkLabel {
+                        WebsiteLink(destination: titleLink, title: titleLinkLabel)
+                    }
+                }
+
+                HStack(spacing: 6) {
+                    Text(value)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .truncationMode(.middle)
+
+                    if let valueSystemImage {
+                        Image(systemName: valueSystemImage)
+                            .foregroundStyle(valueSystemImageTint)
+                            .accessibilityHidden(true)
+                    }
+
+                }
+                .font(.headline)
 
                 if let detail {
                     Text(detail)

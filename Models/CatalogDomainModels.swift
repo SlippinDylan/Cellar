@@ -309,6 +309,7 @@ struct BatchIntent: Equatable, Sendable {
               items.allSatisfy({ $0.scope == scope }),
               Set(items).count == items.count
         else { return nil }
+        if operation == .uninstall, items.count != 1 { return nil }
         if case .nodeRuntime = scope, operation != .uninstall { return nil }
         self.operation = operation
         self.scope = scope

@@ -10,10 +10,12 @@ struct CellarApp: App {
     var body: some Scene {
         WindowGroup(id: AppScene.mainWindowID, for: MainWindowIdentity.self) { _ in
             AppRootView(model: model, updateController: updateController)
+                .frame(minWidth: 1080, minHeight: 720)
         } defaultValue: {
             .main
         }
         .defaultSize(width: 1080, height: 720)
+        .windowResizability(.contentMinSize)
         .commands {
             SidebarCommands()
             AppCommands(model: model, updateController: updateController)

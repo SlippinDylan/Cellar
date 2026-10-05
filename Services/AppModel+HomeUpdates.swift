@@ -31,7 +31,6 @@ extension AppModel {
         if let previous = homeBackgroundOwner {
             guard !operationStore.hasActiveOperations || operationStore.isSoleOperation(previous.operationID) else { return }
             let healthyDuplicate = previous.refreshedAt == localRefresh && !previous.task.isCancelled
-                && operationStore.activeTask?.cancellationRequested != true
             if !healthyDuplicate { previous.task.cancel() }
             let completed = await previous.task.value
             guard !Task.isCancelled, latestHomeBackgroundRequestID == requestID else { return }

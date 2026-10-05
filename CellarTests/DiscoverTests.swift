@@ -93,40 +93,18 @@ final class DiscoverTests: XCTestCase {
         XCTAssertFalse(store.hasActiveOperations)
     }
 
-    func testInvalidationAndUserCancelKeepTaskRegisteredUntilSearchCleanup() async {
-        for invalidate in [false, true] {
-            let started = expectation(description: "Search started")
-            let fake = DeferredDiscoverSearch(onStart: { started.fulfill() })
-            let store = OperationStore()
-            let model = DiscoverSearchModel(dependencies: fake.dependencies, operationStore: store)
-            let task = Task { await model.search("old", scope: .homebrewFormula, context: .init(homebrewAvailable: true, npm: nil)) }
-            await fulfillment(of: [started], timeout: 3)
-            if invalidate { model.invalidate() } else { store.cancelActiveTask() }
-            XCTAssertTrue(store.hasActiveOperations)
-            await fake.finishOld()
-            await task.value
-            XCTAssertEqual(model.state, invalidate ? .idle : .cancelled)
-            XCTAssertTrue(model.results.isEmpty)
-            XCTAssertFalse(store.hasActiveOperations)
-            XCTAssertNil(store.activeTask)
-        }
-    }
-
-    func testMenuCancelAlsoWithdrawsReplacementWaitingForCancelledSearch() async {
-        let started = expectation(description: "First query started")
+    func testInvalidationKeepsTaskRegisteredUntilSearchCleanup() async {
+        let started = expectation(description: "Search started")
         let fake = DeferredDiscoverSearch(onStart: { started.fulfill() })
         let store = OperationStore()
         let model = DiscoverSearchModel(dependencies: fake.dependencies, operationStore: store)
-        let context = DiscoverContext(homebrewAvailable: true, npm: nil)
-        let old = Task { await model.search("old", scope: .homebrewFormula, context: context) }
+        let task = Task { await model.search("old", scope: .homebrewFormula, context: .init(homebrewAvailable: true, npm: nil)) }
         await fulfillment(of: [started], timeout: 3)
-        let replacement = Task { await model.search("new", scope: .homebrewCask, context: context) }
-        await Task.yield()
-        store.cancelActiveTask()
+        model.invalidate()
+        XCTAssertTrue(store.hasActiveOperations)
         await fake.finishOld()
-        await old.value
-        await replacement.value
-        XCTAssertEqual(model.state, .cancelled)
+        await task.value
+        XCTAssertEqual(model.state, .idle)
         XCTAssertTrue(model.results.isEmpty)
         XCTAssertFalse(store.hasActiveOperations)
     }
@@ -321,7 +299,7 @@ final class DiscoverTests: XCTestCase {
             XCTAssertNil(installation.result)
             let names = await provider.preparedNames()
             XCTAssertEqual(names, ["one"])
-            model.operationStore.cancelActiveTask()
+            attempt.cancel()
             await attempt.value
             XCTAssertFalse(model.isBusy)
         }
@@ -351,7 +329,7 @@ final class DiscoverTests: XCTestCase {
         await installation.preview("one\ntwo\nthree", scope: .npm)
         let task = Task { await installation.confirmInstall() }
         await fulfillment(of: [started], timeout: 3)
-        model.operationStore.cancelActiveTask()
+        task.cancel()
         await task.value
         XCTAssertEqual(installation.result?.outcome.itemOutcomes.map(\.status), [.succeeded, .cancelled, .cancelled])
         XCTAssertEqual(installation.result?.refreshStatus, .succeeded)

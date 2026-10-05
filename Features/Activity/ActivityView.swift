@@ -24,7 +24,7 @@ private struct ActivityHistoryView: View {
     @State private var selection: UUID?
     @State private var showingDiagnostics = false
     @State private var copyFailed = false
-    @State private var searchPresented = false
+    @State private var searchFocusRequest: UUID?
     private var renderer: ActivityRenderer { .init(locale: locale) }
 
     var body: some View {
@@ -51,40 +51,15 @@ private struct ActivityHistoryView: View {
                                        description: Text("Environment tasks remain available. Check the history notice above for recovery guidance."))
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
-        .searchable(text: $filter.search, isPresented: $searchPresented, placement: .toolbar, prompt: Text("Search Operation History"))
-        .focusedSceneValue(\.catalogSearchAction, { searchPresented = true })
-        .focusedSceneValue(\.activityActions, ActivityActions(canCopy: selection != nil, copy: { copySelection(visible) },
+        .focusedSceneValue(\.activitySearch, ActivitySearchContext(text: $filter.search, focusRequest: searchFocusRequest))
+        .focusedSceneValue(\.catalogSearchAction, { searchFocusRequest = UUID() })
+        .focusedSceneValue(\.activityActions, ActivityActions(provider: filter.provider, status: filter.status,
+            canCopy: selection != nil, copy: { copySelection(visible) },
             showDiagnostics: { showingDiagnostics = true }, clearFilters: { filter = ActivityFilter() },
             setProvider: { filter.provider = $0 }, setStatus: { filter.status = $0 }))
-        .toolbar {
-            ToolbarItem { filterMenu }
-            ToolbarItem {
-                Button("Copy Summary", systemImage: "doc.on.doc") { copySelection(visible) }
-                    .help("Copy Selected Activity Summary").disabled(selection == nil)
-            }
-            ToolbarItem {
-                Button("Session Diagnostics…", systemImage: "stethoscope") { showingDiagnostics = true }
-                    .help("Show Current Session Diagnostics")
-            }
-        }
         .onChange(of: visible.map(\.id), initial: true) { _, _ in selection = ActivityFilter.reconciledSelection(selection, visible: visible) }
         .onChange(of: selection) { _, _ in copyFailed = false }
         .sheet(isPresented: $showingDiagnostics) { ActivityDiagnosticsView(store: diagnostics, initialSelection: selection, clipboard: clipboard) }
-    }
-
-    private var filterMenu: some View {
-        Menu {
-            Picker("Provider", selection: $filter.provider) {
-                ForEach(ActivityProviderFilter.allCases, id: \.self) { provider in Text(renderer.provider(provider)).tag(provider) }
-            }
-            Picker("Status", selection: $filter.status) {
-                Text("All Statuses").tag(nil as ActivityStatus?)
-                ForEach(ActivityStatus.allCases, id: \.self) { status in Text(status.title).tag(Optional(status)) }
-            }
-            Divider()
-            Button("Clear Activity Filters") { filter = ActivityFilter() }
-        } label: { Label("Filter History", systemImage: "line.3.horizontal.decrease") }
-        .help("Filter Operation History")
     }
 
     private func historyTable(_ visible: [ActivitySummary]) -> some View {
@@ -125,20 +100,15 @@ private struct ActivityHistoryView: View {
                             }.accessibilityElement(children: .combine)
                         }
                     }
-                }.textSelection(.enabled).padding(20).frame(maxWidth: .infinity, alignment: .leading)
+                }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             }
+            .contentMargins(20, for: .scrollContent)
         } else { ContentUnavailableView("Select a Task", systemImage: "sidebar.right", description: Text("Select a history row to see its targets and item results.")) }
     }
 
     private func currentTask(_ current: ActiveOperationState) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Current Task", systemImage: "clock").font(.headline)
-                Spacer()
-                if let task = operations.activeTask {
-                    Button("Cancel Task", systemImage: "stop") { Task { await model.performShellAction(.cancel) } }.disabled(!task.canCancel)
-                }
-            }
+            Label("Current Task", systemImage: "clock").font(.headline)
             Text(renderer.operation(current.context.operation)).font(.body.weight(.medium))
             Text(renderer.scope(current.context.scope))
             let targets = renderer.targets(current.context.targets, scope: current.context.scope)
@@ -153,7 +123,6 @@ private struct ActivityHistoryView: View {
 
     @ViewBuilder private func taskProgress(_ current: ActiveOperationState) -> some View {
         ProgressView().controlSize(.small).accessibilityHidden(true)
-        if current.cancellationRequested { Text("Cancellation Requested") }
         Text(current.context.stage.title)
         if let completed = current.completed, let total = current.total {
             let completedCount = String(completed)
@@ -176,6 +145,8 @@ private struct ActivityHistoryView: View {
 }
 
 struct ActivityActions {
+    let provider: ActivityProviderFilter
+    let status: ActivityStatus?
     let canCopy: Bool
     let copy: () -> Void
     let showDiagnostics: () -> Void
@@ -183,8 +154,19 @@ struct ActivityActions {
     let setProvider: (ActivityProviderFilter) -> Void
     let setStatus: (ActivityStatus?) -> Void
 }
+struct ActivitySearchContext {
+    let text: Binding<String>
+    let focusRequest: UUID?
+}
+
+private struct ActivitySearchKey: FocusedValueKey { typealias Value = ActivitySearchContext }
 private struct ActivityActionsKey: FocusedValueKey { typealias Value = ActivityActions }
 extension FocusedValues {
+    var activitySearch: ActivitySearchContext? {
+        get { self[ActivitySearchKey.self] }
+        set { self[ActivitySearchKey.self] = newValue }
+    }
+
     var activityActions: ActivityActions? {
         get { self[ActivityActionsKey.self] }
         set { self[ActivityActionsKey.self] = newValue }

@@ -12,7 +12,7 @@ struct EnvironmentSetupView: View {
             Section {
                 switch dashboard.commandLineTools {
                 case .notLoaded: Text("Command Line Tools Not Checked")
-                case .loading: ProgressView()
+                case .loading: EmptyView()
                 case .available(.installed): Label("Command Line Tools Installed", systemImage: "checkmark.circle")
                 case .available(.notInstalled):
                     Text("Homebrew needs Apple’s Command Line Tools. macOS handles the installation.")
@@ -20,7 +20,7 @@ struct EnvironmentSetupView: View {
                         .disabled(model.isBusy)
                 case .failed: Text("Command Line Tools could not be checked. Refresh to try again.")
                 }
-                Link("Apple Installation Guide", destination: CatalogWebsites.commandLineTools)
+                WebsiteLink(destination: CatalogWebsites.commandLineTools, title: LocalizedStringResource("Apple Installation Guide"), showsTitle: true)
             } header: { Text("Command Line Tools") }
             Section {
                 if let version = model.homebrew?.version { Text(version).textSelection(.enabled) }
@@ -35,7 +35,7 @@ struct EnvironmentSetupView: View {
                 } else if case .unavailable = installation {
                     Text("Homebrew is unavailable. Refresh or use the official recovery guidance; existing files will not be replaced.")
                 }
-                Link("Homebrew Website", destination: CatalogWebsites.homebrew)
+                WebsiteLink(destination: CatalogWebsites.homebrew, title: LocalizedStringResource("Homebrew Website"), showsTitle: true)
             } header: { Text("Homebrew") }
             Section {
                 if dashboard.nvmInstalled == true || model.node?.summary.nvmLoaded == true {
@@ -44,7 +44,7 @@ struct EnvironmentSetupView: View {
                 } else {
                     Text("Install nvm using the official guide, then refresh the local environment.")
                 }
-                Link("nvm Installation Guide", destination: CatalogWebsites.nvm)
+                WebsiteLink(destination: CatalogWebsites.nvm, title: LocalizedStringResource("nvm Installation Guide"), showsTitle: true)
             } header: { Text("nvm") }
             switch dashboard.setupState {
             case .requestingCommandLineTools, .preparingInstaller: ProgressView("Preparing System Installation")

@@ -12,14 +12,16 @@ final class BatchOperationCoordinatorTests: XCTestCase {
             let provider = FakeBatchProvider(failingNames: ["two"], failureCode: code)
             let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: store)
             let operation: BatchOperation = code == "post-uninstall-state-unavailable" ? .uninstall : .install
-            let result = try await coordinator.execute(coordinator.prepare(npmIntent(operation)))
-            XCTAssertEqual(result.outcome.itemOutcomes[1].status, .unknown, code)
-            XCTAssertEqual(result.outcome.itemOutcomes[1].reason, .stateUnavailable, code)
-            XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+            let intent = try (operation == .uninstall ? npmUninstallIntent("two") : npmIntent(operation))
+            let result = try await coordinator.execute(coordinator.prepare(intent))
+            let index = operation == .uninstall ? 0 : 1
+            XCTAssertEqual(result.outcome.itemOutcomes[index].status, .unknown, code)
+            XCTAssertEqual(result.outcome.itemOutcomes[index].reason, .stateUnavailable, code)
+            XCTAssertEqual(result.outcome.status, operation == .uninstall ? .unknown : .partiallySucceeded)
             let restored = ActivityStore(applicationSupportRoot: root)
             restored.restore()
             let summary = try XCTUnwrap(restored.summaries.first)
-            XCTAssertEqual(summary.itemOutcomes[1].status, .unknown)
+            XCTAssertEqual(summary.itemOutcomes[index].status, .unknown)
             let english = ActivityRenderer(locale: .init(identifier: "en")).detail(summary)
             let chinese = ActivityRenderer(locale: .init(identifier: "zh-Hans")).detail(summary)
             XCTAssertTrue(english.contains("could not be verified"))
@@ -45,12 +47,12 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         let diagnostics = ActivityDiagnosticsStore()
         let provider = FakeBatchProvider(failingNames: ["two"], failureCode: "npm-uninstall-state-changed")
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity, diagnosticsStore: diagnostics)
-        let plan = try await coordinator.prepare(npmIntent(.uninstall))
+        let plan = try await coordinator.prepare(npmUninstallIntent("two"))
         let result = try await coordinator.execute(plan)
-        XCTAssertEqual(result.outcome.itemOutcomes[1].reason, .stateChanged)
+        XCTAssertEqual(result.outcome.itemOutcomes[0].reason, .stateChanged)
         XCTAssertEqual(activity.summaries.first?.id, plan.id)
-        XCTAssertEqual(activity.summaries.first?.itemOutcomes[1].reason, .stateChanged)
-        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        XCTAssertEqual(activity.summaries.first?.itemOutcomes[0].reason, .stateChanged)
+        XCTAssertEqual(result.outcome.status, .failed)
         XCTAssertTrue(diagnostics.records.contains { $0.detail.contains("[redacted]") })
         XCTAssertFalse(diagnostics.records.contains { $0.detail.contains("TOKEN=secret") })
         let json = try String(contentsOf: activity.fileURL, encoding: .utf8)
@@ -63,9 +65,9 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         let activity = ActivityStore(applicationSupportRoot: root)
         let provider = FakeBatchProvider(npmWarningNames: ["one"])
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
-        let plan = try await coordinator.prepare(npmIntent(.uninstall))
+        let plan = try await coordinator.prepare(npmUninstallIntent("one"))
         let result = try await coordinator.execute(plan)
-        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.partiallySucceeded, .succeeded, .succeeded])
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.partiallySucceeded])
         XCTAssertEqual(result.outcome.status, .partiallySucceeded)
         guard case .npm(let diagnostic) = result.providerResults[0] else { return XCTFail("Expected npm diagnostic") }
         XCTAssertEqual(diagnostic.status, "warn")
@@ -122,7 +124,6 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.outcome.succeededItemCount, 2)
         XCTAssertEqual(result.refreshStatus, .succeeded)
         XCTAssertFalse(store.hasActiveOperations)
-        XCTAssertNil(store.activeTask)
     }
 
     func testRefreshFailureDoesNotEraseSuccessfulItemOutcomes() async throws {
@@ -139,33 +140,6 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         let refreshes = await provider.refreshCount()
         XCTAssertEqual(refreshes, 1)
         XCTAssertFalse(store.hasActiveOperations)
-    }
-
-    func testCancellationPropagatesAndStopsNotStartedItemsWithPartialResult() async throws {
-        let started = expectation(description: "Second item started")
-        let provider = FakeBatchProvider(pausedName: "two", onPaused: { started.fulfill() })
-        let store = OperationStore()
-        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store)
-        let plan = try await coordinator.prepare(npmIntent(.uninstall))
-        let task = Task { try await coordinator.execute(plan) }
-        await fulfillment(of: [started], timeout: 3)
-
-        XCTAssertTrue(store.hasActiveOperations)
-        XCTAssertTrue(store.activeTask?.canCancel == true)
-        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: store.hasActiveOperations), .terminateCancel)
-        store.cancelActiveTask()
-        let result = try await task.value
-
-        let names = await provider.executedNames()
-        let cancelled = await provider.observedCancellation()
-        let refreshes = await provider.refreshCount()
-        XCTAssertEqual(names, ["one", "two"])
-        XCTAssertTrue(cancelled)
-        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .cancelled, .cancelled])
-        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
-        XCTAssertEqual(refreshes, 1)
-        XCTAssertFalse(store.hasActiveOperations)
-        XCTAssertNil(store.activeTask)
     }
 
     func testParentCancellationPropagatesButFinalRefreshIsNotCancelled() async throws {
@@ -208,7 +182,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         await model.refresh()
         XCTAssertNil(model.managers)
         XCTAssertEqual(store.activeOperationCount, 1)
-        store.cancelActiveTask()
+        task.cancel()
         _ = try await task.value
         XCTAssertFalse(store.hasActiveOperations)
     }
@@ -250,7 +224,6 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(names, [])
         XCTAssertEqual(refreshes, 0)
         XCTAssertFalse(store.hasActiveOperations)
-        XCTAssertNil(store.activeTask)
     }
 
     func testInstallPreparationFailureIsPerItemAndEligibleItemsStillExecute() async throws {
@@ -278,7 +251,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(plan.items.map(\.status), [.unavailable, .ready, .ready])
         let task = Task { try await coordinator.execute(plan) }
         await fulfillment(of: [started], timeout: 3)
-        store.cancelActiveTask()
+        task.cancel()
         let result = try await task.value
         XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.failed, .cancelled, .cancelled])
         XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.preparationFailed, .cancelledByUser, .cancelledByUser])
@@ -326,7 +299,6 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         await fulfillment(of: [started], timeout: 3)
         XCTAssertTrue(store.hasActiveOperations)
         XCTAssertEqual(store.activeOperationCount, 1)
-        XCTAssertNil(store.activeTask)
         do {
             _ = try await coordinator.prepare(npmIntent(.install))
             XCTFail("Refresh reconciliation still owns the operation slot")
@@ -366,12 +338,12 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         let activity = ActivityStore(applicationSupportRoot: root)
         let provider = FakeBatchProvider(failingNames: ["two"], refreshFails: true)
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
-        let plan = try await coordinator.prepare(npmIntent(.uninstall))
+        let plan = try await coordinator.prepare(npmUninstallIntent("two"))
         _ = try await coordinator.execute(plan)
         XCTAssertEqual(activity.summaries.count, 2)
         XCTAssertEqual(activity.summaries.map(\.operation), [.refresh, .uninstall])
-        XCTAssertEqual(activity.summaries.last?.status, .partiallySucceeded)
-        XCTAssertEqual(activity.summaries.last?.itemOutcomes.map(\.reason), [nil, .providerFailure, nil])
+        XCTAssertEqual(activity.summaries.last?.status, .failed)
+        XCTAssertEqual(activity.summaries.last?.itemOutcomes.map(\.reason), [.providerFailure])
         let json = try String(contentsOf: activity.fileURL, encoding: .utf8)
         for secret in ["TOKEN", "secret", "stdout", "/private", "logFile", "command"] {
             XCTAssertFalse(json.contains(secret), secret)
@@ -406,9 +378,14 @@ final class BatchOperationCoordinatorTests: XCTestCase {
     }
 
     private func npmIntent(_ operation: BatchOperation) throws -> BatchIntent {
-        try XCTUnwrap(BatchIntent(operation: operation, items: ["one", "two", "three"].map {
+        precondition(operation != .uninstall)
+        return try XCTUnwrap(BatchIntent(operation: operation, items: ["one", "two", "three"].map {
             .npm(.init(name: $0, environment: environment))
         }))
+    }
+
+    private func npmUninstallIntent(_ name: String) throws -> BatchIntent {
+        try XCTUnwrap(BatchIntent(operation: .uninstall, items: [.npm(.init(name: name, environment: environment))]))
     }
 }
 

@@ -4,10 +4,6 @@ enum LibraryHomebrewSubtype: String, CaseIterable, Sendable {
     case all, formula, cask
 }
 
-enum LibraryManagementScope: String, CaseIterable {
-    case formula, cask, npm, nodeRuntime
-}
-
 enum LibraryReadState: Equatable {
     case loading, available, failed
 }
@@ -92,18 +88,14 @@ enum LibraryCatalog {
         .init(identifier: summary.nodePath, nodeVersion: summary.nodeVersion, npmVersion: summary.npmVersion)
     }
 
-    static func uninstallIntent(_ selection: [BatchItem]) -> BatchIntent? {
-        var seen: Set<BatchItem> = []
-        let items = selection.compactMap { item -> BatchItem? in
-            let normalized: BatchItem
-            switch item {
-            case .homebrew(let identity): normalized = .homebrew(.init(name: identity.name.trimmingCharacters(in: .whitespacesAndNewlines), kind: identity.kind))
-            case .npm(let identity): normalized = .npm(.init(name: identity.name.trimmingCharacters(in: .whitespacesAndNewlines), environment: identity.environment))
-            case .nodeRuntime(let identity): normalized = .nodeRuntime(.init(version: identity.version.trimmingCharacters(in: .whitespacesAndNewlines), environment: identity.environment))
-            }
-            return normalized.displayIdentifier.isEmpty || !seen.insert(normalized).inserted ? nil : normalized
+    static func uninstallIntent(_ item: BatchItem) -> BatchIntent? {
+        let normalized: BatchItem = switch item {
+        case .homebrew(let identity): .homebrew(.init(name: identity.name.trimmingCharacters(in: .whitespacesAndNewlines), kind: identity.kind))
+        case .npm(let identity): .npm(.init(name: identity.name.trimmingCharacters(in: .whitespacesAndNewlines), environment: identity.environment))
+        case .nodeRuntime(let identity): .nodeRuntime(.init(version: identity.version.trimmingCharacters(in: .whitespacesAndNewlines), environment: identity.environment))
         }
-        return BatchIntent(operation: .uninstall, items: items)
+        guard !normalized.displayIdentifier.isEmpty else { return nil }
+        return BatchIntent(operation: .uninstall, items: [normalized])
     }
 
     static func progress(for item: BatchItem, intent: BatchIntent?, running: BatchItem?, stage: ActivityTaskStage? = nil) -> CatalogCardProgress {

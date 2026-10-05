@@ -15,7 +15,7 @@ final class ToolsDirectOperationTests: XCTestCase {
                 let action = Task { await fixture.model.performDirectNodeAction(request) }
                 if cancelled {
                     try await fixture.waitForRead()
-                    fixture.model.operationStore.cancelActiveTask()
+                    action.cancel()
                 }
                 await action.value
                 XCTAssertEqual(fixture.model.nodePlan?.id, pending.id)

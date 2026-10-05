@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class AppModel: ObservableObject {
     @Published var selectedDestination: AppDestination = .home
+    @Published private(set) var pendingSettingsPane: SettingsPane?
     @Published var homebrew: HomebrewStatus?
     @Published var node: NodeSnapshot?
     @Published var shell: ShellStatus?
@@ -132,14 +133,21 @@ final class AppModel: ObservableObject {
         switch action {
         case .refresh: await refresh()
         case .show(let destination): selectedDestination = destination
-        case .cancel:
-            latestHomeBackgroundRequestID = nil
-            operationStore.cancelActiveTask()
         }
     }
 
     func showActivity(presentMainWindow: (String, MainWindowIdentity) -> Void) {
         showDestination(.activity, presentMainWindow: presentMainWindow)
+    }
+
+    func showSettingsPane(_ pane: SettingsPane, presentMainWindow: (String, MainWindowIdentity) -> Void) {
+        pendingSettingsPane = pane
+        showDestination(.settings, presentMainWindow: presentMainWindow)
+    }
+
+    func consumePendingSettingsPane() -> SettingsPane? {
+        defer { pendingSettingsPane = nil }
+        return pendingSettingsPane
     }
 
     func showDestination(_ destination: AppDestination, presentMainWindow: (String, MainWindowIdentity) -> Void) {

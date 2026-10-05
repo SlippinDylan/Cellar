@@ -6,9 +6,8 @@ final class OperationStore: ObservableObject {
     static let shared = OperationStore()
 
     @Published private var activeOperationIDs: Set<UUID> = []
-    @Published private(set) var activeTask: ActiveTaskState?
     @Published private(set) var currentOperation: ActiveOperationState?
-    private var cancelTask: (() -> Void)?
+    private var runningTaskID: UUID?
 
     var activeOperationCount: Int { activeOperationIDs.count }
     var hasActiveOperations: Bool { !activeOperationIDs.isEmpty }
@@ -23,26 +22,15 @@ final class OperationStore: ObservableObject {
         operationID: UUID,
         operation: @escaping @MainActor @Sendable () async throws -> Value
     ) async throws -> Value {
-        precondition(activeOperationIDs.contains(operationID) && activeTask == nil)
+        precondition(activeOperationIDs.contains(operationID) && runningTaskID == nil)
         let task = Task { try await operation() }
-        activeTask = ActiveTaskState(id: operationID, cancellationRequested: false)
-        cancelTask = { task.cancel() }
-        defer {
-            cancelTask = nil
-            activeTask = nil
-        }
+        runningTaskID = operationID
+        defer { runningTaskID = nil }
         return try await withTaskCancellationHandler {
             try await task.value
         } onCancel: {
             task.cancel()
         }
-    }
-
-    func cancelActiveTask() {
-        guard let activeTask, activeTask.canCancel else { return }
-        self.activeTask = ActiveTaskState(id: activeTask.id, cancellationRequested: true)
-        currentOperation?.cancellationRequested = true
-        cancelTask?()
     }
 
     func updateProgress(completed: Int, total: Int) {
@@ -90,11 +78,4 @@ struct ActiveOperationState: Equatable, Sendable {
     var context: ActiveOperationContext
     var completed: Int? = nil
     var total: Int? = nil
-    var cancellationRequested = false
-}
-
-struct ActiveTaskState: Equatable, Sendable {
-    let id: UUID
-    let cancellationRequested: Bool
-    var canCancel: Bool { !cancellationRequested }
 }

@@ -47,7 +47,6 @@ enum AppDestination: String, CaseIterable, Identifiable {
 enum AppShellAction {
     case refresh
     case show(AppDestination)
-    case cancel
 }
 
 enum SettingsPane: String, CaseIterable {

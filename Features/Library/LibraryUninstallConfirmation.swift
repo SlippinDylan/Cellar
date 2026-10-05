@@ -12,7 +12,7 @@ struct LibraryUninstallConfirmation: View {
             if let environment = plan.intent.scope.nodeEnvironment {
                 Text("Node Environment: \(environment.nodeVersion) · npm \(environment.npmVersion)")
             }
-            Text("These items will be removed. This cannot be rolled back. Items run in order; a failure does not undo completed items.")
+            Text("This item will be removed. This cannot be rolled back.")
             if plan.intent.scope == .homebrew(.cask) {
                 Text("Standard Cask Uninstall").font(.headline)
                 Text("Homebrew removes the listed app artifacts. Preferences and support files may remain.")

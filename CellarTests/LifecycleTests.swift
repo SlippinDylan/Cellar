@@ -35,15 +35,12 @@ final class LifecycleTests: XCTestCase {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while (!FileManager.default.fileExists(atPath: root.appending(path: "provider-pid").path) || model.shell == nil), ContinuousClock.now < deadline { await Task.yield() }
         XCTAssertTrue(store.hasActiveOperations)
-        XCTAssertNotNil(store.activeTask)
         XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: store.hasActiveOperations), .terminateCancel)
         await model.refresh()
         XCTAssertEqual(store.activeOperationCount, 1)
-        await model.performShellAction(.cancel)
-        if store.activeTask == nil { task.cancel() }
+        task.cancel()
         await task.value
         XCTAssertFalse(store.hasActiveOperations)
-        XCTAssertNil(store.activeTask)
         XCTAssertFalse(model.isRefreshing)
         XCTAssertEqual(activity.summaries.first?.status, .cancelled)
         XCTAssertFalse(model.nodeRefreshFailed)

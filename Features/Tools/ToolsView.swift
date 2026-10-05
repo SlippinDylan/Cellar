@@ -3,13 +3,7 @@ import SwiftUI
 struct ToolsView: View {
     @ObservedObject var model: AppModel
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Picker("Tools Category", selection: $model.selectedToolsCategory) {
-                ForEach(ToolsCategory.allCases) { category in Text(category.title).tag(category) }
-            }
-            .pickerStyle(.menu)
-            .padding(20)
-            Divider()
+        Group {
             switch model.selectedToolsCategory {
             case .environment: EnvironmentSetupView(model: model)
             case .runtime: RuntimeToolsView(model: model)
@@ -18,6 +12,7 @@ struct ToolsView: View {
             case .maintenance: MaintenanceToolsView(model: model)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .controlSize(.regular)
         .modifier(ProviderTaskPresentation(model: model, surface: .tools))
     }

@@ -1,23 +1,25 @@
 import SwiftUI
 
 struct AppCommands: Commands {
-    @FocusedValue(\.libraryActions) private var libraryActions
     @FocusedValue(\.catalogSearchAction) private var catalogSearchAction
     @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
     @FocusedValue(\.activityActions) private var activityActions
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
-    @ObservedObject private var operationStore: OperationStore
     let updateController: ApplicationUpdateController
 
     init(model: AppModel, updateController: ApplicationUpdateController) {
         self.model = model
-        operationStore = model.operationStore
         self.updateController = updateController
     }
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About Cellar") {
+                model.showSettingsPane(.about) { openWindow(id: $0, value: $1) }
+            }
+        }
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { updateController.checkForUpdates() }
                 .disabled(!updateController.canCheckForUpdates)
@@ -51,23 +53,16 @@ struct AppCommands: Commands {
             Button("Find") { catalogSearchAction?() }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(catalogSearchAction == nil)
-            Button("Batch Install…") { discoverBatchAction?() }
+            Button("Batch Install") { discoverBatchAction?() }
                 .disabled(model.selectedDestination != .discover || discoverBatchAction == nil || model.isBusy)
-            Button("Update All…") { packageUpdateActions?.updateAll() }
+            Button("Update All") { packageUpdateActions?.updateAll() }
                 .disabled(model.selectedDestination != .updates || packageUpdateActions?.canUpdateAll != true || model.isBusy)
             Button("Check for Package Updates") { packageUpdateActions?.checkUpdates() }
                 .disabled(model.selectedDestination != .updates || packageUpdateActions == nil || model.isBusy || model.refreshedAt == nil)
-            Button { libraryActions?.toggleManage() } label: {
-                Text(libraryActions?.isManaging == true ? LocalizedStringResource("Finish Managing Library") : LocalizedStringResource("Manage Library…"))
-            }
-                .disabled(model.selectedDestination != .library || libraryActions == nil || model.isBusy)
             Button("Refresh") { Task { await model.performShellAction(.refresh) } }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(model.isBusy)
             Button("View Activity") { model.showActivity { openWindow(id: $0, value: $1) } }
-            Button("Cancel Task") { Task { await model.performShellAction(.cancel) } }
-                .keyboardShortcut(".", modifiers: .command)
-                .disabled(operationStore.activeTask?.canCancel != true)
         }
     }
 }

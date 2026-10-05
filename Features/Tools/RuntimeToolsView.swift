@@ -33,7 +33,6 @@ struct RuntimeToolsView: View {
             } header: { Text("Installed Node Versions") }
             Section {
                 Button("Load Official Node Versions") { Task { await runtime.refresh(model: model) } }.disabled(model.isBusy)
-                if runtime.isLoading { ProgressView() }
                 if let error = runtime.error { Text(error.message) }
                 if !runtime.releases.isEmpty {
                     Picker("Node Version", selection: $selectedRelease) {
@@ -45,7 +44,7 @@ struct RuntimeToolsView: View {
                         Task { await model.performDirectNodeAction(.init(action: .installNode, subject: version)) }
                     }.disabled(selectedRelease.isEmpty || model.isBusy || model.homeDashboard.nvmInstalled == false)
                 }
-                Link("nvm Installation Guide", destination: CatalogWebsites.nvm)
+                WebsiteLink(destination: CatalogWebsites.nvm, title: LocalizedStringResource("nvm Installation Guide"), showsTitle: true)
             } header: { Text("Install Node") }
         }
         .formStyle(.grouped)

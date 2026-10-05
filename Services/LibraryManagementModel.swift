@@ -2,23 +2,23 @@ import Combine
 import Foundation
 
 @MainActor
-final class LibraryManagementModel: ObservableObject {
+final class LibraryUninstallModel: ObservableObject {
     @Published private(set) var confirmation: BatchPlan?
     @Published private(set) var result: BatchExecutionResult?
-    @Published private(set) var error: LibraryManagementError?
+    @Published private(set) var error: LibraryUninstallError?
     @Published private(set) var failureReason: ActivityItemReason?
     let model: AppModel
 
     init(model: AppModel) { self.model = model }
 
-    func prepare(_ selection: [BatchItem]) async {
+    func prepare(_ item: BatchItem) async {
         guard !model.isBusy else { return }
         confirmation = nil
         result = nil
         error = nil
         failureReason = nil
-        guard let intent = LibraryCatalog.uninstallIntent(selection) else {
-            error = .invalidSelection
+        guard let intent = LibraryCatalog.uninstallIntent(item) else {
+            error = .invalidTarget
             return
         }
         do { confirmation = try await model.prepareBatch(intent) }
@@ -39,6 +39,6 @@ final class LibraryManagementModel: ObservableObject {
     }
 }
 
-enum LibraryManagementError: Equatable {
-    case invalidSelection, protectedTarget, preparationFailed, executionRefused
+enum LibraryUninstallError: Equatable {
+    case invalidTarget, protectedTarget, preparationFailed, executionRefused
 }

@@ -22,29 +22,19 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        TabView(selection: $pane) {
-            Tab("General", systemImage: "gearshape", value: .general) { generalPane }
-            Tab("Sources", systemImage: "network", value: .sources) {
-                SourcesSettingsView(model: model)
-            }
-            Tab("Terminal", systemImage: "terminal", value: .terminal) {
-                TerminalSettingsView(model: model)
-            }
-            Tab("About", systemImage: "info.circle", value: .about) {
-                AboutView(updateController: updateController)
+        Group {
+            switch pane {
+            case .general: generalPane
+            case .sources: SourcesSettingsView(model: model)
+            case .terminal: TerminalSettingsView(model: model)
+            case .about: AboutView(updateController: updateController)
             }
         }
-        .scenePadding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaInset(edge: .top) {
-            if let task = operationStore.activeTask {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text("Working on Environment")
-                    Spacer()
-                    Button("Cancel Task") { operationStore.cancelActiveTask() }.disabled(!task.canCancel)
-                }.padding(.horizontal)
-            }
+        .focusedSceneValue(\.settingsPane, $pane)
+        .onAppear { applyPendingSettingsPane() }
+        .onChange(of: model.pendingSettingsPane) { _, requestedPane in
+            if requestedPane != nil { applyPendingSettingsPane() }
         }
         .onReceive(relaunchController.$selectedLanguage) { language in
             pendingLanguage = language
@@ -90,6 +80,32 @@ struct SettingsView: View {
             showsRestartConfirmation = language != relaunchController.selectedLanguage
         })
     }
+
+    private func applyPendingSettingsPane() {
+        if let requestedPane = model.consumePendingSettingsPane() {
+            pane = requestedPane
+        }
+    }
+}
+
+private struct SettingsPaneKey: FocusedValueKey { typealias Value = Binding<SettingsPane> }
+
+extension FocusedValues {
+    var settingsPane: Binding<SettingsPane>? {
+        get { self[SettingsPaneKey.self] }
+        set { self[SettingsPaneKey.self] = newValue }
+    }
+}
+
+extension SettingsPane {
+    var title: LocalizedStringResource {
+        switch self {
+        case .general: LocalizedStringResource("General")
+        case .sources: LocalizedStringResource("Sources")
+        case .terminal: LocalizedStringResource("Terminal")
+        case .about: LocalizedStringResource("About")
+        }
+    }
 }
 
 struct AboutView: View {
@@ -120,6 +136,16 @@ struct AboutView: View {
     }
 
     var body: some View {
+        GeometryReader { viewport in
+            ScrollView {
+                aboutContent
+                    .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - 40))
+            }
+            .contentMargins(20, for: .scrollContent)
+        }
+    }
+
+    private var aboutContent: some View {
         VStack(spacing: 16) {
             Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
@@ -131,11 +157,10 @@ struct AboutView: View {
                 .fixedSize()
             Button("Check for Updates…") { updateController.checkForUpdates() }
                 .disabled(!updateController.canCheckForUpdates)
-            Link("Open Source", destination: sourceCodeURL)
+            WebsiteLink(destination: sourceCodeURL, title: LocalizedStringResource("Open Source"), showsTitle: true)
             Text("Copyright © 2026 SlippinDylan Studio")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

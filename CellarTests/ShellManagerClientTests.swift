@@ -174,7 +174,7 @@ final class ShellManagerClientTests: XCTestCase {
             return kevent(queue, nil, 0, &event, 1, &deadline) == 1
         }.value
         XCTAssertTrue(started)
-        model.operationStore.cancelActiveTask()
+        owner.cancel()
         let timely = await XCTWaiter.fulfillment(of: [ownerFinished], timeout: 2)
         await owner.value
         XCTAssertEqual(timely, .completed)

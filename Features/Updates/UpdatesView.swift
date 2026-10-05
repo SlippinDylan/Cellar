@@ -5,8 +5,11 @@ struct UpdatesView: View {
     @ObservedObject private var coordinator: BatchOperationCoordinator
     @ObservedObject private var operationStore: OperationStore
     @StateObject private var updates: PackageUpdatesModel
-    @State private var scope = CatalogScope.all
-    @State private var subtype = LibraryHomebrewSubtype.all
+    @State private var selectedTab = CatalogScopeTab.all
+    @State private var lastBrewTab = CatalogScopeTab.brewAll
+
+    private var scope: CatalogScope { selectedTab.scope }
+    private var subtype: LibraryHomebrewSubtype { selectedTab.subtype }
 
     init(model: AppModel) {
         self.model = model
@@ -29,63 +32,47 @@ struct UpdatesView: View {
         let cards = model.updateCards
         let visible = UpdatesCatalog.visible(cards, scope: scope, subtype: subtype)
         let updateCount = visible.count { $0.primaryAction == .update }
-        let displayedCount = String(updateCount)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Picker("Update Scope", selection: $scope) {
-                    ForEach(CatalogScope.allCases, id: \.self) { Text($0.libraryTitle).tag($0) }
-                }.pickerStyle(.segmented)
-                if scope == .homebrew {
-                    Picker("Homebrew Type", selection: $subtype) {
-                        ForEach(LibraryHomebrewSubtype.allCases, id: \.self) { Text($0.libraryTitle).tag($0) }
-                    }.pickerStyle(.segmented)
-                }
-                Text(currentScopeTitle).font(.headline)
-                Text("\(displayedCount) Updates in This Scope").foregroundStyle(.secondary)
-                if scope != .npm { providerStatus("Homebrew", state: brewState) }
-                if scope != .homebrew {
-                    if let node = model.node {
-                        Text("Node Environment: \(node.summary.nodeVersion) · npm \(node.summary.npmVersion)").foregroundStyle(.secondary)
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if !visible.isEmpty {
+                        if scope != .npm { providerStatus("Homebrew", state: brewState) }
+                        if scope != .homebrew { providerStatus("npm", state: npmState) }
                     }
-                    providerStatus("npm", state: npmState)
-                }
-                if states.contains(.failed) || states.contains(.notLoaded) {
-                    Button("Check for Package Updates") { Task { await model.retryPackageUpdateChecks() } }
-                        .disabled(model.isBusy || model.refreshedAt == nil)
-                }
-                if updates.isSubmitting, let current = operationStore.currentOperation {
-                    ProgressView { Text(current.context.stage.title) }
-                }
-                if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
-                if let result = updates.result { UpdatesResultView(result: result) }
-                if !visible.isEmpty {
-                    CatalogCardGrid(states: visible, isActionEnabled: !model.isBusy && !updates.isSubmitting) { card, action in
-                        if action == .update { Task { await updates.update(card) } }
+                    if updates.isSubmitting, let current = operationStore.currentOperation {
+                        ProgressView { Text(current.context.stage.title) }
                     }
-                } else {
-                    emptyContent(UpdatesContentState(states: states, totalCount: cards.count, visibleCount: visible.count))
+                    if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
+                    if let result = updates.result { UpdatesResultView(result: result) }
+                    if !visible.isEmpty {
+                        CatalogCardGrid(states: visible, isActionEnabled: !model.isBusy && !updates.isSubmitting) { card, action in
+                            if action == .update { Task { await updates.update(card) } }
+                        }
+                    } else {
+                        emptyContent(UpdatesContentState(states: states, totalCount: cards.count, visibleCount: visible.count))
+                    }
                 }
+                .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - 48),
+                       alignment: visible.isEmpty ? .center : .topLeading)
             }
-            .padding(24).frame(maxWidth: .infinity, alignment: .leading)
+            .contentMargins(24, for: .scrollContent)
         }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button("Update All…") { prepareAll(visible) }
-                    .disabled(model.isBusy || updates.isSubmitting || updates.confirmation != nil || updateCount == 0)
-            }
-        }
+        .focusedSceneValue(\.updatesTabs, CatalogScopeTabActions(selected: selectedTab) { selectedTab = $0 })
         .focusedSceneValue(\.packageUpdateActions, PackageUpdateActions(canUpdateAll: updateCount > 0 && !updates.isSubmitting && updates.confirmation == nil,
                                                                       updateAll: { prepareAll(visible) }, checkUpdates: { Task { await model.retryPackageUpdateChecks() } }))
+        .onChange(of: selectedTab) { _, tab in
+            if tab == .brew {
+                selectedTab = lastBrewTab
+            } else if tab.isBrew {
+                lastBrewTab = tab
+            }
+        }
         .sheet(item: Binding(get: { updates.confirmation }, set: { if $0 == nil { updates.dismissConfirmation() } })) { confirmation in
             UpdatesConfirmationSheet(confirmation: confirmation, updates: updates)
         }
         .task(id: model.refreshedAt) {
             if model.checkedOutdatedRefresh != model.refreshedAt { await model.refreshHomeBackground(after: model.refreshedAt) }
         }
-    }
-
-    private var currentScopeTitle: LocalizedStringResource {
-        scope == .homebrew && subtype != .all ? (subtype == .formula ? LocalizedStringResource("Homebrew · Formula") : LocalizedStringResource("Homebrew · Cask")) : scope.libraryTitle
     }
 
     private func prepareAll(_ cards: [CatalogCardState]) {
@@ -96,23 +83,29 @@ struct UpdatesView: View {
 
     @ViewBuilder private func providerStatus(_ name: LocalizedStringResource, state: HomePackageUpdateState) -> some View {
         let providerName = String(localized: name)
-        switch state {
-        case .notLoaded: Text("\(providerName): Update Check Not Started").foregroundStyle(.secondary)
-        case .loading: HStack { ProgressView().controlSize(.small); Text("\(providerName): Checking Updates…") }
-        case .failed: Label("\(providerName): Update Check Failed. Known versions are retained. Use Refresh or check again.", systemImage: "exclamationmark.circle")
-        case .available: EmptyView()
+        if state == .failed {
+            Label("\(providerName): Update Check Failed. Known versions are retained. Use Refresh or check again.", systemImage: "exclamationmark.circle")
         }
     }
 
     @ViewBuilder private func emptyContent(_ state: UpdatesContentState) -> some View {
         switch state {
         case .notLoaded: ContentUnavailableView("Updates Not Checked", systemImage: "questionmark.circle", description: Text("Use Refresh to read the local environment, then check for package updates."))
-        case .loading: ProgressView("Checking Package Updates…").frame(maxWidth: .infinity, minHeight: 180)
+        case .loading: EmptyView()
         case .failed: ContentUnavailableView("Updates Unavailable", systemImage: "exclamationmark.circle", description: Text("One or more update checks failed. Use Refresh or check again."))
         case .empty: ContentUnavailableView("No Package Updates", systemImage: "checkmark.circle", description: Text("The completed checks found no package updates in this scope."))
         case .noMatches: ContentUnavailableView("No Updates in This Scope", systemImage: "line.3.horizontal.decrease.circle", description: Text("Choose another scope to see the known version differences."))
         case .available: EmptyView()
         }
+    }
+}
+
+private struct UpdatesTabsKey: FocusedValueKey { typealias Value = CatalogScopeTabActions }
+
+extension FocusedValues {
+    var updatesTabs: CatalogScopeTabActions? {
+        get { self[UpdatesTabsKey.self] }
+        set { self[UpdatesTabsKey.self] = newValue }
     }
 }
 

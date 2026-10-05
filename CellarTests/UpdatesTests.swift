@@ -48,7 +48,7 @@ final class UpdatesTests: XCTestCase {
         XCTAssertNil(updates.error)
         XCTAssertNil(updates.result)
         XCTAssertEqual(model.operationStore.activeOperationCount, 1)
-        model.operationStore.cancelActiveTask()
+        task.cancel()
         await task.value
         XCTAssertEqual(updates.result?.groups.first?.outcome.itemOutcomes.map(\.status), [.cancelled])
         let names = await provider.executedNames()
@@ -111,7 +111,7 @@ final class UpdatesTests: XCTestCase {
         XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: store.hasActiveOperations), .terminateCancel)
         do { _ = try await coordinator.prepare(groupIntents()[0]); XCTFail("Other writes must be excluded") }
         catch { XCTAssertEqual(error as? BatchOperationError, .busy) }
-        store.cancelActiveTask()
+        task.cancel()
         let result = try await task.value
         XCTAssertEqual(result.groups.flatMap { $0.outcome.itemOutcomes }.map(\.status), [.succeeded, .succeeded, .cancelled, .cancelled])
         let refreshes = await provider.refreshCount()
@@ -128,7 +128,7 @@ final class UpdatesTests: XCTestCase {
         let plan = try await coordinator.prepareUpdates([groups[2], groups[0], groups[1]])
         let task = Task { try await coordinator.executeUpdates(plan) }
         await fulfillment(of: [started], timeout: 3)
-        store.cancelActiveTask()
+        task.cancel()
         let result = try await task.value
         XCTAssertEqual(result.groups.flatMap { $0.outcome.itemOutcomes }.map(\.status), [.cancelled, .cancelled, .cancelled])
         XCTAssertEqual(result.groups.map(\.refreshStatus), [.succeeded, .notNeeded, .notNeeded])
@@ -147,7 +147,6 @@ final class UpdatesTests: XCTestCase {
         let task = Task { try await coordinator.executeUpdates(plan) }
         await fulfillment(of: [started], timeout: 3)
         XCTAssertEqual(store.activeOperationCount, 1)
-        XCTAssertNil(store.activeTask)
         XCTAssertEqual(store.currentOperation?.context.stage, .reconciling)
         XCTAssertEqual(store.currentOperation?.context.targets, try groupIntents().flatMap(\.items).map(\.displayIdentifier))
         XCTAssertEqual(coordinator.activeIntents, try groupIntents())
@@ -228,7 +227,7 @@ final class UpdatesTests: XCTestCase {
         let task = Task { await updates.prepareAll(model.updateCards, scope: .npm, subtype: .all) }
         await fulfillment(of: [started], timeout: 3)
         XCTAssertEqual(model.operationStore.activeOperationCount, 1)
-        model.operationStore.cancelActiveTask()
+        task.cancel()
         await task.value
         XCTAssertNil(updates.confirmation)
         XCTAssertNil(updates.error)
@@ -349,8 +348,8 @@ final class UpdatesTests: XCTestCase {
         XCTAssertTrue(source.contains("CatalogCardGrid"))
         XCTAssertTrue(source.contains(".focusedSceneValue"))
         for forbidden in ["NavigationLink", "onTapGesture", "Process(", "brew update", "planHomebrewUpdate", "Timer", "Task.sleep"] { XCTAssertFalse(source.contains(forbidden), forbidden) }
-        for (language, expected) in [("en", "Update All…"), ("zh-Hans", "更新全部…"), ("zh-Hant", "更新全部…")] {
-            var resource = LocalizedStringResource("Update All…")
+        for (language, expected) in [("en", "Update All"), ("zh-Hans", "更新全部"), ("zh-Hant", "更新全部")] {
+            var resource = LocalizedStringResource("Update All")
             resource.locale = Locale(identifier: language)
             XCTAssertEqual(String(localized: resource), expected)
         }

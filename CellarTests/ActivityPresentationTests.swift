@@ -119,14 +119,12 @@ final class ActivityPresentationTests: XCTestCase {
                 throw CancellationError()
             } as Void
         }
-        while store.activeTask == nil { await Task.yield() }
-        store.cancelActiveTask()
+        while store.currentOperation?.completed != 1 { await Task.yield() }
         XCTAssertEqual(store.currentOperation?.context, context)
-        XCTAssertEqual(store.activeTask?.cancellationRequested, true)
+        task.cancel()
         _ = try? await task.value
         XCTAssertEqual(store.currentOperation?.completed, 1)
         XCTAssertEqual(store.currentOperation?.total, 2)
-        XCTAssertNil(store.activeTask)
         store.end(id)
         XCTAssertNil(store.currentOperation)
     }

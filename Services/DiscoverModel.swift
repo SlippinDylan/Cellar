@@ -1,4 +1,3 @@
-import Combine
 import Foundation
 
 struct DiscoverSearchDependencies: Sendable {
@@ -34,18 +33,10 @@ final class DiscoverSearchModel: ObservableObject {
     private let operationStore: OperationStore
     private var latestRequest: UUID?
     private var owner: (id: UUID, task: Task<Void, Never>)?
-    private var cancellationObserver: AnyCancellable?
 
     init(dependencies: DiscoverSearchDependencies, operationStore: OperationStore) {
         self.dependencies = dependencies
         self.operationStore = operationStore
-        cancellationObserver = operationStore.$activeTask.sink { [weak self] task in
-            guard let self, let task, task.id == self.owner?.id, task.cancellationRequested else { return }
-            // The menu's Cancel also withdraws a replacement waiting for old work to exit.
-            self.latestRequest = nil
-            self.owner?.task.cancel()
-            self.state = .cancelled
-        }
     }
 
     func invalidate() {

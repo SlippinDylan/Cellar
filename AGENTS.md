@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 采用任务导向的 Home、Library、Discover、Updates、Tools 和 Activity，统一组织 Homebrew Formula/Cask、npm 全局包、Node/nvm 与终端配置，同时保留 provider 身份和安全边界。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit；现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
+Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 采用任务导向的 Home、Library、Discover、Tools 和 Activity，统一组织 Homebrew Formula/Cask、npm 全局包、Node/nvm 与终端配置，软件更新整合在 Library 内，同时保留 provider 身份和安全边界。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit；现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
 
 [产品需求](docs/requirements/product-requirements.md)是 1.0 用户行为和安全边界的唯一权威来源。1.0 源码已实现，尚未公开发布；未执行的真实环境与 UI 验收见人工清单。[架构文档](docs/architecture/macos-app-architecture.md)描述当前实现，构建和验证见[开发指南](docs/development.md)。
 
@@ -19,7 +19,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 ## 仓库地图
 
 - `CellarApp.swift`：SwiftUI Scene、AppKit delegate 和退出策略。
-- `Features/`：Home、Library、Discover、Updates、Tools、Activity 与主窗口 Settings；保留的旧 provider 页面不进入主导航。
+- `Features/`：Home、Library（包含软件更新）、Discover、Tools、Activity 与主窗口 Settings；保留的旧 provider 页面不进入主导航。
 - `Services/`：App 状态、刷新编排、任务登记和系统探测。
 - `Models/`：页面状态、Manager JSON DTO、操作计划与结果模型。
 - `Bridge/`：`Process`、受控环境、Manager 快照安装和 JSON 解码。
@@ -44,8 +44,8 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。
 - Node 通过 Manager schema v1 读取状态，并仅在产品确认规则满足后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`；npm 搜索与操作始终绑定明确 Node 环境。
 - Shell 通过 App 专用 schema v1 adapter 查询和修改 Oh My Zsh、插件、主题及受限 Zsh 文件布局；不得驱动交互菜单或执行协议外的 Shell 命令。
-- 主导航固定为 Home、Library、Discover、Updates、Tools；侧边栏左下方依次为 Settings 和 Activity，Activity 固定在最底部。Settings 是主窗口 detail 页面，包含 General、Sources、Terminal、About；不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
-- 卡片本体不导航，只显示关键信息、一个主动作和系统浏览器网站链接。普通 UI 不显示原始命令或内部计划术语。
+- 主导航固定为 Home、Library、Discover、Tools；软件更新与待更新筛选位于 Library；侧边栏左下方依次为 Settings 和 Activity，Activity 固定在最底部。Settings 是主窗口 detail 页面，包含 General、Sources、Terminal、About；不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
+- 卡片本体不导航，只显示关键信息和系统浏览器网站链接。Library 卡片提供单项更新与卸载，Discover 卡片保留状态相关主动作。普通 UI 不显示原始命令或内部计划术语。
 - Activity 最多持久化 100 条去敏结构化摘要；原始输出只保留在当前会话诊断或既有受控日志。运行中任务不提供用户手动停止；内部取消只用于任务所有者结束、超时和生命周期回收。
 - 用户可见字符串进入 String Catalog，支持 English、简体中文、繁体中文和默认 Follow System。
 

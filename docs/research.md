@@ -131,6 +131,8 @@ Command Line Tools 则直接采用 Apple 文档中的 `xcode-select --install` �
 | macOS Sidebar 应使用稳定的系统 selection；固定底部 Activity 不向 Sidebar `List` 注入树外 selection | Apple 官方与本机崩溃证据 | [HIG: Sidebars](https://developer.apple.com/design/human-interface-guidelines/sidebars)；macOS 26.7 崩溃栈为 `NSOutlineView → OutlineListCoordinator → AttributeGraph` |
 | Liquid Glass 是导航和交互控件层；标准 toolbar、sheet、button 和 segmented control 优先使用系统适配，内容卡、表格行和日志不铺满自定义玻璃 | Apple 官方 | [Adopting Liquid Glass](https://developer.apple.com/documentation/technologyoverviews/adopting-liquid-glass)、[HIG: Toolbars](https://developer.apple.com/design/human-interface-guidelines/toolbars) |
 | 进度只显示实际可证明的阶段或数量；无可靠百分比时使用不定 `ProgressView`，不使用常驻高帧率 shimmer | Apple 官方与项目推论 | [HIG: Progress indicators](https://developer.apple.com/design/human-interface-guidelines/progress-indicators)、[`ProgressView`](https://developer.apple.com/documentation/swiftui/progressview) |
+| `frame` 支持最小、理想与最大宽度；`NSViewRepresentable.sizeThatFits` 可以按布局提出的尺寸返回原生视图大小，适用于可压缩的工具栏搜索字段 | Apple 官方 | [`frame`](https://developer.apple.com/documentation/swiftui/view/frame(minwidth:idealwidth:maxwidth:minheight:idealheight:maxheight:alignment:))、[`sizeThatFits`](https://developer.apple.com/documentation/swiftui/nsviewrepresentable/sizethatfits(_:nsview:context:)) |
+| `.lineLimit(2, reservesSpace: true)` 保留两行文本所需高度；macOS `.navigation` ControlGroup 提供带分隔的瞬时分段按钮组，不需要自绘玻璃胶囊 | Apple 官方 | [`lineLimit`](https://developer.apple.com/documentation/swiftui/view/linelimit(_:reservesspace:))、[`navigation`](https://developer.apple.com/documentation/swiftui/controlgroupstyle/navigation) |
 
 ## Sparkle 签名密钥
 

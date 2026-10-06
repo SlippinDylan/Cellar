@@ -17,43 +17,51 @@
 - [ ] Dock 显示 Cellar；没有 `MenuBarExtra` 或后台常驻。
 - [ ] 全部主页面采用同一原生工具栏与系统自动背景/滚动边缘，不再强制固定背景或硬分隔；分类在左、动作靠右，正文铺满内容栏，滚动指示器不随内容留白缩进。
 - [ ] Tools 分类与 Settings 四个 pane 均在工具栏切换，内容区不重复显示分类条；最近选择、Command-Comma 和菜单 About 路由仍正确。
-- [ ] 主侧边栏顺序为 Home、Library、Discover、Updates、Tools；左下方依次为 Settings 和 Activity，Activity 固定在最底部。
+- [ ] 主侧边栏顺序为 Home、Library、Discover、Tools，软件更新功能位于 Library；左下方依次为 Settings 和 Activity，Activity 固定在最底部。
 - [ ] 启动、手动刷新、软件更新检查、setup recheck 和 Runtime 版本读取等 refresh 任务只在右上角刷新按钮内显示系统进度动画，页面内容区不重复显示刷新动画或文字。
 - [ ] Settings 是主窗口 detail 页面，含 General、Sources、Terminal、About；点击侧边栏、App 菜单或 Command-Comma 都选择该页面，不创建独立设置窗口；菜单重复调用复用主窗口，主窗口不存在时正确重建。
 - [ ] 关闭最后窗口和无任务时 `Command-Q` 正常退出。
 - [ ] 活动任务期间退出请求被拒绝；任务自行结束后可以退出，界面不提供手动停止。
 - [ ] App 退出后没有 Cellar 启动后遗留的 brew、npm、bash 或 zsh 进程。
 
+- [ ] Home、Tools 五个分类、Settings 四个 pane 和 Activity 的主内容区边距及其他区块间距均为 16 点，卡片间距保持 8 点，与 Library/Discover 一致；表单字段、Section 标题、操作与键盘焦点正常显示。
+
 ## Home
+
+- [ ] 首页工具栏左上角显示本地化页面标题，右侧保留刷新按钮；标题无按钮背景。
 
 - [ ] Home 按 Homebrew、Node、终端环境的顺序显示三个单层数据卡片，不显示路径、配置文件或 Manager 技术摘要。
 - [ ] 本地状态先出现，线上版本随后异步合并，不阻塞首屏。
-- [ ] Homebrew 卡片显示 Homebrew 版本、Formula/Cask 与软件更新数量；官网入口是卡片内 Homebrew 字段标题后的统一小号填充式网站箭头，不显示检查时间或重复详情。
+- [ ] Homebrew 卡片显示 Homebrew 版本、Formula/Cask 与软件更新数量；官网入口是卡片内 Homebrew 字段标题后的统一小号蓝色网站指南针图标，不显示检查时间或重复详情。
 - [ ] Node 卡片以两行显示 Node/npm 版本、当前环境全局包与软件更新数量、nvm 状态和 nvm default，不显示检查时间或具体更新名称。
 - [ ] 终端环境卡片显示 Command Line Tools 安装状态、Zsh 版本和 Oh My Zsh 安装状态；插件、主题和路径仍只在 Settings > Terminal 显示。
 - [ ] 首次读取前三张卡片的完整字段与图标立即可见，未知值显示 `—`；后续刷新保留旧值并原位更新，不清空卡片。
 - [ ] 只有线上版本明确更高时显示“当前版本 → 最新版本”及其后的圆形向上箭头；单个线上检查失败时保留本机版本，不伪装为需要更新或已经最新。
 - [ ] 缺少 CLT 或 Homebrew 时 Home 提供必要安装动作；缺少 nvm 时 Home 只显示状态，安装指引仅保留在 Tools > Environment setup。
 
+- [ ] Discover 默认选择 All，范围控件顺序为 All、Formula、Cask、NPM；All 同时搜索三种来源，保留同名包的类型和 npm 环境／Registry 绑定。某来源缺失或失败时保留其他来源结果并显示提示；批量安装继续选择单一类型。
+
 ## 卡片与网站
 
-- [ ] Library、Discover 和 Updates 使用响应式卡片；卡片 body 无导航动作。
-- [ ] 三页卡片统一为“名称 + Formula/Cask/NPM Tag + 小号填充式网站箭头”，没有名称前图标、第二行类型或底部网站按钮；长名称截断后 Tag 与链接仍可见。
+- [ ] Library 和 Discover 使用响应式卡片；卡片左右、上下间距保持 8 点，内容区四周边距为 16 点；卡片 body 无导航动作。
+- [ ] 软件卡片第一行显示稍大的名称与操作按钮，第二行显示字号不变的灰色简介并收紧与名称的间距，简介统一预留两行高度，缺少简介时直接留白，不显示替代文案；第三行按“Formula/Cask/NPM Tag + 网站图标 + 版本号 具体版本”排列；网站图标与名称同字号，不使用分割线或简介小卡片背景；版本字号稍大，右上角操作按钮稍大，外层为 Liquid Glass 胶囊；未悬停时内部透明，鼠标移入或按下时只有对应按钮显示浅色背景，禁用按钮不显示悬停背景；Discover 安装按钮使用 `arrowshape.down.circle`，尺寸、玻璃材质与悬停反馈和软件库一致；任务状态显示在元信息行右侧，底部不预留独立状态行；验证无简介、有简介、无操作按钮及执行中的卡片全部等高；不重复显示 Node/npm 环境版本；长名称和版本转换无重叠。
 - [ ] 已安装卡片通常只显示当前版本；明确需要更新且有目标版本时显示“当前 → 新版本”与圆形向上箭头；不重复显示可用版本和最新状态行。发现中未安装的软件仍显示待安装版本。
 - [ ] 网站链接通过系统默认浏览器打开正确 URL；键盘可以单独聚焦主动作和链接。
-- [ ] 首页、目录卡片、Tools 安装指引与 About 开源入口均使用白色 `arrow.turn.right.up` 加蓝色实心圆角矩形；文字型链接保留文字，图标型链接有辅助功能名称和悬停说明。
-- [ ] 卡片不读取或下载软件图标；类型 Tag 不可点击，网站箭头独立可聚焦。
+- [ ] 首页、目录卡片、Tools 安装指引与 About 开源入口只显示蓝色 `safari` 网站指南针，不显示箭头、实心底块或文字标签。符号大小匹配相邻文字，透明点击区域可用，键盘聚焦、辅助功能名称和悬停说明保留。
+- [ ] 卡片不读取或下载软件图标；类型 Tag 不可点击，网站图标独立可聚焦。
 - [ ] loading、empty、offline、partial failure、behind/current/ahead/unknown 有文字或辅助功能值，不只靠颜色。
 
 ## Library
 
-- [ ] 软件库不显示页面标题或 scope 标题；原生系统 Tab 控件位于窗口 toolbar 左上角且没有空白尾部。默认显示 All、Brew、NPM，选择 Brew 后同一行按内容变宽并在 Brew 后完整显示 All、Formula、Cask，选择 All/NPM 后收起；右侧搜索框始终独立于刷新按钮，并在两种状态间保持同一宽度和可见性。
+- [ ] 软件库不显示页面标题或 scope 标题；原生系统 Tab 控件位于窗口 toolbar 左上角且没有空白尾部。默认显示 All、Brew、NPM，选择 Brew 后同一行按内容变宽并在 Brew 后完整显示 All、Formula、Cask，选择 All/NPM 后收起；右侧搜索框始终独立于 Tab 与动作按钮，空间充足时为 380 点，空间不足时可压缩。
 - [ ] All、Homebrew、npm scope 与 Formula/Cask subtype 的内容和数量正确。
 - [ ] 本地搜索/筛选不发网络请求，长列表滚动和筛选保持响应。
 - [ ] 默认 1080 点窗口且侧边栏可见时每行两张卡片，放大窗口后自动增加至三列或更多，卡片保持合理宽度且无水平溢出。
-- [ ] 软件库在 Brew 展开和收起两种状态下，Tab 始终靠左，刷新按钮与 360 点搜索框一起靠右。
+- [ ] 软件库类型与单段待更新 Tab 靠左；待更新可点击选中、再次点击取消，切换类型保留选中状态，不显示第二个 All；待更新具有独立 Tab 背景，与类型组有间隔，不连成同一个胶囊。刷新与搜索靠右；刷新和 Update All 分为两个独立按钮，只有待更新选中时显示 Update All，无更新目标或忙碌时禁用，菜单同步禁用；更新完成保持选中并显示真实空状态。Brew 展开且选中待更新、三种语言及侧边栏最宽时，搜索框始终显示，宽度在 140～380 点之间动态缩放，控件不合并。
+- [ ] 类型、子类型、待更新开关和搜索按交集筛选；查询筛出的单个软件执行批量更新时不会更新其他名称、类型或 Node 环境。
+- [ ] 每张安装卡片右上角为共享胶囊内带分隔的更新／卸载按钮；只有可靠可更新目标允许更新，卸载仍先确认。
 - [ ] 顶部没有重复的 Node 环境说明；主滚动区域覆盖工具栏下方的内容栏，滚动条位于内容栏右缘，卡片、提示和卸载结果一起滚动，卡片保留内容边距。
-- [ ] 每个 npm 包标明其 Node 环境；切换会话 Node 后不会把两个环境的包合并。
+- [ ] npm 卡片不重复显示 Node/npm 环境版本，包身份与操作仍绑定对应 Node 环境；切换会话 Node 后不会把两个环境的包合并。
 - [ ] 单项卸载显示任务专用确认，取消时不启动外部进程。
 - [ ] Library 没有管理模式、批量选择或批量卸载；每次卸载只接受一个卡片目标并显示任务专用确认。
 - [ ] 单项卸载结果正确显示，不宣称事务回滚。
@@ -65,21 +73,23 @@
 - [ ] 页面整体滚动且滚动条位于内容栏右缘；默认空状态水平、垂直居中，结果卡从顶部排列；内容区没有 Registry/Node 摘要、搜索按钮或 50 项结果提示。
 - [ ] 空查询不下载完整目录；输入查询后结果有界，新查询或离开页面会安全结束旧查询，界面不提供手动停止。
 - [ ] Homebrew Formula、Cask 与 npm Registry scope 清楚可见，同名 Formula/Cask 不混淆。
-- [ ] npm 结果卡保留目标 Node 环境，批量安装确认继续显示实际 Registry 与目标；安装只作用于该环境的全局 package。
+- [ ] npm 结果卡的身份保留目标 Node 环境，卡片不重复显示环境版本，批量安装确认继续显示实际 Registry 与目标；安装只作用于该环境的全局 package。
 - [ ] 单项安装从卡片开始，不出现通用“生成/执行计划”页面；失败后读取真实状态。
 - [ ] 批量输入一行一项，正确去空、去重；超过 100 项时拒绝提交。
 - [ ] 一个 batch 不能混合 Formula/Cask/npm；预览和一次确认后顺序执行并保留 per-item outcome。
 
-## Updates
+## 软件库中的更新
 
-- [ ] 工具栏无“更新”标题；左侧 Tab 与软件库同款，默认 All/Brew/NPM，选 Brew 后同一行展开 All/Formula/Cask，离开后收起并保留子范围；刷新和 Update All 靠右。
+- [ ] 侧边栏和 Go 菜单没有独立 Updates 入口；在 Library 切换 Pending Updates 查看待更新项，工具栏 Update All 与菜单检查入口都作用于软件库。
 - [ ] 空状态在内容区水平、垂直居中，结果卡从顶部排列，页面整体滚动且滚动条位于右缘；内容区没有重复范围标题、更新数量、Node 环境摘要和检查按钮，失败提示与执行结果仍可见。
 - [ ] All、Homebrew、npm 与 Formula/Cask scope 正确过滤卡片。
 - [ ] current、available 与 behind/current/ahead/unknown 对真实版本关系表达正确。
 - [ ] npm ahead/unknown 没有 update 或 downgrade 动作。
 - [ ] 单项更新从卡片开始；Update All 只作用于当前可见 scope。
 - [ ] All scope 中 provider/type 仍拆为 typed sequential operation，没有混合命令。
-- [ ] 批量确认、项目失败后继续、任务运行至完成、partial completion 和 post-refresh 都正确。
+- [ ] 批量确认捕获当时筛选后的目标；切换 Tab、状态或搜索后确认不会扩大原批次。项目失败后继续、任务运行至完成、partial completion 和 post-refresh 都正确。
+- [ ] 跨 Formula／Cask／npm 更新时后续组显示排队，当前项显示执行阶段；最终复查结束前相关卡片保持校验状态。
+- [ ] 检查中、未检查或失败不被显示成“没有更新”；失败后普通 Library 保留已安装软件与版本，更新按钮不可用。
 - [ ] `brew update` 只在 Tools 作为 metadata 动作，不被查看、卸载或 package update 隐式触发。
 
 ## Environment setup

@@ -16,8 +16,8 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责主�
 
 当前源码已经实现：
 
-- Home/Library/Discover/Updates/Tools 与底部 Settings/Activity 的原生任务导航，Settings 主窗口页面中的 General/Sources/Terminal/About 四个 pane；
-- Home 已使用单层数据卡片依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、可见 scope、本地搜索和任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Updates 已接入可见范围内的直接单项更新与一次确认的批量更新；Tools 已接入环境安装、Runtime、Project、Diagnostics、Maintenance 五类任务，Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；Activity 已接入持久语义历史、当前任务、筛选、搜索、复制与显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
+- Home/Library/Discover/Tools 与底部 Settings/Activity 的原生任务导航，Settings 主窗口页面中的 General/Sources/Terminal/About 四个 pane；
+- Home 已使用单层数据卡片依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、类型／待更新／搜索交集筛选、单项和批量更新、任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；Tools 已接入环境安装、Runtime、Project、Diagnostics、Maintenance 五类任务，Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；Activity 已接入持久语义历史、当前任务、筛选、搜索、复制与显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - 全部可达页面的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条诊断 Activity；
@@ -54,7 +54,7 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 `CellarApp` 只提供绑定 `MainWindowIdentity.main` 的 typed-value `WindowGroup`，不声明独立 `Settings` scene。主窗口默认及最小内容尺寸均为 1080 × 720 点，通过内容最小尺寸约束保持可放大；不设置 `LSUIElement`，不声明 `MenuBarExtra`。
 
-主 `NavigationSplitView` 的主导航包含 Home、Library、Discover、Updates、Tools；Settings 和 Activity 通过 Sidebar 的底部 safe-area bar 固定在左下方。Settings 是 `AppDestination.settings`，detail 区域复用 `SettingsView`，共享同一 `AppModel`、`OperationStore` 与 updater controller。App 菜单和 Command-Comma 经 `AppModel.showDestination` 选择 Settings；About App 命令经一次性 pane 意图选择 Settings > About。两者都以固定主窗口 identity 调用 `openWindow(id:value:)`，复用或重建主窗口。
+主 `NavigationSplitView` 的主导航包含 Home、Library、Discover、Tools；Settings 和 Activity 通过 Sidebar 的底部 safe-area bar 固定在左下方。Settings 是 `AppDestination.settings`，detail 区域复用 `SettingsView`，共享同一 `AppModel`、`OperationStore` 与 updater controller。App 菜单和 Command-Comma 经 `AppModel.showDestination` 选择 Settings；About App 命令经一次性 pane 意图选择 Settings > About。两者都以固定主窗口 identity 调用 `openWindow(id:value:)`，复用或重建主窗口。
 
 `OperationStore` 是退出保护的事实来源：
 
@@ -65,9 +65,9 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 菜单命令与 toolbar 动作共享同一 intent，不复制业务执行路径。
 
-全部主页面统一移除系统 toolbar title item，使用弹性 spacer 将动作推到右侧。工具栏背景与滚动边缘采用系统自动行为，不设置强制 `.visible` 或 `.hard`，也不添加自定义 hover 背景。Tools 与 Settings 共用 `ToolbarCategoryPicker` 的原生 `NSSegmentedControl`；Home/Library/Discover/Updates/About 的滚动容器铺满正文，留白通过 scroll-content margins 应用于内容。Form/Table 保留自己的滚动，不套外层 ScrollView；Activity 保留 VSplitView 的表格和详情分区。
+全部主页面统一移除系统 toolbar title item；Home 在 navigation 位置显示本地化的 headline 页面标题，并隐藏该文字项的共享按钮背景。使用弹性 spacer 将动作推到右侧。工具栏背景与滚动边缘采用系统自动行为，不设置强制 `.visible` 或 `.hard`，也不添加自定义 hover 背景。Tools 与 Settings 共用 `ToolbarCategoryPicker` 的原生 `NSSegmentedControl`；Home/Library/Discover/About 的滚动容器铺满正文，留白通过 scroll-content margins 应用于内容。Tools/Settings 由共享 AppFormStyle 提供单个 ScrollView，内部 columns Form 只排列字段；Table 保留原生滚动，Activity 保留 VSplitView 的表格和详情分区。
 
-当前 shell 的刷新进入 `AppModel.performShellAction`，不定义停止 intent；Go、Settings 和 Activity 的主窗口呈现共享可注入的 `AppModel.showDestination`，Activity 反馈保留 `showActivity` 入口。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，主窗口不存在时创建，重复请求不新增窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library、Discover 与 Activity 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Batch Install 与 Activity 菜单和 toolbar 共用各自的动作。Activity 表格的 Command-C 只复制当前选中的语义摘要，详情和搜索字段保留系统文字复制。尚无实际搜索内容的页面不提供搜索命令。Settings 通过 `@AppStorage("settings.pane")` 保存最近 pane，其 Binding 经 focused scene value 交给根 toolbar 的原生分段控件；Tools 分类同样在根 toolbar 切换，直接绑定 App 状态。正文分别直接显示对应原生 Form，不附加整个容器的外侧留白。Activity 复用 360 点 `CatalogToolbarSearchField`，查询与聚焦请求由页面提供，表格和详情继续分别滚动；About 保留 Sparkle 检查、版本、更新通道和开源入口。
+当前 shell 的刷新进入 `AppModel.performShellAction`，不定义停止 intent；Go、Settings 和 Activity 的主窗口呈现共享可注入的 `AppModel.showDestination`，Activity 反馈保留 `showActivity` 入口。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，主窗口不存在时创建，重复请求不新增窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library、Discover 与 Activity 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Batch Install 与 Activity 菜单和 toolbar 共用各自的动作。Activity 表格的 Command-C 只复制当前选中的语义摘要，详情和搜索字段保留系统文字复制。尚无实际搜索内容的页面不提供搜索命令。Settings 通过 `@AppStorage("settings.pane")` 保存最近 pane，其 Binding 经 focused scene value 交给根 toolbar 的原生分段控件；Tools 分类同样在根 toolbar 切换，直接绑定 App 状态。Tools 与 Settings 的正文使用共享 AppFormStyle，在滚动内容内应用统一边距。Activity 复用 360 点 `CatalogToolbarSearchField`，查询与聚焦请求由页面提供，表格和详情继续分别滚动；About 保留 Sparkle 检查、版本、更新通道和开源入口。
 
 ## 状态与刷新
 
@@ -93,13 +93,15 @@ Home 的本机读取跳过 Homebrew/npm outdated 查询，先发布版本、清�
 
 刷新与写操作不使用轮询。独立 IO 可以有界并发；批量 mutation 必须顺序执行。状态模型区分 not loaded、loading、available、partial failure 和 unavailable，不能用空集合替代失败。
 
+主窗口各模块的内容边距及其他区块间距共用 `AppLayout.spacing`（16 点），卡片间距共用 `AppLayout.cardSpacing`（8 点）。Home 的摘要分组、About 和 Activity 使用同一基准；Tools 与 Settings 的表单通过 `AppFormStyle` 提取原有 Section，在 16 点内容边距、8 点卡片间距的 ScrollView 内排列，字段继续使用系统 columns Form。确认 sheet 与诊断窗口保持各自布局。
+
 ## Catalog 与展示模型
 
-网站入口统一由 `WebsiteLink` 承载系统 `Link`，图标为白色 `arrow.turn.right.up` 和蓝色实心圆角矩形；首页与目录使用图标入口，Tools 指引和 About 开源入口保留文字。URL、系统浏览器打开方式和辅助功能名称沿用调用方的原契约，不增加图标网络请求。
+网站入口统一由 `WebsiteLink` 承载系统 `Link`，只显示蓝色 `safari` 指南针图标，不附加背景、边框或文字标签。符号继承调用方字体；首页标题使用 caption 字号，目录卡片网站图标与软件包名称使用 title3 semibold 字体，Tools 与 About 随正文字体。至少 20 点的透明点击区域、原悬停提示和辅助功能名称保留；URL、系统浏览器打开方式和安全边界不变，不增加图标网络请求。
 
-共享卡片模型只包含展示所需字段和 typed action：provider/type、稳定 identity、名称、两行说明、current/available version、semantic status、website URL、Node environment、progress 和一个 primary action。
+共享卡片模型保留 provider/type、稳定 identity、名称、current/available version、semantic status、website URL、Node environment、progress 和 typed primary action。Library 的卸载卡片与 canonical update card 分别保留原操作契约，按钮组按动作传递对应卡片，不把卸载卡片伪装为更新目标。
 
-Library/Discover/Updates 共用 `CatalogCardView`。标题行直接展示名称、不可点击的类型文字 Tag 和小号蓝色 website link，不使用软件图标或重复类型行。版本行优先展示当前版本，只有已安装且明确 behind、可用版本存在时显示“当前 → 新版本”与圆形更新箭头；未安装的 Discover 结果展示待安装版本。其他状态不显示重复状态行，但继续作为 accessibility value 与更新资格依据。Node 环境、两行说明、执行进度和主动作保留。
+Library/Discover 共用 `CatalogCardView`，网格横向、纵向间距使用 `AppLayout.cardSpacing`（8 点），滚动内容四周边距使用 `AppLayout.spacing`（16 点）。头部单行排列 title3 semibold 名称与操作按钮；头部固定为 32 点高，卡片内容间距为 8 点。第二行显示 callout 字号、secondary 颜色的无独立背景简介；第三行依次排列类型 Tag、网站链接和带“版本号 ”前缀的版本，不使用分割线。简介用 `.lineLimit(2, reservesSpace: true)` 并固定为 32 点高，缺少简介时直接留白且对辅助功能隐藏空文本。元信息行固定为 20 点高，任务状态在该行右侧显示，不预留独立尾部，保证有无简介、操作按钮或任务进度时所有卡片等高。版本使用 callout 字号，不重复显示 Node/npm 环境版本。Library 右上角使用 HStack 与系统 `.glassEffect(.regular, in: Capsule())` 提供更新／卸载按钮组；按钮使用 28 点点击区域，组内边距 2 点，私有 ButtonStyle 仅为悬停或按下的启用按钮显示次要颜色背景；更新图标为 `arrowshape.up.circle`，无更新资格时只显示卸载，Discover 的单项安装使用 `arrowshape.down.circle` 并共用同一 ButtonStyle、28 点点击区域与胶囊形 Liquid Glass 材质；只有 behind 显示版本箭头和更新资格，其他状态保留辅助功能语义。
 
 共享模型不丢失以下不变量：
 
@@ -109,13 +111,13 @@ Library/Discover/Updates 共用 `CatalogCardView`。标题行直接展示名称�
 - website URL 只交给系统打开，不在 App 内嵌浏览器；
 - 类型通过 Formula/Cask/NPM 文字 Tag 表达，卡片不读取或下载软件图标。
 
-Local library 从本机 provider 状态派生。Discover 通过官方 Homebrew 数据/受控 `brew` 查询和 npm Registry search 获取有界结果。Home 与 Updates 把本机状态和异步线上结果合并，但保持不同错误来源。
+Local library 从本机 provider 状态派生。Discover 通过官方 Homebrew 数据/受控 `brew` 查询和 npm Registry search 获取有界结果。Home 与 Library 把本机状态和异步线上结果合并，但保持不同错误来源。
 
-Library 通过 `.toolbar(removing: .title)` 删除系统 title item；不能使用空标题或省略 `navigationTitle` 代替，否则系统仍会在 toolbar 中保留标题布局空间或回退显示窗口标题。窗口 toolbar 左上角使用自动系统样式的原生 `NSSegmentedControl`，与 Updates 共用 `CatalogToolbarScopeTabs`；该控件只承载 Tab，不嵌入空 `TabView` 内容；收起态单行呈现 All/Brew/NPM，选择 Brew 时切换 toolbar item identity，在同一行插入 All/Formula/Cask，并使用 fit distribution 按标题内容重新计算宽度。右侧搜索由根 toolbar 使用普通 toolbar item 承载 360 点固定宽度的原生 `NSSearchField`，查询绑定与聚焦请求通过 focused scene context 来自 Library；搜索项与动态 Tab、刷新按钮在同一个 toolbar builder 中统一编排，在 Tab 与刷新按钮之间插入弹性 toolbar spacer，将刷新按钮和搜索框一起推到右侧；两者之间保留固定 spacer 分组。Command-F 仍通过 focused scene intent 聚焦该字段。工具栏下方由单个主 `ScrollView` 占满内容栏，卡片、提示与卸载结果在内部排列；`contentMargins(24, for: .scrollContent)` 只给内容留白，不缩进滚动容器和滚动条。页面顶部不重复显示 Node 环境，npm 卡片仍保留环境标识。筛选状态与卡片内容继续由 SwiftUI View 持有。所有筛选只处理已有快照，不发起网络或完整目录请求。npm identity 保留当前受控 Node executable 身份和 Node/npm 版本；未完成或失败的 enrichment 显示 unknown。Library 不提供管理模式或批量卸载；每次卸载只接受一个卡片目标，复用 typed coordinator，并在任务专用确认之后执行。Library 的 Cask 卸载仅提供 standard；artifact 在确认前展示、执行后报告，不由 App 删除。
+Library 移除系统 toolbar title，左侧沿用 `CatalogToolbarScopeTabs` 的原生 All/Brew/NPM 与展开的 All/Formula/Cask，并通过 `LibraryToolbarUpdateFilter` 提供独立单段 Pending Updates Tab，与类型组使用同一原生 `NSSegmentedControl` 组件。类型组与待更新均使用原生 `.automatic` 分段样式和 `.selectOne` 选择模式，保留系统工具栏背景；两组 item 和中间固定 spacer 均使用 `.automatic` placement，按普通工具栏项从左到右排列，避免导航区对项的特殊定位。不得隐藏两组背景或添加自绘材质。待更新点击时切换绑定的 `LibraryUpdateFilter`，同步原生选中状态，支持再次取消。Library 查询文本与搜索聚焦请求由 `AppRootView` 持有，`LibraryView` 接收 Binding，搜索项仅按当前页面是否为 Library 创建，不依赖可选 focused scene 搜索上下文。`onGeometryChange` 读取正文可用宽度及类型、待更新控件的实际宽度；右侧刷新、更新全部和搜索置于同一个 HStack 工具栏项，扣除左侧控件及系统间隔预算后分配整个容器宽度。按钮保持内容尺寸，搜索以 140～380 点范围承接剩余空间，统一布局避免多个 toolbar item 在切换时尺寸更新不同步。右侧容器隐藏共享背景，两个按钮使用系统 glass 样式保持独立。Library 与 Discover 的搜索框自身应用系统 `.glassEffect(.regular, in: Capsule())`，保证空输入、未聚焦时仍有独立胶囊边框与背景，不依赖外层 toolbar 共享背景。空状态继续保留查询与 Command-F 入口。Library 的筛选、间隔、弹性 spacer、刷新、更新全部和搜索都使用 `.automatic` placement，按同一工具栏顺序参与空间分配。弹性 spacer 保持刷新、Update All 和搜索右对齐，Command-F 聚焦搜索。Library 的刷新保留独立按钮和刷新进度覆盖；Update All 只在待更新选中时显示，与刷新分组分离。`PackageUpdateActions.canUpdateAll` 同时要求待更新选中、当前目标非空及操作可用，菜单沿用相同资格。单个主 ScrollView 覆盖内容栏，内容 margins 不缩进滚动条；空状态居中，卡片从顶部排列。筛选只处理本机快照；类型、子类型、待更新和搜索按交集组合。每个 npm identity 继续绑定精确 Node executable 与版本。卸载仍只接受一个目标并进行任务专用确认，Cask 只提供 standard，artifact 不由 App 删除。
 
-Discover 删除系统 toolbar 标题，左侧使用原生 `NSSegmentedControl` 显示 Formula/Cask/NPM，紧跟固定 360 点的共享 `CatalogToolbarSearchField`，搜索项使用 `.sharedBackgroundVisibility(.hidden)` 独立分组，与范围 Tab 保留固定间隔，右侧以弹性 spacer 对齐刷新与批量安装；查询、范围、聚焦和回车提交通过 focused scene context 交给根 toolbar。主内容使用铺满内容栏的 `ScrollView`，24 点内容边距不缩进滚动条；默认空状态按当前 viewport 高度居中，结果从顶部排列。内容区不显示 Registry/Node 摘要、结果数量提示或搜索按钮；批量确认继续保留来源和目的地。搜索由原生字段编辑 delegate 的 Return 命令发起。空输入不请求；默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。npm 搜索保留精确 Node context；普通查询使用有效默认 Registry，`@scope/name` 查询先读取该 scope 的有效 Registry，并将实际请求来源绑定到搜索结果。结果安装前准备的有效 Registry 必须与搜索结果绑定的来源相同，不能静默改用另一个 Registry。输入、范围或页面生命周期变化在内部取消旧搜索；替换查询等待旧任务清理后才登记新 owner，界面不提供手动停止。已安装卡片不提供重复安装，更新由 Updates 负责。批量输入经本地规范化后，以受控只读操作准备全部 typed plan，再显示绑定的实际来源、Node/npm 入口、canonical globalPrefix/globalRoot、逐项可执行性和数量。最终一次确认仅执行原批次计划；执行或复查失败分别呈现，搜索结果保留。
+Discover 删除系统 toolbar 标题，左侧使用原生 `NSSegmentedControl` 显示 All/Formula/Cask/NPM，默认 All，紧跟固定 360 点的共享 `CatalogToolbarSearchField`，搜索项使用 `.sharedBackgroundVisibility(.hidden)` 独立分组，与范围 Tab 保留固定间隔，右侧以弹性 spacer 对齐刷新与批量安装；查询、范围、聚焦和回车提交通过 focused scene context 交给根 toolbar。主内容使用铺满内容栏的 `ScrollView`，16 点内容边距不缩进滚动条；默认空状态按当前 viewport 高度居中，结果从顶部排列。内容区不显示 Registry/Node 摘要、结果数量提示或搜索按钮；批量确认继续保留来源和目的地。搜索由原生字段编辑 delegate 的 Return 命令发起。空输入不请求；每个来源默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。All 通过最多三个子任务并发查询所有可用来源，以 Formula/Cask/NPM 顺序合并结果；来源缺失或查询失败保留其他成功结果，并提供对应来源提示。搜索范围由独立 `DiscoverSearchScope` 表达，不把 All 引入安装 provider/type；npm 结果继续绑定搜索时解析的有效 Registry 与 Node 环境。npm 搜索保留精确 Node context；普通查询使用有效默认 Registry，`@scope/name` 查询先读取该 scope 的有效 Registry，并将实际请求来源绑定到搜索结果。结果安装前准备的有效 Registry 必须与搜索结果绑定的来源相同，不能静默改用另一个 Registry。输入、范围或页面生命周期变化在内部取消旧搜索；替换查询等待旧任务清理后才登记新 owner，界面不提供手动停止。已安装卡片不提供重复安装，更新由 Library 负责。批量输入经本地规范化后，以受控只读操作准备全部 typed plan，再显示绑定的实际来源、Node/npm 入口、canonical globalPrefix/globalRoot、逐项可执行性和数量。最终一次确认仅执行原批次计划；执行或复查失败分别呈现，搜索结果保留。
 
-Updates 与 Library 共用 `CatalogScopeTab` 和 `CatalogToolbarScopeTabs`，页面分别持有选择状态；根 toolbar 在左侧显示 All/Brew/NPM，Brew 展开后同一行插入 All/Formula/Cask，切换 expanded/collapsed item identity 重新计算宽度，刷新与 Update All 靠右并移除系统标题项。范围与子范围只筛选已有更新快照。主滚动区域占满内容栏，24 点边距只作用于滚动内容；无结果时按 viewport 水平、垂直居中，有结果时卡片从顶部排列。页面不重复显示范围标题、数量、Node 环境和检查按钮，刷新与菜单检查入口保留；有旧结果时显示来源检查失败提示，空内容使用相应失败或未检查状态。页面显示 Homebrew outdated 项和 npm 的已知版本差异；npm ahead/unknown 不提供更新，检查失败保留已知版本并标为 unknown。单项更新直接准备并执行；Update All 捕获当时可见的 behind 目标，在确认前准备全部 Formula、Cask 和明确 npm 环境的 typed groups，确认只消费原组一次。所有组由一个受控任务顺序持有全局槽，逐项准备失败与执行失败保留且继续，界面不提供手动停止。完成后 Homebrew Formula/Cask 共用一次最终库存复查，每个 npm 环境独立复查。核心读取不可用时保留原快照；核心成功但 outdated 返回分区错误时，复查状态仍为 failed，同一 Homebrew 安装或 npm 全局目录内安全合并新核心数据与旧版本补充信息，卡片保持 unknown 且不可更新。逐项结果保持不变，刷新警告与 Activity 独立记录。更新后的复查不会触发重复自动检查，用户仍可显式重试。
+软件更新不再拥有独立 AppDestination 或页面。Library 持有 `PackageUpdatesModel`，原确认与结果视图保留在 `LibraryUpdatePresentation`。`LibraryCatalog.updateTargets` 将当前可见安装项与 `AppModel.updateCards` 按精确 identity 和已安装版本匹配，只保留可执行 behind 目标；待更新筛选、单项按钮与批量动作均使用同一目标契约。批量更新捕获类型、子类型、状态和搜索后的目标，不随后续筛选扩大范围。Library 自动检查沿用原视图生命周期 owner、失败保留和重试入口；进度使用全部 activeIntents，涵盖排队的后续 provider/type 与最终复查。单项更新直接准备并执行；Update All 捕获当时可见的 behind 目标，在确认前准备全部 Formula、Cask 和明确 npm 环境的 typed groups，确认只消费原组一次。所有组由一个受控任务顺序持有全局槽，逐项准备失败与执行失败保留且继续，界面不提供手动停止。完成后 Homebrew Formula/Cask 共用一次最终库存复查，每个 npm 环境独立复查。核心读取不可用时保留原快照；核心成功但 outdated 返回分区错误时，复查状态仍为 failed，同一 Homebrew 安装或 npm 全局目录内安全合并新核心数据与旧版本补充信息，卡片保持 unknown 且不可更新。逐项结果保持不变，刷新警告与 Activity 独立记录。更新后的复查不会触发重复自动检查，用户仍可显式重试。
 
 ## Operation 与 batch coordinator
 
@@ -209,9 +211,9 @@ Project 确认还在会话内绑定用户选择目录的 canonical URL、device/
 
 npm 目录能力只针对全局包：
 
-- Library/Updates identity 包含当前受控 Node environment；
+- Library 安装项及更新目标的 identity 包含当前受控 Node environment；
 - Discover 使用用户选择/有效 Registry 的有界 search client；
-- install/update/uninstall 只在卡片和确认中标注的 Node 环境执行；
+- install/update/uninstall 只在目标身份绑定的 Node 环境执行；
 - Registry 管理位于 Settings > Sources，Node runtime 位于 Tools；
 - current/wanted/latest 不能比较时产生 `unknown`，不得猜测或自动降级。
 

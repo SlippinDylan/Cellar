@@ -89,7 +89,7 @@ struct ProviderTaskFeedback: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(errors.isEmpty && model.nodeActionResult == nil && model.shellActionResult == nil && model.homebrewActionResult == nil && !model.isBusy ? 0 : 16)
+        .padding(errors.isEmpty && model.nodeActionResult == nil && model.shellActionResult == nil && model.homebrewActionResult == nil && !model.isBusy ? 0 : AppLayout.spacing)
     }
     private var errors: [String] { [model.nodeOperationError, model.homebrewOperationError, model.shellOperationError].compactMap { $0 } }
     private func resultLabel(_ status: ActivityStatus) -> some View {

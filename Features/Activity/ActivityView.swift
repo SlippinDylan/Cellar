@@ -29,7 +29,7 @@ private struct ActivityHistoryView: View {
 
     var body: some View {
         let visible = filter.apply(store.summaries, locale: locale)
-        VStack(spacing: 0) {
+        VStack(spacing: AppLayout.spacing) {
             if let current = operations.currentOperation { currentTask(current) }
             if let error = store.persistenceError { persistenceFeedback(error) }
             if copyFailed { Label("The summary could not be copied. Try Copy Summary again.", systemImage: "exclamationmark.circle").padding(12) }
@@ -51,6 +51,7 @@ private struct ActivityHistoryView: View {
                                        description: Text("Environment tasks remain available. Check the history notice above for recovery guidance."))
             }
         }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(AppLayout.spacing)
         .focusedSceneValue(\.activitySearch, ActivitySearchContext(text: $filter.search, focusRequest: searchFocusRequest))
         .focusedSceneValue(\.catalogSearchAction, { searchFocusRequest = UUID() })
         .focusedSceneValue(\.activityActions, ActivityActions(provider: filter.provider, status: filter.status,
@@ -102,7 +103,7 @@ private struct ActivityHistoryView: View {
                     }
                 }.textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
             }
-            .contentMargins(20, for: .scrollContent)
+            .contentMargins(AppLayout.spacing, for: .scrollContent)
         } else { ContentUnavailableView("Select a Task", systemImage: "sidebar.right", description: Text("Select a history row to see its targets and item results.")) }
     }
 

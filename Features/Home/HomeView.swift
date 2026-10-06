@@ -16,14 +16,14 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: AppLayout.cardSpacing) {
                 homebrewSection
                 nodeSection
                 terminalEnvironmentSection
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .contentMargins(20, for: .scrollContent)
+        .contentMargins(AppLayout.spacing, for: .scrollContent)
         .controlSize(.regular)
         .task(id: model.isRefreshing ? nil : model.refreshedAt) {
             guard !model.isRefreshing else { return }
@@ -46,7 +46,7 @@ struct HomeView: View {
     }
 
     private var homebrewSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: AppLayout.spacing) {
             Label("Homebrew", systemImage: "mug")
                 .font(.title3)
             let summary = model.homebrew?.snapshot.map(HomebrewDashboardSummary.init)
@@ -60,7 +60,7 @@ struct HomeView: View {
     }
 
     private var nodeSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: AppLayout.spacing) {
             Label("Node", systemImage: "shippingbox").font(.title3)
             nodeMetrics(model.node.map(NodeDashboardSummary.init))
             if model.nodeUpdateState == .failed { inlineWarning("Updates could not be checked. Local information is still available.") }
@@ -70,7 +70,7 @@ struct HomeView: View {
     }
 
     private var terminalEnvironmentSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: AppLayout.spacing) {
             Label("Terminal Environment", systemImage: "terminal")
                 .font(.title3)
             terminalEnvironmentMetrics

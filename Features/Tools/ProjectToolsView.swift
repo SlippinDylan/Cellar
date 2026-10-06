@@ -29,7 +29,7 @@ struct ProjectToolsView: View {
                 }
             } header: { Text("Project Node Version") }
         }
-        .formStyle(.grouped)
+        .formStyle(AppFormStyle())
         .fileImporter(isPresented: $choosingDirectory, allowedContentTypes: [.folder], allowsMultipleSelection: false) { result in
             do {
                 let urls = try result.get()

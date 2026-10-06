@@ -3,19 +3,15 @@ import SwiftUI
 struct WebsiteLink: View {
     let destination: URL
     let title: LocalizedStringResource
-    var showsTitle = false
 
     var body: some View {
         Link(destination: destination) {
-            HStack(spacing: 6) {
-                if showsTitle { Text(title).foregroundStyle(.blue) }
-                Image(systemName: "arrow.turn.right.up")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 20, height: 20)
-                    .background(.blue, in: RoundedRectangle(cornerRadius: 5))
-                    .accessibilityHidden(true)
-            }
+            Image(systemName: "safari")
+                .imageScale(.medium)
+                .foregroundStyle(.blue)
+                .frame(minWidth: 20, minHeight: 20)
+                .contentShape(Rectangle())
+                .accessibilityHidden(true)
         }
         .buttonStyle(.plain)
         .fixedSize()

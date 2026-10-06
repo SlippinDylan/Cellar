@@ -71,7 +71,7 @@ struct SettingsView: View {
                  : LocalizedStringResource("Changing the language restarts Cellar."))
                 .foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
+        .formStyle(AppFormStyle())
     }
 
     private var languageSelection: Binding<ApplicationLanguage> {
@@ -139,14 +139,14 @@ struct AboutView: View {
         GeometryReader { viewport in
             ScrollView {
                 aboutContent
-                    .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - 40))
+                    .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - AppLayout.spacing * 2))
             }
-            .contentMargins(20, for: .scrollContent)
+            .contentMargins(AppLayout.spacing, for: .scrollContent)
         }
     }
 
     private var aboutContent: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: AppLayout.spacing) {
             Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
                 .frame(width: 72, height: 72)
@@ -157,7 +157,7 @@ struct AboutView: View {
                 .fixedSize()
             Button("Check for Updates…") { updateController.checkForUpdates() }
                 .disabled(!updateController.canCheckForUpdates)
-            WebsiteLink(destination: sourceCodeURL, title: LocalizedStringResource("Open Source"), showsTitle: true)
+            WebsiteLink(destination: sourceCodeURL, title: LocalizedStringResource("Open Source"))
             Text("Copyright © 2026 SlippinDylan Studio")
                 .font(.callout)
                 .foregroundStyle(.secondary)

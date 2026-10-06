@@ -54,13 +54,13 @@ struct StatusMetric: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 4) {
                     Text(title)
-                        .font(.caption)
                         .foregroundStyle(.secondary)
 
                     if let titleLink, let titleLinkLabel {
                         WebsiteLink(destination: titleLink, title: titleLinkLabel)
                     }
                 }
+                .font(.caption)
 
                 HStack(spacing: 6) {
                     Text(value)

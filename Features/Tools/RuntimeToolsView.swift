@@ -44,10 +44,10 @@ struct RuntimeToolsView: View {
                         Task { await model.performDirectNodeAction(.init(action: .installNode, subject: version)) }
                     }.disabled(selectedRelease.isEmpty || model.isBusy || model.homeDashboard.nvmInstalled == false)
                 }
-                WebsiteLink(destination: CatalogWebsites.nvm, title: LocalizedStringResource("nvm Installation Guide"), showsTitle: true)
+                WebsiteLink(destination: CatalogWebsites.nvm, title: LocalizedStringResource("nvm Installation Guide"))
             } header: { Text("Install Node") }
         }
-        .formStyle(.grouped)
+        .formStyle(AppFormStyle())
         .task(id: model.refreshedAt) {
             guard !AppRuntime.isRunningTests else { return }
             installations = await model.service.runtimeInstallations(preferredVersion: model.preferredNodeVersion)

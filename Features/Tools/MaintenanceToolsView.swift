@@ -40,7 +40,7 @@ struct MaintenanceToolsView: View {
                 Button("Tidy Zsh Files…") { Task { await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files")) } }
                     .disabled(model.shell?.zshrcExists != true || model.isBusy)
             } header: { Text("Zsh Files") }
-        }.formStyle(.grouped)
+        }.formStyle(AppFormStyle())
         .sheet(isPresented: $showsDiagnostics) {
             ActivityDiagnosticsView(store: model.activityDiagnostics, initialSelection: nil, clipboard: .live)
         }

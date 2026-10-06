@@ -33,7 +33,7 @@ struct DiagnosticsToolsView: View {
                 else { Text("Terminal State Unavailable") }
             } header: { Text("Controlled Paths") }
         }
-        .formStyle(.grouped)
+        .formStyle(AppFormStyle())
         .textSelection(.enabled)
         .task(id: model.refreshedAt) {
             guard !AppRuntime.isRunningTests else { return }

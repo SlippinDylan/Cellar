@@ -63,7 +63,7 @@ struct SourcesSettingsView: View {
                 }
             } header: { Text("Scope npm Registry") }
         }
-        .formStyle(.grouped)
+        .formStyle(AppFormStyle())
         .onChange(of: scope) { _, _ in scopeLayers = nil; scopeReadError = nil }
         .onChange(of: model.nodeActionResult?.operation.operationId) { _, _ in scopeLayers = nil }
         .modifier(ProviderTaskPresentation(model: model, surface: .sources))

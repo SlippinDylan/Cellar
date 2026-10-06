@@ -56,7 +56,7 @@ struct TerminalSettingsView: View {
                 }
             }
         }
-        .formStyle(.grouped)
+        .formStyle(AppFormStyle())
         .onAppear { synchronize() }
         .onChange(of: model.shell?.activePlugins) { previous, current in
             if plugins == Set(previous ?? []).union(["git"]) { plugins = Set(current ?? []).union(["git"]) }

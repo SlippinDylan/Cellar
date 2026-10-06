@@ -7,7 +7,7 @@ struct DiscoverView: View {
     @ObservedObject private var operationStore: OperationStore
     @StateObject private var search: DiscoverSearchModel
     @StateObject private var installation: DiscoverInstallationModel
-    @State private var scope = CatalogProviderScope.homebrewFormula
+    @State private var scope = DiscoverSearchScope.all
     @State private var query = ""
     @State private var showsBatch = false
     @State private var searchFocusRequest: UUID?
@@ -23,35 +23,40 @@ struct DiscoverView: View {
     var body: some View {
         GeometryReader { viewport in
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: AppLayout.spacing) {
+                    ForEach(search.unavailableScopes, id: \.self) { source in
+                        LabeledContent { Text("Search Unavailable") } label: { Text(source.cardTitle) }
+                            .foregroundStyle(.secondary)
+                    }
                     if let error = installation.error { Label { Text(error.discoverMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
                     if installation.isSubmitting, let current = operationStore.currentOperation {
                         ProgressView { Text(current.context.stage.title) }
                     }
                     if let result = installation.result { DiscoverInstallResultView(result: result) }
                     if search.state == .available, let context = search.resultContext {
-                        CatalogCardGrid(states: cards, isActionEnabled: !model.isBusy) { card, _ in
+                        CatalogCardGrid(states: cards, minimumCardWidth: 360, isActionEnabled: !model.isBusy) { card, _ in
                             Task { await installation.install(card, context: context) }
                         }
                     } else { searchContent }
                 }
-                .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - 48),
+                .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - AppLayout.spacing * 2),
                        alignment: search.state == .available ? .topLeading : .center)
             }
-            .contentMargins(24, for: .scrollContent)
+            .contentMargins(AppLayout.spacing, for: .scrollContent)
         }
         .focusedSceneValue(\.catalogSearchAction) { searchFocusRequest = UUID() }
         .focusedSceneValue(\.discoverToolbar, DiscoverToolbarContext(scope: $scope, query: $query,
                                                                     focusRequest: searchFocusRequest, submit: runSearch))
         .focusedSceneValue(\.discoverBatchAction, openBatch)
         .sheet(isPresented: $showsBatch) {
-            DiscoverBatchInstallSheet(installation: installation, context: model.discoverContext, initialScope: scope)
+            DiscoverBatchInstallSheet(installation: installation, context: model.discoverContext,
+                                      initialScope: scope.providerScope ?? .homebrewFormula)
         }
         .onChange(of: query) { search.invalidate() }
         .onChange(of: scope) { search.invalidate() }
         .onChange(of: model.discoverContext) { _, context in
             // Mutation reconciliation updates cards from local state; environment changes invalidate npm search.
-            if scope == .npm, search.resultContext?.npm != context.npm { search.invalidate() }
+            if scope == .all || scope == .npm, search.resultContext?.npm != context.npm { search.invalidate() }
         }
         .onAppear { searchFocusRequest = UUID() }
         .onDisappear { search.invalidate() }
@@ -60,7 +65,7 @@ struct DiscoverView: View {
     private var cards: [CatalogCardState] {
         search.results.map { result in
             result.card(homebrew: model.homebrew?.snapshot, node: model.node, activeIntent: coordinator.activeIntent,
-                        running: coordinator.runningItem, canInstall: scope == .npm ? !model.nodeRefreshFailed : !model.homebrewRefreshFailed,
+                        running: coordinator.runningItem, canInstall: result.identity.providerScope == .npm ? !model.nodeRefreshFailed : !model.homebrewRefreshFailed,
                         stage: operationStore.currentOperation?.context.stage)
         }
     }
@@ -104,7 +109,7 @@ struct DiscoverView: View {
 }
 
 struct DiscoverToolbarContext {
-    let scope: Binding<CatalogProviderScope>
+    let scope: Binding<DiscoverSearchScope>
     let query: Binding<String>
     let focusRequest: UUID?
     let submit: () -> Void
@@ -120,12 +125,12 @@ extension FocusedValues {
 }
 
 struct DiscoverToolbarScopes: NSViewRepresentable {
-    @Binding var selection: CatalogProviderScope
+    @Binding var selection: DiscoverSearchScope
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
     func makeNSView(context: Context) -> NSSegmentedControl {
-        let control = NSSegmentedControl(labels: [String(localized: "Formula"), String(localized: "Cask"), String(localized: "NPM")],
+        let control = NSSegmentedControl(labels: [String(localized: "All"), String(localized: "Formula"), String(localized: "Cask"), String(localized: "NPM")],
                                          trackingMode: .selectOne, target: context.coordinator,
                                          action: #selector(Coordinator.selectScope(_:)))
         control.segmentStyle = .automatic
@@ -138,9 +143,10 @@ struct DiscoverToolbarScopes: NSViewRepresentable {
     func updateNSView(_ control: NSSegmentedControl, context: Context) {
         context.coordinator.parent = self
         control.selectedSegment = switch selection {
-        case .homebrewFormula: 0
-        case .homebrewCask: 1
-        case .npm: 2
+        case .all: 0
+        case .homebrewFormula: 1
+        case .homebrewCask: 2
+        case .npm: 3
         }
     }
 
@@ -153,7 +159,7 @@ struct DiscoverToolbarScopes: NSViewRepresentable {
         init(parent: DiscoverToolbarScopes) { self.parent = parent }
 
         @objc func selectScope(_ sender: NSSegmentedControl) {
-            let scopes = CatalogProviderScope.allCases
+            let scopes = DiscoverSearchScope.allCases
             guard scopes.indices.contains(sender.selectedSegment) else { return }
             parent.selection = scopes[sender.selectedSegment]
         }

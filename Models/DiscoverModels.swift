@@ -1,5 +1,18 @@
 import Foundation
 
+enum DiscoverSearchScope: CaseIterable, Sendable {
+    case all, homebrewFormula, homebrewCask, npm
+
+    var providerScope: CatalogProviderScope? {
+        switch self {
+        case .all: nil
+        case .homebrewFormula: .homebrewFormula
+        case .homebrewCask: .homebrewCask
+        case .npm: .npm
+        }
+    }
+}
+
 struct DiscoverNPMContext: Equatable, Sendable {
     let environment: NodeEnvironmentContext
     let registryURL: URL

@@ -5,6 +5,45 @@ import XCTest
 final class DiscoverTests: XCTestCase {
     private let environment = NodeEnvironmentContext(identifier: "/fixture/node", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
 
+    func testAllSearchKeepsProviderIdentityBoundsAndResolvedNPMSource() async throws {
+        let registry = try XCTUnwrap(URL(string: "https://registry.fixture/"))
+        let scopedRegistry = try XCTUnwrap(URL(string: "https://scoped.fixture/"))
+        let base = DiscoverNPMContext(environment: environment, registryURL: registry)
+        let resolved = DiscoverNPMContext(environment: environment, registryURL: scopedRegistry)
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, kind, _ in
+            [DiscoverSearchFixture.package("one", kind: kind), DiscoverSearchFixture.package("two", kind: kind)]
+        }, npm: { _, context, _ in
+            XCTAssertEqual(context, resolved)
+            return ["one", "two"].map { name in
+                NPMCatalogResult(identity: .init(name: name, environment: context.environment), version: "1.0.0",
+                                 description: nil, websiteURL: nil, registryURL: context.registryURL)
+            }
+        }, resolveNPM: { _, _ in resolved })
+        let model = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
+        await model.search("one", scope: .all, context: .init(homebrewAvailable: true, npm: base), limit: 1)
+        XCTAssertEqual(model.state, .available)
+        XCTAssertEqual(model.results.map(\.identity), [.homebrew(.init(name: "one", kind: .formula)),
+                                                      .homebrew(.init(name: "one", kind: .cask)),
+                                                      .npm(.init(name: "one", environment: environment))])
+        XCTAssertEqual(model.resultContext?.npm, resolved)
+        XCTAssertTrue(model.unavailableScopes.isEmpty)
+    }
+
+    func testAllSearchKeepsSuccessfulSourceWhenOtherSourcesFailOrAreMissing() async {
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, kind, _ in
+            if kind == .cask { throw CatalogSourceError.invalidResponse }
+            return [DiscoverSearchFixture.package("one", kind: kind)]
+        }, npm: { _, _, _ in XCTFail("Missing npm context must not issue a request"); return [] })
+        let model = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
+        await model.search("one", scope: .all, context: .init(homebrewAvailable: true, npm: nil))
+        XCTAssertEqual(model.state, .available)
+        XCTAssertEqual(model.results.map(\.identity), [.homebrew(.init(name: "one", kind: .formula))])
+        XCTAssertEqual(model.unavailableScopes, [.homebrewCask, .npm])
+        model.invalidate()
+        XCTAssertTrue(model.unavailableScopes.isEmpty)
+        XCTAssertTrue(model.results.isEmpty)
+    }
+
     func testBatchInputNormalizesUnicodeWhitespaceAndStableDeduplication() throws {
         let intent = try DiscoverBatchInput.intent("\u{2003}one\u{2003}\n\n two \r\none\n", scope: .homebrewFormula, npm: nil)
         XCTAssertEqual(intent.items.map(\.displayIdentifier), ["one", "two"])

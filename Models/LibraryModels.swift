@@ -4,6 +4,10 @@ enum LibraryHomebrewSubtype: String, CaseIterable, Sendable {
     case all, formula, cask
 }
 
+enum LibraryUpdateFilter: String, CaseIterable {
+    case all, pendingUpdates
+}
+
 enum LibraryReadState: Equatable {
     case loading, available, failed
 }
@@ -22,12 +26,13 @@ enum LibraryContentState: Equatable {
 
 enum LibraryCatalog {
     static func cards(homebrew: HomebrewSnapshot?, node: NodeSnapshot?, homebrewUpdates: HomePackageUpdateState,
-                      nodeUpdates: HomePackageUpdateState, activeIntent: BatchIntent? = nil, runningItem: BatchItem? = nil,
+                      nodeUpdates: HomePackageUpdateState, activeIntents: [BatchIntent] = [], runningItem: BatchItem? = nil,
                       stage: ActivityTaskStage? = nil) -> [CatalogCardState] {
+        let activeItems = activeIntents.flatMap(\.items)
         let outdated = Dictionary(uniqueKeysWithValues: (homebrew?.outdatedPackages ?? []).map { ($0.identity, $0) })
         let brewCards = (homebrew?.packages ?? []).filter(\.isInstalled).compactMap { package in
             let identity = CatalogItemIdentity.homebrew(package.identity)
-            let available = package.currentVersion
+            let available = outdated[package.identity]?.currentVersion ?? package.currentVersion
             let installed = package.installedVersions.joined(separator: ", ")
             let status: SemanticVersionStatus
             if homebrewUpdates != .available || homebrew?.sectionErrors[.outdated] != nil { status = .unknown }
@@ -36,7 +41,7 @@ enum LibraryCatalog {
             return CatalogCardState(identity: identity, displayName: package.displayName, description: package.description,
                                     currentVersion: installed, availableVersion: available, versionStatus: status,
                                     websiteURL: package.homepage.flatMap(URL.init(string:)),
-                                    progress: progress(for: .homebrew(package.identity), intent: activeIntent, running: runningItem, stage: stage), primaryAction: .uninstall)
+                                    progress: progress(for: .homebrew(package.identity), items: activeItems, running: runningItem, stage: stage), primaryAction: .uninstall)
         }
         let npmCards: [CatalogCardState]
         if let node {
@@ -47,7 +52,7 @@ enum LibraryCatalog {
                 return CatalogCardState(identity: .npm(identity), displayName: package.name, description: nil,
                                         currentVersion: package.installedVersion, availableVersion: available,
                                         versionStatus: SemanticVersionStatus(current: package.installedVersion, available: available),
-                                        websiteURL: nil, progress: progress(for: .npm(identity), intent: activeIntent, running: runningItem, stage: stage), primaryAction: .uninstall)
+                                        websiteURL: nil, progress: progress(for: .npm(identity), items: activeItems, running: runningItem, stage: stage), primaryAction: .uninstall)
             }
         } else { npmCards = [] }
         return (brewCards + npmCards).sorted {
@@ -60,8 +65,10 @@ enum LibraryCatalog {
         contents(cards, scope: scope, subtype: subtype, query: query).matching
     }
 
-    static func contents(_ cards: [CatalogCardState], scope: CatalogScope, subtype: LibraryHomebrewSubtype, query: String) -> (scoped: [CatalogCardState], matching: [CatalogCardState]) {
+    static func contents(_ cards: [CatalogCardState], scope: CatalogScope, subtype: LibraryHomebrewSubtype, query: String,
+                         updateFilter: LibraryUpdateFilter = .all, updateCards: [CatalogCardState] = []) -> (scoped: [CatalogCardState], matching: [CatalogCardState]) {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pending = Set(updateTargets(for: cards, from: updateCards).map(\.identity))
         return cards.reduce(into: (scoped: [], matching: [])) { result, card in
             let inScope: Bool = switch (scope, card.identity.providerScope) {
             case (.all, _), (.homebrew, .homebrewFormula), (.homebrew, .homebrewCask), (.npm, .npm): true
@@ -70,11 +77,21 @@ enum LibraryCatalog {
             let inSubtype = scope != .homebrew || subtype == .all
                 || (subtype == .formula && card.identity.providerScope == .homebrewFormula)
                 || (subtype == .cask && card.identity.providerScope == .homebrewCask)
-            guard inScope && inSubtype else { return }
+            guard inScope && inSubtype, updateFilter == .all || pending.contains(card.identity) else { return }
             result.scoped.append(card)
             if matches(query, values: [card.displayName, card.description ?? "", card.batchItem.displayIdentifier]) {
                 result.matching.append(card)
             }
+        }
+    }
+
+    static func updateTargets(for cards: [CatalogCardState], from updates: [CatalogCardState]) -> [CatalogCardState] {
+        let installed = Dictionary(uniqueKeysWithValues: cards.map { ($0.identity, $0) })
+        // Preserve the canonical update card, including its captured version baseline and Node identity.
+        return updates.filter { target in
+            guard let card = installed[target.identity] else { return false }
+            return target.primaryAction == .update && target.versionStatus == .behind
+                && card.currentVersion == target.currentVersion
         }
     }
 
@@ -99,10 +116,14 @@ enum LibraryCatalog {
     }
 
     static func progress(for item: BatchItem, intent: BatchIntent?, running: BatchItem?, stage: ActivityTaskStage? = nil) -> CatalogCardProgress {
-        guard let intent, intent.items.contains(item) else { return .idle }
+        progress(for: item, items: intent?.items ?? [], running: running, stage: stage)
+    }
+
+    private static func progress(for item: BatchItem, items: [BatchItem], running: BatchItem?, stage: ActivityTaskStage?) -> CatalogCardProgress {
+        guard items.contains(item) else { return .idle }
         if stage == .reconciling { return .verifying }
         if item == running { return .running }
-        guard let running, let currentIndex = intent.items.firstIndex(of: running), let itemIndex = intent.items.firstIndex(of: item) else { return .queued }
+        guard let running, let currentIndex = items.firstIndex(of: running), let itemIndex = items.firstIndex(of: item) else { return .queued }
         return itemIndex > currentIndex ? .queued : .idle
     }
 }

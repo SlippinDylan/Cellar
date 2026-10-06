@@ -5,23 +5,43 @@ struct LibraryView: View {
     @ObservedObject private var coordinator: BatchOperationCoordinator
     @ObservedObject private var operationStore: OperationStore
     @StateObject private var uninstall: LibraryUninstallModel
+    @StateObject private var updates: PackageUpdatesModel
     @State private var selectedTab = CatalogScopeTab.all
     @State private var lastBrewTab = CatalogScopeTab.brewAll
-    @State private var query = ""
-    @State private var searchFocusRequest: UUID?
+    @State private var updateFilter = LibraryUpdateFilter.all
+    @Binding private var query: String
+    @Binding private var searchFocusRequest: UUID?
 
-    init(model: AppModel) {
+    init(model: AppModel, query: Binding<String>, searchFocusRequest: Binding<UUID?>) {
         self.model = model
+        _query = query
+        _searchFocusRequest = searchFocusRequest
         coordinator = model.batchCoordinator
         operationStore = model.operationStore
         _uninstall = StateObject(wrappedValue: LibraryUninstallModel(model: model))
+        _updates = StateObject(wrappedValue: PackageUpdatesModel(model: model))
     }
 
     var body: some View {
-        libraryContent(for: selectedTab)
+        let cards = LibraryCatalog.cards(homebrew: model.homebrew?.snapshot, node: model.node,
+                                         homebrewUpdates: model.homebrewRefreshFailed ? .failed : model.homebrewUpdateState,
+                                         nodeUpdates: model.nodeRefreshFailed ? .failed : model.nodeUpdateState,
+                                         activeIntents: coordinator.activeIntents, runningItem: coordinator.runningItem,
+                                         stage: operationStore.currentOperation?.context.stage)
+        let updateCards = model.updateCards
+        let contents = LibraryCatalog.contents(cards, scope: selectedTab.scope, subtype: selectedTab.subtype, query: query,
+                                               updateFilter: updateFilter, updateCards: updateCards)
+        let targets = LibraryCatalog.updateTargets(for: contents.matching, from: updateCards)
+        libraryContent(cards: contents.matching, scopedCount: contents.scoped.count, updateTargets: targets,
+                       totalUpdateCount: LibraryCatalog.updateTargets(for: cards, from: updateCards).count)
         .focusedSceneValue(\.catalogSearchAction) { searchFocusRequest = UUID() }
-        .focusedSceneValue(\.librarySearch, LibrarySearchContext(text: $query, focusRequest: searchFocusRequest))
         .focusedSceneValue(\.libraryTabs, CatalogScopeTabActions(selected: selectedTab) { selectedTab = $0 })
+        .focusedSceneValue(\.libraryUpdateFilter, $updateFilter)
+        .focusedSceneValue(\.packageUpdateActions, PackageUpdateActions(
+            canUpdateAll: updateFilter == .pendingUpdates && !targets.isEmpty && canPerformAction,
+            updateAll: { prepareAll(targets, scope: selectedTab.scope, subtype: selectedTab.subtype) },
+            checkUpdates: { Task { await model.retryPackageUpdateChecks() } }
+        ))
         .onChange(of: selectedTab) { _, tab in
             if tab == .brew {
                 selectedTab = lastBrewTab
@@ -34,32 +54,64 @@ struct LibraryView: View {
                 Task { await uninstall.confirmUninstall() }
             }
         }
+        .sheet(item: Binding(get: { updates.confirmation }, set: { if $0 == nil { updates.dismissConfirmation() } })) { confirmation in
+            UpdatesConfirmationSheet(confirmation: confirmation, updates: updates)
+        }
+        .task(id: model.refreshedAt) {
+            if model.checkedOutdatedRefresh != model.refreshedAt { await model.refreshHomeBackground(after: model.refreshedAt) }
+        }
     }
 
-    private func libraryContent(for tab: CatalogScopeTab) -> some View {
-        let cards = LibraryCatalog.cards(homebrew: model.homebrew?.snapshot, node: model.node,
-                                         homebrewUpdates: model.homebrewUpdateState, nodeUpdates: model.nodeUpdateState,
-                                         activeIntent: coordinator.activeIntent, runningItem: coordinator.runningItem,
-                                         stage: operationStore.currentOperation?.context.stage)
-        let contents = LibraryCatalog.contents(cards, scope: tab.scope, subtype: tab.subtype, query: query)
-        let state = LibraryContentState(readStates: readStates(for: tab.scope), totalCount: contents.scoped.count,
-                                        matchCount: contents.matching.count)
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                providerWarnings(for: tab.scope)
-                if let error = uninstall.error { Text(error.libraryMessage).foregroundStyle(.secondary) }
-                if let reason = uninstall.failureReason { Text(reason.message).foregroundStyle(.secondary) }
-                if let result = uninstall.result { LibraryResultView(result: result) }
-                if state == .available {
-                    CatalogCardGrid(states: contents.matching, minimumCardWidth: 360, isActionEnabled: !model.isBusy) { card, _ in
-                        Task { await uninstall.prepare(card.batchItem) }
+    private func libraryContent(cards: [CatalogCardState], scopedCount: Int, updateTargets: [CatalogCardState], totalUpdateCount: Int) -> some View {
+        let state = LibraryContentState(readStates: readStates(for: selectedTab.scope), totalCount: scopedCount, matchCount: cards.count)
+        return GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppLayout.spacing) {
+                    providerWarnings(for: selectedTab.scope)
+                    if updates.isSubmitting, let current = operationStore.currentOperation {
+                        ProgressView { Text(current.context.stage.title) }
                     }
-                } else { emptyContent(state) }
+                    if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
+                    if let result = updates.result { UpdatesResultView(result: result) }
+                    if let error = uninstall.error { Text(error.libraryMessage).foregroundStyle(.secondary) }
+                    if let reason = uninstall.failureReason { Text(reason.message).foregroundStyle(.secondary) }
+                    if let result = uninstall.result { LibraryResultView(result: result) }
+                    if !cards.isEmpty {
+                        CatalogCardGrid(states: cards, minimumCardWidth: 360, updateTargets: updateTargets, isActionEnabled: canPerformAction) { card, action in
+                            switch action {
+                            case .update: Task { await updates.update(card) }
+                            case .uninstall: Task { await uninstall.prepare(card.batchItem) }
+                            case .install: preconditionFailure("The installed library does not offer installation")
+                            }
+                        }
+                    } else if updateFilter == .pendingUpdates, state != .loading && state != .failed {
+                        if scopedCount > 0 && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { emptyContent(.noMatches) }
+                        else { emptyUpdates(UpdatesContentState(states: updateStates, totalCount: totalUpdateCount, visibleCount: 0)) }
+                    } else { emptyContent(state) }
+                }
+                .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - AppLayout.spacing * 2),
+                       alignment: cards.isEmpty ? .center : .topLeading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentMargins(AppLayout.spacing, for: .scrollContent)
         }
-        .contentMargins(24, for: .scrollContent)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var canPerformAction: Bool {
+        !model.isBusy && !updates.isSubmitting && updates.confirmation == nil && uninstall.confirmation == nil
+    }
+
+    private var updateStates: [HomePackageUpdateState] {
+        let brew = model.homebrewRefreshFailed ? HomePackageUpdateState.failed : model.homebrewUpdateState
+        let npm = model.nodeRefreshFailed ? HomePackageUpdateState.failed : model.nodeUpdateState
+        switch selectedTab.scope {
+        case .all: return [brew, npm]
+        case .homebrew: return [brew]
+        case .npm: return [npm]
+        }
+    }
+
+    private func prepareAll(_ targets: [CatalogCardState], scope: CatalogScope, subtype: LibraryHomebrewSubtype) {
+        Task { await updates.prepareAll(targets, scope: scope, subtype: subtype) }
     }
 
     private func readStates(for scope: CatalogScope) -> [LibraryReadState] {
@@ -89,6 +141,24 @@ struct LibraryView: View {
         if scope != .homebrew, nodeReadState == .failed {
             Label("Node and npm could not be refreshed. Previously loaded items may be out of date. Use Refresh to retry.", systemImage: "exclamationmark.circle")
         }
+        if scope != .npm, model.homebrewUpdateState == .failed { updateWarning("Homebrew") }
+        if scope != .homebrew, model.nodeUpdateState == .failed { updateWarning("npm") }
+    }
+
+    private func updateWarning(_ name: LocalizedStringResource) -> some View {
+        let providerName = String(localized: name)
+        return Label("\(providerName): Update Check Failed. Known versions are retained. Use Refresh or check again.", systemImage: "exclamationmark.circle")
+    }
+
+    @ViewBuilder private func emptyUpdates(_ state: UpdatesContentState) -> some View {
+        switch state {
+        case .notLoaded: ContentUnavailableView("Updates Not Checked", systemImage: "questionmark.circle", description: Text("Use Refresh to read the local environment, then check for package updates."))
+        case .loading: EmptyView()
+        case .failed: ContentUnavailableView("Updates Unavailable", systemImage: "exclamationmark.circle", description: Text("One or more update checks failed. Use Refresh or check again."))
+        case .empty: ContentUnavailableView("No Package Updates", systemImage: "checkmark.circle", description: Text("The completed checks found no package updates in this scope."))
+        case .noMatches: ContentUnavailableView("No Updates in This Scope", systemImage: "line.3.horizontal.decrease.circle", description: Text("Choose another scope to see the known version differences."))
+        case .available: EmptyView()
+        }
     }
 
     @ViewBuilder private func emptyContent(_ state: LibraryContentState) -> some View {
@@ -107,23 +177,27 @@ struct LibraryView: View {
 
 }
 
-struct LibrarySearchContext {
-    let text: Binding<String>
-    let focusRequest: UUID?
-}
-
-private struct LibrarySearchKey: FocusedValueKey { typealias Value = LibrarySearchContext }
 private struct LibraryTabsKey: FocusedValueKey { typealias Value = CatalogScopeTabActions }
+private struct LibraryUpdateFilterKey: FocusedValueKey { typealias Value = Binding<LibraryUpdateFilter> }
 
 extension FocusedValues {
-    var librarySearch: LibrarySearchContext? {
-        get { self[LibrarySearchKey.self] }
-        set { self[LibrarySearchKey.self] = newValue }
+    var libraryUpdateFilter: Binding<LibraryUpdateFilter>? {
+        get { self[LibraryUpdateFilterKey.self] }
+        set { self[LibraryUpdateFilterKey.self] = newValue }
     }
 
     var libraryTabs: CatalogScopeTabActions? {
         get { self[LibraryTabsKey.self] }
         set { self[LibraryTabsKey.self] = newValue }
+    }
+}
+
+extension LibraryUpdateFilter {
+    var title: LocalizedStringResource {
+        switch self {
+        case .all: LocalizedStringResource("All")
+        case .pendingUpdates: LocalizedStringResource("Pending Updates")
+        }
     }
 }
 

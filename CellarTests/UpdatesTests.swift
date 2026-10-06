@@ -4,6 +4,78 @@ import XCTest
 
 @MainActor
 final class UpdatesTests: XCTestCase {
+    func testLibraryPendingFilterIntersectsTypeSubtypeSearchAndCanonicalEligibility() throws {
+        let library = LibraryCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available)
+        let updates = UpdatesCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available)
+        let all = LibraryCatalog.contents(library, scope: .all, subtype: .all, query: "", updateFilter: .pendingUpdates, updateCards: updates)
+        XCTAssertEqual(all.matching.count, 3)
+        let formula = LibraryCatalog.contents(library, scope: .homebrew, subtype: .formula, query: " SAME ", updateFilter: .pendingUpdates, updateCards: updates)
+        XCTAssertEqual(formula.matching.map(\.identity), [.homebrew(.init(name: "same", kind: .formula))])
+        let targets = LibraryCatalog.updateTargets(for: formula.matching, from: updates)
+        XCTAssertEqual(targets.map(\.primaryAction), [.update])
+        XCTAssertEqual(formula.matching.map(\.primaryAction), [.uninstall])
+        XCTAssertTrue(LibraryCatalog.contents(library, scope: .npm, subtype: .all, query: "ahead", updateFilter: .pendingUpdates, updateCards: updates).matching.isEmpty)
+        let failed = UpdatesCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .failed, nodeUpdates: .failed)
+        XCTAssertTrue(LibraryCatalog.contents(library, scope: .all, subtype: .all, query: "", updateFilter: .pendingUpdates, updateCards: failed).matching.isEmpty)
+        XCTAssertEqual(LibraryCatalog.contents(library, scope: .all, subtype: .all, query: "", updateCards: failed).matching.count, 6)
+    }
+
+    func testLibraryUpdateTargetsRejectChangedVersionAndOtherNodeInstallations() throws {
+        let target = try XCTUnwrap(UpdatesCatalog.cards(homebrew: nil, node: nodeSnapshot(), homebrewUpdates: .notLoaded, nodeUpdates: .available).first { $0.displayName == "behind" })
+        let changedVersion = try XCTUnwrap(CatalogCardState(identity: target.identity, displayName: target.displayName, description: nil,
+            currentVersion: "1.1.0", availableVersion: target.availableVersion, versionStatus: .behind, websiteURL: nil, progress: .idle, primaryAction: .uninstall))
+        XCTAssertTrue(LibraryCatalog.updateTargets(for: [changedVersion], from: [target]).isEmpty)
+        let otherEnvironment = NodeEnvironmentContext(identifier: "/other/node", nodeVersion: context.nodeVersion, npmVersion: context.npmVersion)
+        let otherInstallation = try XCTUnwrap(CatalogCardState(identity: .npm(.init(name: "behind", environment: otherEnvironment)), displayName: "behind", description: nil,
+            currentVersion: target.currentVersion, availableVersion: target.availableVersion, versionStatus: .behind, websiteURL: nil, progress: .idle, primaryAction: .uninstall))
+        XCTAssertTrue(LibraryCatalog.updateTargets(for: [otherInstallation], from: [target]).isEmpty)
+    }
+
+    func testLibraryRetainsProgressAcrossAllTypedUpdateGroups() throws {
+        let updates = UpdatesCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available)
+        let intents = UpdatesCatalog.intents(for: updates)
+        let running = try XCTUnwrap(intents.first?.items.first)
+        let executing = LibraryCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available,
+                                              activeIntents: intents, runningItem: running, stage: .executing)
+        XCTAssertEqual(executing.first { $0.batchItem == running }?.progress, .running)
+        for item in intents.dropFirst().flatMap(\.items) {
+            XCTAssertEqual(executing.first { $0.batchItem == item }?.progress, .queued)
+        }
+        let verifying = LibraryCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available,
+                                              activeIntents: intents, stage: .reconciling)
+        for item in intents.flatMap(\.items) {
+            XCTAssertEqual(verifying.first { $0.batchItem == item }?.progress, .verifying)
+        }
+        XCTAssertEqual(verifying.first { $0.displayName == "current" }?.progress, .idle)
+    }
+
+    func testLibrarySingleAndBatchUpdateReuseCanonicalTargetsAndCapturedScope() async throws {
+        let provider = FakeBatchProvider()
+        let model = fixtureModel(provider)
+        let updates = PackageUpdatesModel(model: model)
+        let library = LibraryCatalog.cards(homebrew: model.homebrew?.snapshot, node: model.node, homebrewUpdates: .available, nodeUpdates: .available)
+        let formula = LibraryCatalog.contents(library, scope: .homebrew, subtype: .formula, query: "same", updateFilter: .pendingUpdates, updateCards: model.updateCards)
+        let targets = LibraryCatalog.updateTargets(for: formula.matching, from: model.updateCards)
+        await updates.prepareAll(targets, scope: .homebrew, subtype: .formula)
+        let confirmation = try XCTUnwrap(updates.confirmation)
+        XCTAssertEqual(confirmation.plan.groups.map(\.intent.scope), [.homebrew(.formula)])
+        XCTAssertEqual(confirmation.plan.groups.flatMap { $0.intent.items }.map(\.displayIdentifier), ["same"])
+        _ = LibraryCatalog.contents(library, scope: .all, subtype: .all, query: "", updateCards: model.updateCards)
+        await updates.confirmUpdateAll()
+        let executed = await provider.executedNames()
+        XCTAssertEqual(executed, ["same"])
+
+        let singleProvider = FakeBatchProvider()
+        let singleModel = fixtureModel(singleProvider)
+        let single = PackageUpdatesModel(model: singleModel)
+        let npm = LibraryCatalog.cards(homebrew: nil, node: singleModel.node, homebrewUpdates: .notLoaded, nodeUpdates: .available)
+        let target = try XCTUnwrap(LibraryCatalog.updateTargets(for: npm, from: singleModel.updateCards).first)
+        await single.update(target)
+        XCTAssertNil(single.confirmation)
+        let singleExecuted = await singleProvider.executedNames()
+        XCTAssertEqual(singleExecuted, ["behind"])
+    }
+
     func testScopesKeepExactTypedTargetsAndSuppressNPMAheadUnknownAndCurrent() throws {
         let cards = UpdatesCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available)
         XCTAssertEqual(cards.count, 5)
@@ -164,7 +236,7 @@ final class UpdatesTests: XCTestCase {
 
     func testUpdatePhasePresentationUsesRegisteredStageThroughReconciliation() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appending(path: "Features/Updates/UpdatesView.swift"), encoding: .utf8)
+        let source = try String(contentsOf: root.appending(path: "Features/Library/LibraryView.swift"), encoding: .utf8)
         XCTAssertFalse(source.contains("updates.isSubmitting, coordinator.activeIntents.isEmpty"))
         XCTAssertTrue(source.contains("current.context.stage.title"))
         XCTAssertEqual(source.components(separatedBy: "model.updateCards").count, 2, "Build and filter the catalog once per body evaluation")
@@ -344,7 +416,7 @@ final class UpdatesTests: XCTestCase {
 
     func testPageUsesInertSharedCardsAndScopedMenuActionWithoutMetadataUpdate() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appending(path: "Features/Updates/UpdatesView.swift"), encoding: .utf8)
+        let source = try String(contentsOf: root.appending(path: "Features/Library/LibraryView.swift"), encoding: .utf8)
         XCTAssertTrue(source.contains("CatalogCardGrid"))
         XCTAssertTrue(source.contains(".focusedSceneValue"))
         for forbidden in ["NavigationLink", "onTapGesture", "Process(", "brew update", "planHomebrewUpdate", "Timer", "Task.sleep"] { XCTAssertFalse(source.contains(forbidden), forbidden) }

@@ -21,7 +21,7 @@ export const presentationSources = [
   'Features/Discover/DiscoverBatchInstallSheet.swift',
   'Features/Library/LibraryView.swift',
   'Features/Library/LibraryUninstallConfirmation.swift',
-  'Features/Updates/UpdatesView.swift',
+  'Features/Library/LibraryUpdatePresentation.swift',
   'Features/Settings/SettingsView.swift',
   'Features/Settings/SourcesSettingsView.swift',
   'Features/Settings/TerminalSettingsView.swift',

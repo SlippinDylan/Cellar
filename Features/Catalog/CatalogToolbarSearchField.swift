@@ -14,6 +14,7 @@ struct CatalogToolbarSearchField: NSViewRepresentable {
         field.placeholderString = String(localized: prompt)
         field.setAccessibilityLabel(String(localized: prompt))
         field.sendsSearchStringImmediately = true
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         field.delegate = context.coordinator
         return field
     }
@@ -24,6 +25,10 @@ struct CatalogToolbarSearchField: NSViewRepresentable {
         guard let focusRequest, context.coordinator.lastFocusRequest != focusRequest else { return }
         context.coordinator.lastFocusRequest = focusRequest
         DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSearchField, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? nsView.fittingSize.width, height: nsView.fittingSize.height)
     }
 
     @MainActor final class Coordinator: NSObject, NSSearchFieldDelegate {

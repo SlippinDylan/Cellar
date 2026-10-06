@@ -56,9 +56,9 @@ struct AppCommands: Commands {
             Button("Batch Install") { discoverBatchAction?() }
                 .disabled(model.selectedDestination != .discover || discoverBatchAction == nil || model.isBusy)
             Button("Update All") { packageUpdateActions?.updateAll() }
-                .disabled(model.selectedDestination != .updates || packageUpdateActions?.canUpdateAll != true || model.isBusy)
+                .disabled(model.selectedDestination != .library || packageUpdateActions?.canUpdateAll != true || model.isBusy)
             Button("Check for Package Updates") { packageUpdateActions?.checkUpdates() }
-                .disabled(model.selectedDestination != .updates || packageUpdateActions == nil || model.isBusy || model.refreshedAt == nil)
+                .disabled(model.selectedDestination != .library || packageUpdateActions == nil || model.isBusy || model.refreshedAt == nil)
             Button("Refresh") { Task { await model.performShellAction(.refresh) } }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(model.isBusy)

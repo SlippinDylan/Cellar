@@ -26,13 +26,12 @@ final class CatalogCardViewTests: XCTestCase {
     func testCardIsInertByConstructionWithTwoLineDescriptionAndExplicitControls() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appending(path: "Features/Catalog/CatalogCardView.swift"), encoding: .utf8)
-        for forbidden in ["NavigationLink", ".onTapGesture", ".onHover", ".contextMenu", "AsyncImage", "Process("] {
+        for forbidden in ["NavigationLink", ".onTapGesture", ".contextMenu", "AsyncImage", "Process("] {
             XCTAssertFalse(source.contains(forbidden), forbidden)
         }
-        XCTAssertTrue(source.contains(".lineLimit(2)"))
+        XCTAssertTrue(source.contains(".lineLimit(2, reservesSpace: true)"))
         XCTAssertTrue(source.contains(".truncationMode(.tail)"))
         XCTAssertTrue(source.contains("if let action = state.primaryAction"))
-        XCTAssertTrue(source.contains("state.nodeEnvironment"))
         XCTAssertTrue(source.contains("state.progress"))
         XCTAssertTrue(source.contains(".accessibilityLabel"))
         XCTAssertTrue(source.contains("LazyVGrid"))

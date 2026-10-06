@@ -27,9 +27,9 @@ final class AppShellTests: XCTestCase {
     }
 
     func testDestinationContractAndDefaultSelection() {
-        XCTAssertEqual(AppDestination.primaryDestinations, [.home, .library, .discover, .updates, .tools])
+        XCTAssertEqual(AppDestination.primaryDestinations, [.home, .library, .discover, .tools])
         XCTAssertEqual(AppDestination.bottomDestinations, [.settings, .activity])
-        XCTAssertEqual(AppDestination.allCases.map(\.rawValue), ["home", "library", "discover", "updates", "tools", "settings", "activity"])
+        XCTAssertEqual(AppDestination.allCases.map(\.rawValue), ["home", "library", "discover", "tools", "settings", "activity"])
         XCTAssertEqual(AppModel.live().selectedDestination, .home)
         XCTAssertEqual(SettingsPane.allCases, [.general, .sources, .terminal, .about])
     }
@@ -119,7 +119,7 @@ final class AppShellTests: XCTestCase {
         let detailContent = try XCTUnwrap(shell.range(of: "destinationContent"))
         let splitViewStyle = try XCTUnwrap(shell.range(of: ".navigationSplitViewStyle(.prominentDetail)"))
         XCTAssertTrue(detailContent.lowerBound < splitViewStyle.lowerBound)
-        XCTAssertTrue(shell.contains("destinationContent\n                .buttonStyle(.glass)"))
+        XCTAssertTrue(shell.contains(".buttonStyle(.glass)"))
         XCTAssertFalse(cards.contains(".buttonStyle(.bordered)"))
         XCTAssertTrue(cards.contains(".buttonStyle(.glass)"))
     }
@@ -129,7 +129,6 @@ final class AppShellTests: XCTestCase {
         let shell = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
         let home = try String(contentsOf: root.appending(path: "Features/Home/HomeView.swift"), encoding: .utf8)
         let library = try String(contentsOf: root.appending(path: "Features/Library/LibraryView.swift"), encoding: .utf8)
-        let updates = try String(contentsOf: root.appending(path: "Features/Updates/UpdatesView.swift"), encoding: .utf8)
         let environment = try String(contentsOf: root.appending(path: "Features/Tools/EnvironmentSetupView.swift"), encoding: .utf8)
         let runtime = try String(contentsOf: root.appending(path: "Features/Tools/RuntimeToolsView.swift"), encoding: .utf8)
 
@@ -142,8 +141,8 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(shell.contains(".allowsHitTesting(false)"))
         XCTAssertFalse(home.contains("Reading Local Environment"))
         XCTAssertFalse(library.contains("ProgressView(\"Loading Installed Software…\")"))
-        XCTAssertFalse(updates.contains("ProgressView(\"Checking Package Updates…\")"))
-        XCTAssertFalse(updates.contains(#"Text("\(providerName): Checking Updates…")"#))
+        XCTAssertFalse(library.contains("ProgressView(\"Checking Package Updates…\")"))
+        XCTAssertFalse(library.contains(#"Text("\(providerName): Checking Updates…")"#))
         XCTAssertFalse(environment.contains("case .loading: ProgressView()"))
         XCTAssertFalse(runtime.contains("if runtime.isLoading { ProgressView() }"))
         XCTAssertFalse(shell.contains("ToolbarItem(placement: .status)"))
@@ -157,14 +156,13 @@ final class AppShellTests: XCTestCase {
         let toolbarPages = try [
             "Features/Library/LibraryView.swift",
             "Features/Discover/DiscoverView.swift",
-            "Features/Updates/UpdatesView.swift",
             "Features/Activity/ActivityView.swift",
         ].map { try String(contentsOf: root.appending(path: $0), encoding: .utf8) }
 
         XCTAssertTrue(shell.contains("ToolbarItem(id: \"refreshing-actions\", placement: .primaryAction)"))
         XCTAssertTrue(shell.contains("ToolbarItem(id: \"idle-actions\", placement: .primaryAction)"))
-        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-tabs-expanded\", placement: .navigation)"))
-        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-tabs-collapsed\", placement: .navigation)"))
+        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-tabs-expanded\", placement: .automatic)"))
+        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-tabs-collapsed\", placement: .automatic)"))
         XCTAssertFalse(shell.contains("model.selectedDestination == .library ? Text(\"\")"))
         XCTAssertTrue(shell.contains("ControlGroup {"))
         XCTAssertTrue(shell.contains(".controlGroupStyle(.navigation)"))
@@ -175,7 +173,7 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(shell.contains("@FocusedValue(\\.activityActions)"))
         XCTAssertTrue(shell.contains(".buttonStyle(.automatic)"))
         XCTAssertTrue(shell.contains("ToolbarSpacer(.fixed, placement: .primaryAction)"))
-        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-search\", placement: .primaryAction)"))
+        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-actions-search\", placement: .automatic)"))
         XCTAssertTrue(shell.contains(".frame(width: 360)"))
         XCTAssertTrue(toolbarPages.allSatisfy { !$0.contains(".toolbar {") })
     }

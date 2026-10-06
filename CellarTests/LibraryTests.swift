@@ -113,12 +113,12 @@ final class LibraryTests: XCTestCase {
     func testHomebrewMappingRetainsFullTypeIdentityAndSafeWebsite() throws {
         let identity = HomebrewPackageIdentity(name: "acme/tools/one", kind: .formula)
         let package = HomebrewPackage(identity: identity, displayName: "one", description: "Local description", homepage: "https://fixture.invalid/one", installedVersions: ["1.0.0"], currentVersion: "2.0.0", tap: "acme/tools", dependencies: [], pinned: false, deprecated: false, disabled: false, artifacts: [])
-        let snapshot = HomebrewSnapshot(executablePath: "/fixture/brew", version: "5.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: [package], outdatedPackages: [.init(identity: identity, installedVersions: ["1.0.0"], currentVersion: "2.0.0")], taps: [], sectionErrors: [:], controlledPath: "", commandLineToolsAvailable: true)
+        let snapshot = HomebrewSnapshot(executablePath: "/fixture/brew", version: "5.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: [package], outdatedPackages: [.init(identity: identity, installedVersions: ["1.0.0"], currentVersion: "3.0.0")], taps: [], sectionErrors: [:], controlledPath: "", commandLineToolsAvailable: true)
         let cards = LibraryCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded)
         let card = try XCTUnwrap(cards.first)
         XCTAssertEqual(card.identity, .homebrew(identity))
         XCTAssertEqual(card.currentVersion, "1.0.0")
-        XCTAssertEqual(card.availableVersion, "2.0.0")
+        XCTAssertEqual(card.availableVersion, "3.0.0")
         XCTAssertEqual(card.versionStatus, .behind)
         XCTAssertEqual(card.description, "Local description")
         XCTAssertEqual(card.websiteURL?.host, "fixture.invalid")
@@ -147,14 +147,14 @@ final class LibraryTests: XCTestCase {
         XCTAssertThrowsError(try ActivitySummarySanitizer.sanitize(invalid))
     }
 
-    func testLibraryHasFixedWidthNativeSearchAndNoBulkUninstallControls() throws {
+    func testLibraryHasNativeSearchAndNoBulkUninstallControls() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let view = try String(contentsOf: root.appending(path: "Features/Library/LibraryView.swift"), encoding: .utf8)
         let commands = try String(contentsOf: root.appending(path: "Features/AppCommands.swift"), encoding: .utf8)
         for forbidden in ["NavigationLink", "onTapGesture", "Process(", "AsyncImage", "Table("] {
             XCTAssertFalse(view.contains(forbidden), forbidden)
         }
-        XCTAssertTrue(view.contains("LibrarySearchContext(text: $query"))
+        XCTAssertTrue(view.contains("@Binding private var query: String"))
         XCTAssertFalse(view.contains(".searchable("))
         XCTAssertFalse(view.contains(".toolbar {"))
         XCTAssertTrue(view.contains(".focusedSceneValue(\\.catalogSearchAction)"))

@@ -3,9 +3,8 @@ import SwiftUI
 struct AppRootView: View {
     @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
     @FocusedValue(\.discoverToolbar) private var discoverToolbar
-    @FocusedValue(\.librarySearch) private var librarySearch
     @FocusedValue(\.libraryTabs) private var libraryTabs
-    @FocusedValue(\.updatesTabs) private var updatesTabs
+    @FocusedValue(\.libraryUpdateFilter) private var libraryUpdateFilter
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
     @FocusedValue(\.activityActions) private var activityActions
     @FocusedValue(\.activitySearch) private var activitySearch
@@ -14,6 +13,11 @@ struct AppRootView: View {
     @ObservedObject private var operationStore: OperationStore
     private let updateController: ApplicationUpdateController
     @Environment(\.locale) private var locale
+    @State private var libraryQuery = ""
+    @State private var librarySearchFocusRequest: UUID?
+    @State private var contentWidth: CGFloat = 0
+    @State private var libraryTabsWidth: CGFloat = 0
+    @State private var libraryFilterWidth: CGFloat = 0
 
     init(model: AppModel, updateController: ApplicationUpdateController) {
         self.model = model
@@ -41,9 +45,18 @@ struct AppRootView: View {
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
             destinationContent
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
                 .buttonStyle(.glass)
                 .navigationTitle(model.selectedDestination.title)
                 .toolbar {
+                    if model.selectedDestination == .home {
+                        ToolbarItem(id: "home-title", placement: .navigation) {
+                            Text(AppDestination.home.title)
+                                .font(.headline)
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    }
                     if model.selectedDestination == .tools {
                         ToolbarItem(id: "tools-categories", placement: .navigation) {
                             ToolbarCategoryPicker(selection: $model.selectedToolsCategory,
@@ -58,24 +71,22 @@ struct AppRootView: View {
                     }
                     if model.selectedDestination == .library, let libraryTabs {
                         if libraryTabs.selected.isBrew {
-                            ToolbarItem(id: "library-tabs-expanded", placement: .navigation) {
+                            ToolbarItem(id: "library-tabs-expanded", placement: .automatic) {
                                 CatalogToolbarScopeTabs(actions: libraryTabs)
+                                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { libraryTabsWidth = $0 }
                             }
                         } else {
-                            ToolbarItem(id: "library-tabs-collapsed", placement: .navigation) {
+                            ToolbarItem(id: "library-tabs-collapsed", placement: .automatic) {
                                 CatalogToolbarScopeTabs(actions: libraryTabs)
+                                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { libraryTabsWidth = $0 }
                             }
                         }
                     }
-                    if model.selectedDestination == .updates, let updatesTabs {
-                        if updatesTabs.selected.isBrew {
-                            ToolbarItem(id: "updates-tabs-expanded", placement: .navigation) {
-                                CatalogToolbarScopeTabs(actions: updatesTabs)
-                            }
-                        } else {
-                            ToolbarItem(id: "updates-tabs-collapsed", placement: .navigation) {
-                                CatalogToolbarScopeTabs(actions: updatesTabs)
-                            }
+                    if model.selectedDestination == .library, let libraryUpdateFilter {
+                        ToolbarSpacer(.fixed, placement: .automatic)
+                        ToolbarItem(id: "library-update-filter", placement: .automatic) {
+                            LibraryToolbarUpdateFilter(selection: libraryUpdateFilter)
+                                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { libraryFilterWidth = $0 }
                         }
                     }
                     if model.selectedDestination == .discover, let discoverToolbar {
@@ -87,25 +98,45 @@ struct AppRootView: View {
                             CatalogToolbarSearchField(text: discoverToolbar.query, focusRequest: discoverToolbar.focusRequest,
                                                       prompt: LocalizedStringResource("Search Software"), onSubmit: discoverToolbar.submit)
                                 .frame(width: 360)
+                                .glassEffect(.regular, in: Capsule())
                         }
                         .sharedBackgroundVisibility(.hidden)
                     }
-                    ToolbarSpacer(.flexible, placement: .primaryAction)
-                    if isRefreshActive {
+                    ToolbarSpacer(.flexible, placement: model.selectedDestination == .library ? .automatic : .primaryAction)
+                    if model.selectedDestination == .library {
+                        ToolbarItem(id: "library-actions-search", placement: .automatic) {
+                            HStack(spacing: 8) {
+                                RefreshToolbarButton(model: model)
+                                    .buttonStyle(.glass)
+                                    .fixedSize()
+                                    .overlay {
+                                        if isRefreshActive {
+                                            ProgressView().controlSize(.small)
+                                                .allowsHitTesting(false)
+                                                .accessibilityHidden(true)
+                                        }
+                                    }
+                                if libraryUpdateFilter?.wrappedValue == .pendingUpdates {
+                                    Button("Update All") { packageUpdateActions?.updateAll() }
+                                        .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
+                                        .buttonStyle(.glass)
+                                        .fixedSize()
+                                }
+                                CatalogToolbarSearchField(text: $libraryQuery, focusRequest: librarySearchFocusRequest,
+                                                          prompt: LocalizedStringResource("Search Installed Software"))
+                                    .frame(minWidth: 140, maxWidth: 380)
+                                    .glassEffect(.regular, in: Capsule())
+                            }
+                            .frame(width: libraryActionsWidth, alignment: .trailing)
+                        }
+                        .sharedBackgroundVisibility(.hidden)
+                    } else if isRefreshActive {
                         ToolbarItem(id: "refreshing-actions", placement: .primaryAction) {
                             toolbarControlGroup
                         }
                     } else {
                         ToolbarItem(id: "idle-actions", placement: .primaryAction) {
                             toolbarControlGroup
-                        }
-                    }
-                    if model.selectedDestination == .library, let librarySearch {
-                        ToolbarSpacer(.fixed, placement: .primaryAction)
-                        ToolbarItem(id: "library-search", placement: .primaryAction) {
-                            CatalogToolbarSearchField(text: librarySearch.text, focusRequest: librarySearch.focusRequest,
-                                                      prompt: LocalizedStringResource("Search Installed Software"))
-                                .frame(width: 360)
                         }
                     }
                     if model.selectedDestination == .activity, let activitySearch {
@@ -121,7 +152,18 @@ struct AppRootView: View {
                 .toolbar(removing: .title)
         }
         .navigationSplitViewStyle(.prominentDetail)
+        .onChange(of: model.selectedDestination) { previous, current in
+            if previous == .library && current != .library {
+                libraryQuery = ""
+                librarySearchFocusRequest = nil
+            }
+        }
         .task { await model.refreshOnLaunch() }
+    }
+
+    private var libraryActionsWidth: CGFloat {
+        // Leave room for the system's toolbar group insets and fixed spacer.
+        max(0, contentWidth - libraryTabsWidth - libraryFilterWidth - 64)
     }
 
     @ViewBuilder private var contextualToolbarActions: some View {
@@ -130,7 +172,7 @@ struct AppRootView: View {
             Button("Batch Install") { discoverBatchAction?() }
                 .disabled(discoverBatchAction == nil || model.isBusy)
                 .buttonStyle(.automatic)
-        case .updates:
+        case .library:
             Button("Update All") { packageUpdateActions?.updateAll() }
                 .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
                 .buttonStyle(.automatic)
@@ -204,9 +246,10 @@ struct AppRootView: View {
 
     @ViewBuilder private var destinationContent: some View {
         if model.selectedDestination == .home { HomeView(model: model) }
-        else if model.selectedDestination == .library { LibraryView(model: model) }
+        else if model.selectedDestination == .library {
+            LibraryView(model: model, query: $libraryQuery, searchFocusRequest: $librarySearchFocusRequest)
+        }
         else if model.selectedDestination == .discover { DiscoverView(model: model) }
-        else if model.selectedDestination == .updates { UpdatesView(model: model) }
         else if model.selectedDestination == .tools { ToolsView(model: model) }
         else if model.selectedDestination == .settings { SettingsView(model: model, updateController: updateController, relaunchController: .shared) }
         else if model.selectedDestination == .activity { ActivityView(model: model) }

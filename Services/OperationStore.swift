@@ -8,6 +8,7 @@ final class OperationStore: ObservableObject {
     @Published private var activeOperationIDs: Set<UUID> = []
     @Published private(set) var currentOperation: ActiveOperationState?
     private var runningTaskID: UUID?
+    var logStore: FileLogStore?
 
     var activeOperationCount: Int { activeOperationIDs.count }
     var hasActiveOperations: Bool { !activeOperationIDs.isEmpty }
@@ -39,18 +40,21 @@ final class OperationStore: ObservableObject {
         currentOperation.completed = completed
         currentOperation.total = total
         self.currentOperation = currentOperation
+        logStore?.record(level: .debug, category: "operation", message: "\(currentOperation.context.operation.rawValue) processed \(completed)/\(total)", taskID: currentOperation.id)
     }
 
     func updateContext(_ context: ActiveOperationContext) {
         guard var currentOperation else { preconditionFailure("Context requires a registered operation") }
         currentOperation.context = context
         self.currentOperation = currentOperation
+        logStore?.record(level: .debug, category: "operation", message: "\(currentOperation.context.operation.rawValue): \(currentOperation.context.stage)", taskID: currentOperation.id)
     }
 
     @discardableResult
     func begin(context: ActiveOperationContext = .init(operation: .refresh, scope: nil, targets: [], stage: .checking)) -> UUID {
         let identifier = UUID()
         activeOperationIDs.insert(identifier)
+        logStore?.record(level: .info, category: "operation", message: "\(context.operation.rawValue) started", taskID: identifier)
         if currentOperation == nil { currentOperation = .init(id: identifier, context: context) }
         return identifier
     }
@@ -60,6 +64,7 @@ final class OperationStore: ObservableObject {
             activeOperationIDs.remove(identifier) != nil,
             "Every completed operation must have been started"
         )
+        logStore?.record(level: .debug, category: "operation", message: "Task released", taskID: identifier)
         if currentOperation?.id == identifier { currentOperation = nil }
     }
 }

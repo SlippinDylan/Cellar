@@ -54,8 +54,10 @@ enum DiscoverResult: Sendable {
         let installed: String?
         let website: URL?
         let item: BatchItem
+        let icon: CatalogIcon
         switch self {
         case .homebrew(let package):
+            icon = .homebrew(package)
             name = package.displayName
             description = package.description
             available = package.currentVersion
@@ -65,6 +67,7 @@ enum DiscoverResult: Sendable {
             website = CatalogWebsites.url(host: "formulae.brew.sh", path: "/\(component)/\(package.identity.name)")
             item = .homebrew(package.identity)
         case .npm(let package):
+            icon = .placeholder
             name = package.identity.name
             description = package.description
             available = package.version
@@ -79,7 +82,7 @@ enum DiscoverResult: Sendable {
         guard let card = CatalogCardState(identity: identity, displayName: name, description: description,
                                            currentVersion: installed, availableVersion: available, versionStatus: status,
                                            websiteURL: website, progress: LibraryCatalog.progress(for: item, intent: activeIntent, running: running, stage: stage),
-                                           primaryAction: installed == nil && canInstall ? .install : nil)
+                                           primaryAction: installed == nil && canInstall ? .install : nil, icon: icon)
         else { preconditionFailure("An install card has no update invariant") }
         return card
     }

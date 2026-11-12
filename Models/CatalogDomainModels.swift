@@ -75,6 +75,7 @@ struct CatalogCardState: Identifiable, Equatable, Sendable {
     let websiteURL: URL?
     let progress: CatalogCardProgress
     let primaryAction: CatalogCardAction?
+    let icon: CatalogIcon
 
     init?(
         identity: CatalogItemIdentity,
@@ -85,7 +86,8 @@ struct CatalogCardState: Identifiable, Equatable, Sendable {
         versionStatus: SemanticVersionStatus,
         websiteURL: URL?,
         progress: CatalogCardProgress,
-        primaryAction: CatalogCardAction?
+        primaryAction: CatalogCardAction?,
+        icon: CatalogIcon = .placeholder
     ) {
         guard primaryAction != .update || versionStatus.allowsUpdate else { return nil }
         self.identity = identity
@@ -97,6 +99,7 @@ struct CatalogCardState: Identifiable, Equatable, Sendable {
         self.websiteURL = CatalogWebsites.safeWebsite(websiteURL)
         self.progress = progress
         self.primaryAction = primaryAction
+        self.icon = icon
     }
 
     var id: CatalogItemIdentity { identity }

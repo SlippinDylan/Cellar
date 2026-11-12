@@ -41,7 +41,8 @@ enum LibraryCatalog {
             return CatalogCardState(identity: identity, displayName: package.displayName, description: package.description,
                                     currentVersion: installed, availableVersion: available, versionStatus: status,
                                     websiteURL: package.homepage.flatMap(URL.init(string:)),
-                                    progress: progress(for: .homebrew(package.identity), items: activeItems, running: runningItem, stage: stage), primaryAction: .uninstall)
+                                    progress: progress(for: .homebrew(package.identity), items: activeItems, running: runningItem, stage: stage), primaryAction: .uninstall,
+                                    icon: .homebrew(package))
         }
         let npmCards: [CatalogCardState]
         if let node {

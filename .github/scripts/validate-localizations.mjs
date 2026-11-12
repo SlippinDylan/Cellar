@@ -18,6 +18,7 @@ export const presentationSources = [
   'Features/ShellPlaceholderView.swift',
   'Features/Home/HomeView.swift',
   'Features/Catalog/CatalogCardView.swift',
+  'Features/Catalog/CatalogIconView.swift',
   'Features/Catalog/CatalogToolbarSearchField.swift',
   'Features/Catalog/CatalogToolbarScopeTabs.swift',
   'Features/Catalog/CatalogPageActions.swift',

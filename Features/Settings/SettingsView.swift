@@ -16,7 +16,12 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        generalPane
+        Group {
+            switch model.selectedSettingsCategory {
+            case .general: generalPane
+            case .environment: EnvironmentInformationView(model: model)
+            }
+        }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onReceive(relaunchController.$selectedLanguage) { language in
             pendingLanguage = language
@@ -66,7 +71,7 @@ struct SettingsView: View {
                 }
                 .frame(minHeight: AppLayout.minimumDescribedRowHeight)
             }
-            if let logStore = model.logStore { LoggingSettingsView(store: logStore) }
+            if let logStore = model.logStore { LoggingSettingsView(store: logStore, diagnostics: model.activityDiagnostics) }
         }
     }
 

@@ -31,6 +31,10 @@ actor SystemProbeService {
         try await installer.installIfNeeded()
     }
 
+    func isNVMInstalled() -> Bool {
+        environmentResolver.isNVMInstalled()
+    }
+
     func loadHomebrew(snapshot: SnapshotStatus, includingOutdated: Bool = true) async throws -> HomebrewStatus {
         let environment = environmentResolver.environment()
         guard let executable = locator.locate("brew", path: environment["PATH", default: ""]) else {

@@ -113,13 +113,12 @@ final class HomeDashboardTests: XCTestCase {
         XCTAssertFalse(HomeDashboardDependencies.installationLocationIsClear(at: link))
     }
 
-    func testPrerequisiteFailureDoesNotDiscardNVMOrOnlineVersions() async {
+    func testPrerequisiteFailureDoesNotDiscardOnlineVersions() async {
         var deps = dependencies(events: HomeTestEvents())
         deps.commandLineTools = { throw URLError(.badServerResponse) }
         let model = HomeDashboardModel(dependencies: deps, operationStore: OperationStore())
         await model.refresh(after: Date(), environment: [:])
         XCTAssertEqual(model.commandLineTools, .failed)
-        XCTAssertEqual(model.nvmInstalled, true)
         XCTAssertEqual(model.onlineVersions[.node], .available(version: "24.1.0"))
     }
 
@@ -629,7 +628,6 @@ final class HomeDashboardTests: XCTestCase {
     private func dependencies(events: HomeTestEvents, failedSource: HomeOnlineSource? = nil) -> HomeDashboardDependencies {
         HomeDashboardDependencies(
             commandLineTools: { .installed(developerDirectory: "/fixture") },
-            nvmInstalled: { true },
             homebrewLocationOccupied: { false },
             latestVersion: { source in
                 await events.record("version:\(source.rawValue)")

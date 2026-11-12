@@ -2,33 +2,20 @@ import SwiftUI
 
 struct RuntimeToolsView: View {
     @ObservedObject var model: AppModel
-    @ObservedObject private var dashboard: HomeDashboardModel
     @State private var installations: [NodeInstallation] = []
     @State private var showsInstallation = false
     @State private var installationsLoaded = false
 
     init(model: AppModel) {
         self.model = model
-        dashboard = model.homeDashboard
     }
 
     private var nvmAvailable: Bool? {
-        model.node?.summary.nvmLoaded == true ? true : dashboard.nvmInstalled
+        model.nvmInstalled
     }
 
     var body: some View {
-        SettingsPage {
-            SettingsSection(title: "Current Node Environment", detail: String(localized: "Changing this version affects Cellar only, not terminals that are already open.")) {
-                if let node = model.node {
-                    LabeledContent("Node Version", value: node.summary.nodeVersion)
-                    Divider()
-                    LabeledContent("npm Version", value: node.summary.npmVersion)
-                    Divider()
-                    LabeledContent("Node Executable", value: node.summary.nodePath)
-                } else {
-                    Text("Node Environment Unavailable")
-                }
-            }
+        SettingsPage(fillsViewport: true) {
             SettingsSection(title: "nvm", website: CatalogWebsites.nvm, websiteTitle: "nvm Installation Guide") {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -51,7 +38,6 @@ struct RuntimeToolsView: View {
                     Button("Recheck") {
                         Task {
                             await model.refresh()
-                            await dashboard.refreshSetupStatus()
                         }
                     }
                         .disabled(model.isBusy)
@@ -63,14 +49,21 @@ struct RuntimeToolsView: View {
                 }
             }
             ProjectToolsView(model: model, installations: installations)
-            NodeMaintenanceView(model: model)
+            Spacer(minLength: 0)
+            EnvironmentFooterView {
+                if let node = model.node {
+                    LabeledContent("Node Version", value: node.summary.nodeVersion)
+                    LabeledContent("npm Version", value: node.summary.npmVersion)
+                } else {
+                    Text("Node Environment Unavailable")
+                }
+            }
         }
         .task(id: model.refreshedAt) {
             guard !AppRuntime.isRunningTests else { return }
             installationsLoaded = false
             installations = await model.service.runtimeInstallations(preferredVersion: model.preferredNodeVersion)
             installationsLoaded = true
-            await dashboard.refreshSetupStatus()
         }
         .sheet(isPresented: $showsInstallation) {
             NodeInstallationSheet(model: model, canInstall: nvmAvailable == true) { version in
@@ -93,8 +86,6 @@ struct RuntimeToolsView: View {
                         Text("Unresolved").foregroundStyle(.secondary)
                     }
                 }
-                Text("The default applies to future nvm sessions.")
-                    .font(.callout).foregroundStyle(.secondary)
             }
             Spacer()
             Button("Use nvm Default") { Task { await model.restoreDefaultNodeSession() } }

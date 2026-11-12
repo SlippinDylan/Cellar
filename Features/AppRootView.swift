@@ -55,7 +55,7 @@ struct AppRootView: View {
                 .buttonStyle(.glass)
                 .navigationTitle(model.selectedDestination.title)
                 .toolbar {
-                    if model.selectedDestination == .home || model.selectedDestination == .settings {
+                    if model.selectedDestination == .home {
                         ToolbarItem(id: "page-title", placement: .navigation) {
                             Text(model.selectedDestination.title)
                                 .font(.headline)
@@ -66,7 +66,19 @@ struct AppRootView: View {
                     if model.selectedDestination == .tools {
                         ToolbarItem(id: "tools-categories", placement: .navigation) {
                             ToolbarCategoryPicker(selection: $model.selectedToolsCategory,
-                                                  label: LocalizedStringResource("Development Environment"), title: { $0.title })
+                                                  label: LocalizedStringResource("Environment"), title: { $0.title })
+                        }
+                    }
+                    if model.selectedDestination == .maintenance {
+                        ToolbarItem(id: "maintenance-categories", placement: .navigation) {
+                            ToolbarCategoryPicker(selection: $model.selectedMaintenanceCategory,
+                                                  label: LocalizedStringResource("Maintenance"), title: { $0.title })
+                        }
+                    }
+                    if model.selectedDestination == .settings {
+                        ToolbarItem(id: "settings-categories", placement: .navigation) {
+                            ToolbarCategoryPicker(selection: $model.selectedSettingsCategory,
+                                                  label: LocalizedStringResource("Settings"), title: { $0.title })
                         }
                     }
                     if model.selectedDestination == .library, let libraryTabs {
@@ -205,6 +217,7 @@ struct AppRootView: View {
         }
         else if model.selectedDestination == .discover { DiscoverView(model: model) }
         else if model.selectedDestination == .tools { ToolsView(model: model) }
+        else if model.selectedDestination == .maintenance { MaintenanceView(model: model) }
         else if model.selectedDestination == .settings { SettingsView(model: model, relaunchController: .shared) }
         else if model.selectedDestination == .about { AboutView(updateController: updateController) }
         else { ShellPlaceholderView(destination: model.selectedDestination) }

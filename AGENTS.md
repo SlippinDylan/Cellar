@@ -4,7 +4,7 @@
 
 ## 项目概述
 
-Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 采用任务导向的 Home、Library、Discover 和开发环境，统一组织 Homebrew Formula/Cask、npm 全局包、Node/nvm 与终端配置，软件更新整合在 Library 内，同时保留 provider 身份和安全边界。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit；现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
+Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开发环境管理工具。1.0 采用任务导向的 Home、Library、Discover、环境和维护，统一组织 Homebrew Formula/Cask、npm 全局包、Node/nvm 与终端配置，软件更新整合在 Library 内，同时保留 provider 身份和安全边界。主 App 使用 Swift 6、SwiftUI、Foundation 和少量 AppKit；现有 CLI Manager 以快照随 App 打包，但 App 不驱动其交互菜单。
 
 [产品需求](docs/requirements/product-requirements.md)是 1.0 用户行为和安全边界的唯一权威来源。1.0 源码已实现，尚未公开发布；未执行的真实环境与 UI 验收见人工清单。[架构文档](docs/architecture/macos-app-architecture.md)描述当前实现，构建和验证见[开发指南](docs/development.md)。
 
@@ -19,7 +19,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 ## 仓库地图
 
 - `CellarApp.swift`：SwiftUI Scene、AppKit delegate 和退出策略。
-- `Features/`：Home、Library（包含软件更新）、Discover、开发环境与主窗口 Settings；保留的旧 provider 页面不进入主导航。
+- `Features/`：Home、Library（包含软件更新）、Discover、环境、维护与主窗口 Settings；保留的旧 provider 页面不进入主导航。
 - `Services/`：App 状态、刷新编排、任务登记和系统探测。
 - `Models/`：页面状态、Manager JSON DTO、操作计划与结果模型。
 - `Bridge/`：`Process`、受控环境、Manager 快照安装和 JSON 解码。
@@ -44,7 +44,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。
 - Node 通过 Manager schema v1 读取状态，并仅在产品确认规则满足后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`；npm 搜索与操作始终绑定明确 Node 环境。
 - Shell 通过 App 专用 schema v1 adapter 查询和修改 Oh My Zsh、插件、主题及受限 Zsh 文件布局；不得驱动交互菜单或执行协议外的 Shell 命令。
-- 主导航固定为 Home、Library、Discover、开发环境（内部路由仍为 tools）；软件更新与待更新筛选位于 Library；侧边栏左下方依次显示 Settings 和 About，不提供活动记录页面或菜单。开发环境包含 Node.js、Terminal、Sources、Environment Check；Settings 只提供 Cellar 自身的语言与日志偏好，不设置分类 Tab；About 是独立页面，显示放大的图标、名称、版本、检查更新和底部 Studio 版权署名。不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
+- 主导航固定为 Home、Library、Discover、环境（内部路由仍为 tools）、维护；软件更新与待更新筛选位于 Library；侧边栏左下方依次显示 Settings 和 About，不提供活动记录页面或菜单。环境按顺序包含 Terminal、Brew Tap、npm Registry、Node.js，操作页仅在短页面底部或长页面正文末尾以无卡片、居中紧凑的小号次要文字保留必要上下文；维护包含检查与清理，分别保留 Homebrew 检查／npm 缓存校验和既有受限清理；Zsh 文件整理仍在终端，Homebrew 目录更新仍在 Homebrew Tap 页。Settings 使用通用／环境信息分类，前者提供语言与日志偏好，后者集中展示 Cellar 识别和使用的完整环境信息，不冒充已打开终端的环境；About 是独立页面，显示放大的图标、名称、版本、检查更新和底部 Studio 版权署名。不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
 - 卡片本体不导航，只显示关键信息和系统浏览器网站链接。Library 卡片提供单项更新与卸载，Discover 卡片保留状态相关主动作。普通 UI 不显示原始命令或内部计划术语。
 - 安装、配置与维护等任务进度与最近完成结果在主窗口顶部跨页面显示，批量结果保留逐项状态；刷新进度只在工具栏显示。文件日志位于 `~/Library/Logs/Cellar/`，由 Settings 配置等级与保存期限；原始命令和 stdout/stderr 不进入文件日志，只在显式当前会话诊断或既有受控 Manager 日志中提供。旧 `activity.json` 不再读写、迁移或删除。运行中任务不提供用户手动停止；内部取消只用于任务所有者结束、超时和生命周期回收。
 - 用户可见字符串进入 String Catalog，支持 English、简体中文、繁体中文和默认 Follow System。

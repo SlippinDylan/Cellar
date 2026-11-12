@@ -29,11 +29,14 @@ export const presentationSources = [
   'Features/Library/LibraryUninstallConfirmation.swift',
   'Features/Library/LibraryUpdatePresentation.swift',
   'Features/Settings/SettingsView.swift',
-  'Features/Settings/SourcesSettingsView.swift',
+  'Features/Settings/EnvironmentInformationView.swift',
+  'Features/Settings/HomebrewSourcesView.swift',
+  'Features/Settings/NPMRegistrySettingsView.swift',
   'Features/Settings/TerminalSettingsView.swift',
   'Features/Settings/TapTaskConfirmation.swift',
   'Features/Settings/ShellTaskConfirmation.swift',
   'Features/Tools/ToolsView.swift',
+  'Features/Tools/MaintenanceView.swift',
   'Features/Tools/RuntimeToolsView.swift',
   'Features/Tools/ProjectToolsView.swift',
   'Features/Tools/DiagnosticsToolsView.swift',
@@ -55,7 +58,7 @@ export const presentationSources = [
 export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant'];
 
 const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|Toggle|DisclosureGroup|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|Menu|TableColumn|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint|localized|diagnosticSection)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
-const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning|registryLayer)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
+const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning|registryLayer|pathRow|pathList|receiptSection)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
 const discoverPresentationLiteral = /\b(?:guidance\s*\(|message:)\s*"((?:\\.|[^"\\])*)"/g;
 const formatSpecifier = /%%|%(?:\d+\$)?(?:[-+0 #]*)(?:\d+|\*)?(?:\.\d+)?(?:hh|ll|[hlz])?[@diuoxXfFeEgGcCs]/g;
 const signature = value => (value.match(formatSpecifier) ?? []).filter(value => value !== '%%');

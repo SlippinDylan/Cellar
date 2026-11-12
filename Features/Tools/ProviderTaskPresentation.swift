@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum ProviderTaskSurface { case tools, sources, terminal }
+enum ProviderTaskSurface { case tools, homebrewSources, npmSources, terminal, maintenance }
 
 struct ProviderTaskPresentation: ViewModifier {
     @ObservedObject var model: AppModel
@@ -36,13 +36,19 @@ struct ProviderTaskPresentation: ViewModifier {
         })
     }
     private var nodePlanForSurface: NodeActionPlan? {
-        guard let plan = model.nodePlan, ![.installNode, .useNode].contains(plan.request.action),
-              surface == (plan.request.action.isRegistryConfiguration ? .sources : .tools),
-              !(plan.request.action == .cleanup && plan.request.subject == NodeMaintenanceAction.verify.rawValue) else { return nil }
-        return plan
+        guard let plan = model.nodePlan else { return nil }
+        let target: ProviderTaskSurface
+        switch plan.request.action {
+        case .installNode, .useNode: return nil
+        case .cleanup:
+            guard plan.request.subject != NodeMaintenanceAction.verify.rawValue else { return nil }
+            target = .maintenance
+        default: target = plan.request.action.isRegistryConfiguration ? .npmSources : .tools
+        }
+        return surface == target ? plan : nil
     }
     private var homebrewPlanForSurface: HomebrewActionPlan? {
-        guard surface == .sources, let plan = model.homebrewPlan, [.addTap, .removeTap].contains(plan.action) else { return nil }
+        guard surface == .homebrewSources, let plan = model.homebrewPlan, [.addTap, .removeTap].contains(plan.action) else { return nil }
         return plan
     }
     private var shellPlanForSurface: ShellActionPlan? {

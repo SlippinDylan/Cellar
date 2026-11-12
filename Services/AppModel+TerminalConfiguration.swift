@@ -38,8 +38,11 @@ extension AppModel {
         activityDiagnostics.record(id: confirmed.id, operation: .configuration, scope: .shell,
                                    detail: ([result.failure ?? ""] + result.operations.map { [ $0.detail ?? "", $0.backupPath, $0.logFile ].joined(separator: "\n") }).joined(separator: "\n"))
         let refresh = Task { try await service.loadShell(snapshot: managers) }
-        do { shell = try await refresh.value; refreshedAt = Date() }
-        catch { shellOperationError = failureMessage(error) }
+        do { applyShellReadResult(.success(try await refresh.value)); refreshedAt = Date() }
+        catch {
+            applyShellReadResult(.failure(error))
+            shellOperationError = failureMessage(error)
+        }
         var summary = result.activitySummary(id: confirmed.id)
         if shellOperationError != nil && summary.status == .succeeded {
             summary = .init(id: summary.id, operation: summary.operation, scope: summary.scope, targetDisplayNames: [], date: summary.date,

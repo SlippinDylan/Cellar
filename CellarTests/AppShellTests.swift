@@ -27,11 +27,12 @@ final class AppShellTests: XCTestCase {
     }
 
     func testDestinationContractAndDefaultSelection() {
-        XCTAssertEqual(AppDestination.primaryDestinations, [.home, .library, .discover, .tools])
+        XCTAssertEqual(AppDestination.primaryDestinations, [.home, .library, .discover, .tools, .maintenance])
         XCTAssertEqual(AppDestination.bottomDestinations, [.settings, .about])
-        XCTAssertEqual(AppDestination.allCases.map(\.rawValue), ["home", "library", "discover", "tools", "settings", "about"])
+        XCTAssertEqual(AppDestination.allCases.map(\.rawValue), ["home", "library", "discover", "tools", "maintenance", "settings", "about"])
         XCTAssertEqual(AppModel.live().selectedDestination, .home)
-        XCTAssertEqual(ToolsCategory.allCases, [.runtime, .terminal, .sources, .diagnostics])
+        XCTAssertEqual(AppModel.live().selectedToolsCategory, .terminal)
+        XCTAssertEqual(ToolsCategory.allCases, [.terminal, .homebrewSources, .npmSources, .runtime])
     }
 
     func testSidebarPinsUtilityDestinationsInABottomSafeAreaBar() throws {
@@ -46,7 +47,7 @@ final class AppShellTests: XCTestCase {
     func testSidebarKeyboardNavigationCrossesGroupsAndStopsAtTheEdges() {
         let model = AppModel.live()
         let view = AppRootView(model: model, updateController: ApplicationUpdateController(updaterEnabled: false))
-        let destinations: [AppDestination] = [.home, .library, .discover, .tools, .settings, .about]
+        let destinations: [AppDestination] = [.home, .library, .discover, .tools, .maintenance, .settings, .about]
         for (previous, next) in zip(destinations, destinations.dropFirst()) {
             XCTAssertEqual(view.adjacentSidebarDestination(to: previous, forward: true), next)
             XCTAssertEqual(view.adjacentSidebarDestination(to: next, forward: false), previous)
@@ -258,7 +259,8 @@ final class AppShellTests: XCTestCase {
         XCTAssertFalse(commands.contains("performShellAction(.cancel)"))
         XCTAssertTrue(commands.contains(".keyboardShortcut(\"r\", modifiers: .command)"))
         XCTAssertFalse(settings.contains("settings.pane"))
-        XCTAssertFalse(settings.contains("SourcesSettingsView"))
+        XCTAssertFalse(settings.contains("HomebrewSourcesView"))
+        XCTAssertFalse(settings.contains("NPMRegistrySettingsView"))
         XCTAssertFalse(settings.contains("TerminalSettingsView"))
         XCTAssertTrue(settings.contains("changeLanguage(pendingLanguage)"))
         XCTAssertTrue(settings.contains(".onReceive(relaunchController.$selectedLanguage)"))

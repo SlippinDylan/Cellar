@@ -1,14 +1,36 @@
 import Foundation
 
 enum ToolsCategory: String, CaseIterable, Identifiable {
-    case runtime, terminal, sources, diagnostics
+    case terminal, homebrewSources, npmSources, runtime
     var id: Self { self }
     var title: LocalizedStringResource {
         switch self {
         case .runtime: LocalizedStringResource("Node.js")
         case .terminal: LocalizedStringResource("Terminal")
-        case .sources: LocalizedStringResource("Sources")
-        case .diagnostics: LocalizedStringResource("Environment Check")
+        case .homebrewSources: LocalizedStringResource("Brew Tap")
+        case .npmSources: LocalizedStringResource("npm Registry")
+        }
+    }
+}
+
+enum MaintenanceCategory: String, CaseIterable, Identifiable {
+    case checks, cleanup
+    var id: Self { self }
+    var title: LocalizedStringResource {
+        switch self {
+        case .checks: LocalizedStringResource("Checks")
+        case .cleanup: LocalizedStringResource("Cleanup")
+        }
+    }
+}
+
+enum SettingsCategory: String, CaseIterable, Identifiable {
+    case general, environment
+    var id: Self { self }
+    var title: LocalizedStringResource {
+        switch self {
+        case .general: LocalizedStringResource("General")
+        case .environment: LocalizedStringResource("Environment Information")
         }
     }
 }
@@ -21,6 +43,7 @@ enum NodeMaintenanceAction: String, CaseIterable, Identifiable {
     case oldNode = "nvm-old-versions"
     case logs
     var id: Self { self }
+    var category: MaintenanceCategory { self == .verify ? .checks : .cleanup }
     var title: LocalizedStringResource {
         switch self {
         case .verify: LocalizedStringResource("Verify npm Cache")

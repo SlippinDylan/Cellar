@@ -3,7 +3,6 @@ import Foundation
 
 struct HomeDashboardDependencies: Sendable {
     var commandLineTools: @Sendable () async throws -> CommandLineToolsState
-    var nvmInstalled: @Sendable () async -> Bool
     var homebrewLocationOccupied: @Sendable () async -> Bool
     var latestVersion: @Sendable (HomeOnlineSource) async throws -> String
     var requestCommandLineTools: @Sendable () async throws -> Void
@@ -17,7 +16,6 @@ struct HomeDashboardDependencies: Sendable {
         let node = NodeVersionMetadataClient()
         return Self(
             commandLineTools: { try await tools.state() },
-            nvmInstalled: { FileManager.default.fileExists(atPath: URL.homeDirectory.appending(path: ".nvm/nvm.sh").path) },
             homebrewLocationOccupied: { !Self.installationLocationIsClear(at: URL(filePath: "/opt/homebrew")) },
             latestVersion: { source in
                 switch source {
@@ -41,7 +39,6 @@ struct HomeDashboardDependencies: Sendable {
 @MainActor
 final class HomeDashboardModel: ObservableObject {
     @Published private(set) var commandLineTools = HomeCommandLineToolsState.notLoaded
-    @Published private(set) var nvmInstalled: Bool?
     @Published private(set) var homebrewLocationOccupied: Bool?
     @Published private(set) var onlineVersions = Dictionary(uniqueKeysWithValues: HomeOnlineSource.allCases.map { ($0, OnlineVersionState.notLoaded) })
     @Published private(set) var onlineCheckedAt: [HomeOnlineSource: Date] = [:]
@@ -132,16 +129,6 @@ final class HomeDashboardModel: ObservableObject {
         if setupState == .requestingCommandLineTools { setupState = .commandLineToolsRequested }
     }
 
-    func refreshSetupStatus(environment: [String: String] = ProcessInfo.processInfo.environment) async {
-        guard environment["XCTestConfigurationFilePath"] == nil, !operationStore.hasActiveOperations else { return }
-        let id = operationStore.begin()
-        defer { operationStore.end(id) }
-        let refreshID = UUID()
-        activeRefreshID = refreshID
-        commandLineTools = .loading
-        await refreshPrerequisites(refreshID: refreshID)
-    }
-
     func openHomebrewInstaller(installation: HomebrewInstallationState) async {
         guard installation == .notInstalled, canBeginSetup else { return }
         setupState = .preparingInstaller
@@ -186,7 +173,6 @@ final class HomeDashboardModel: ObservableObject {
     }
 
     private func refreshPrerequisites(refreshID: UUID) async {
-        async let nvm = dependencies.nvmInstalled()
         async let occupied = dependencies.homebrewLocationOccupied()
         do {
             let tools = try await dependencies.commandLineTools()
@@ -194,10 +180,9 @@ final class HomeDashboardModel: ObservableObject {
         } catch {
             if !Task.isCancelled && activeRefreshID == refreshID { commandLineTools = .failed }
         }
-        let values = await (nvm, occupied)
+        let locationOccupied = await occupied
         if !Task.isCancelled && activeRefreshID == refreshID {
-            nvmInstalled = values.0
-            homebrewLocationOccupied = values.1
+            homebrewLocationOccupied = locationOccupied
         }
     }
 

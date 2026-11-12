@@ -14,6 +14,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var isRefreshing = false
     @Published private(set) var homebrewRefreshFailed = false
     @Published private(set) var nodeRefreshFailed = false
+    @Published private(set) var shellRefreshFailed = false
     @Published private(set) var homebrewRefreshedAt: Date?
     @Published private(set) var nodeRefreshedAt: Date?
     @Published var homebrewUpdateState = HomePackageUpdateState.notLoaded
@@ -31,13 +32,17 @@ final class AppModel: ObservableObject {
     @Published var preferredNodeVersion: String?
     @Published var nodePlan: NodeActionPlan?
     @Published var nodeActionResult: NodeActionResult?
+    @Published var nodeCacheVerification: NodeCacheVerification?
+    @Published private(set) var nvmInstalled: Bool?
     @Published var nodeOperationError: String?
     @Published var isNodeWorking = false
     @Published var shellPlan: ShellActionPlan?
     @Published var shellActionResult: ShellActionResult?
     @Published var shellOperationError: String?
     @Published var isShellWorking = false
-    @Published var selectedToolsCategory: ToolsCategory = .runtime
+    @Published var selectedToolsCategory: ToolsCategory = .terminal
+    @Published var selectedMaintenanceCategory: MaintenanceCategory = .checks
+    @Published var selectedSettingsCategory: SettingsCategory = .general
     @Published var terminalConfigurationPlan: ShellConfigurationPlan?
     @Published var terminalConfigurationResult: ShellConfigurationResult?
 
@@ -115,6 +120,12 @@ final class AppModel: ObservableObject {
         operationStore.hasActiveOperations || isRefreshing || isHomebrewWorking || isNodeWorking || isShellWorking
     }
 
+    var currentNodeCacheVerification: NodeCacheVerification.State? {
+        guard let node, let verification = nodeCacheVerification,
+              verification.target == NodeCacheVerification.Target(node: node) else { return nil }
+        return verification.state
+    }
+
     var activeOperationLabel: String? {
         if isRefreshing { return "正在读取 Homebrew、Node 和 Shell" }
         if isHomebrewWorking { return "正在处理 Homebrew 任务" }
@@ -138,7 +149,7 @@ final class AppModel: ObservableObject {
         switch action {
         case .refresh:
             guard !isBusy else { return }
-            if selectedDestination == .tools && selectedToolsCategory == .sources && homebrew?.isInstalled == true {
+            if selectedDestination == .tools && selectedToolsCategory == .homebrewSources && homebrew?.isInstalled == true {
                 await performHomebrewMetadataUpdate()
             }
             await refresh()
@@ -175,6 +186,9 @@ final class AppModel: ObservableObject {
         do {
             cancelled = try await operationStore.performCancellable(operationID: operationID) {
                 try Task.checkCancellation()
+                let nvmInstalled = await self.service.isNVMInstalled()
+                try Task.checkCancellation()
+                self.nvmInstalled = nvmInstalled
                 let installedManagers = try await self.service.installManagers()
                 self.managers = installedManagers
                 try Task.checkCancellation()
@@ -190,6 +204,7 @@ final class AppModel: ObservableObject {
             if !cancelled {
                 homebrewRefreshFailed = true
                 nodeRefreshFailed = true
+                shellRefreshFailed = true
                 homebrewUpdateState = .failed
                 nodeUpdateState = .failed
                 errorMessages.append(failureMessage(error))
@@ -226,10 +241,18 @@ final class AppModel: ObservableObject {
 
     private func refreshShellState(snapshot: SnapshotStatus) async {
         let result = await capture { try await self.service.loadShell(snapshot: snapshot) }
+        if case .failure(let error) = result, error is CancellationError || Task.isCancelled { return }
+        applyShellReadResult(result)
+        if case .failure(let error) = result { errorMessages.append(failureMessage(error)) }
+    }
+
+    func applyShellReadResult(_ result: Result<ShellStatus, Error>) {
         switch result {
-        case .success(let snapshot): shell = snapshot
-        case .failure(let error):
-            if !(error is CancellationError) && !Task.isCancelled { errorMessages.append(failureMessage(error)) }
+        case .success(let snapshot):
+            shell = snapshot
+            shellRefreshFailed = false
+        case .failure:
+            shellRefreshFailed = true
         }
     }
 

@@ -44,6 +44,7 @@ final class LifecycleTests: XCTestCase {
         XCTAssertFalse(model.isRefreshing)
         XCTAssertEqual(activity.summaries.first?.status, .cancelled)
         XCTAssertFalse(model.nodeRefreshFailed)
+        XCTAssertFalse(model.shellRefreshFailed)
         XCTAssertEqual(model.shell?.zshVersion, "fixture")
         XCTAssertNil(model.refreshedAt, "Cancelled launch refresh must not start automatic online enrichment")
         let pid = try XCTUnwrap(Int32(String(contentsOf: root.appending(path: "provider-pid"), encoding: .utf8)))

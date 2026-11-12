@@ -40,8 +40,6 @@ struct ProjectToolsView: View {
                         }.fixedSize()
                     }
                 }.disabled(isReading || model.isBusy)
-                Text("Saving this file does not install Node or change the version used by Cellar or open terminals.")
-                    .font(.callout).foregroundStyle(.secondary)
                 Button("Save .nvmrc…") {
                     let request = NodeActionRequest(action: .writeProjectNVMRC, subject: selectedDirectory.path, value: version.trimmingCharacters(in: .whitespacesAndNewlines))
                     Task { await model.prepareNodeAction(request) }

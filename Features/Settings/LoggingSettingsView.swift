@@ -3,7 +3,9 @@ import SwiftUI
 
 struct LoggingSettingsView: View {
     @ObservedObject var store: FileLogStore
+    let diagnostics: ActivityDiagnosticsStore
     @State private var openFailed = false
+    @State private var showsDiagnostics = false
 
     var body: some View {
         SettingsSection(title: "Logging") {
@@ -51,6 +53,18 @@ struct LoggingSettingsView: View {
                 .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.large)
                 .fixedSize()
             }.frame(minHeight: AppLayout.minimumDescribedRowHeight)
+            Divider()
+            HStack(spacing: 24) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Current Session Diagnostics")
+                    Text("Technical output is kept only for this App session and is not written to log files.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                Button("Show Diagnostics…") { showsDiagnostics = true }
+                    .buttonStyle(.glass).buttonBorderShape(.capsule).controlSize(.large)
+                    .fixedSize()
+            }.frame(minHeight: AppLayout.minimumDescribedRowHeight)
             if let error = store.errorMessage {
                 Divider()
                 Label("Logs could not be saved. Check available storage and folder permissions, then retry.", systemImage: "exclamationmark.triangle")
@@ -62,6 +76,9 @@ struct LoggingSettingsView: View {
             if openFailed {
                 Label("The log folder could not be opened. Check folder access and try again.", systemImage: "exclamationmark.triangle")
             }
+        }
+        .sheet(isPresented: $showsDiagnostics) {
+            ActivityDiagnosticsView(store: diagnostics, initialSelection: nil, clipboard: .live)
         }
     }
 }

@@ -7,6 +7,10 @@ struct NodeEnvironmentResolver: Sendable {
         self.homeDirectory = homeDirectory
     }
 
+    func isNVMInstalled() -> Bool {
+        FileManager.default.fileExists(atPath: homeDirectory.appending(path: ".nvm/nvm.sh").path)
+    }
+
     func environment(preferredNodeVersion: String? = nil) -> [String: String] {
         let nvmDirectory = homeDirectory.appending(path: ".nvm", directoryHint: .isDirectory)
         var searchPaths = [

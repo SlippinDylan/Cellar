@@ -291,6 +291,29 @@ struct NodeActionResult: Sendable {
     let postflightError: String?
 }
 
+struct NodeCacheVerification: Sendable {
+    struct Target: Equatable, Sendable {
+        let environment: NodeEnvironmentContext
+        let npmPath: String
+        let cachePath: String
+
+        init(node: NodeSnapshot) {
+            environment = LibraryCatalog.context(node.summary)
+            npmPath = node.summary.npmPath
+            cachePath = node.configuration.cache
+        }
+    }
+
+    enum State: Sendable {
+        case running
+        case completed(NodeActionResult)
+        case failed
+    }
+
+    let target: Target
+    let state: State
+}
+
 struct NodeSnapshot: Sendable {
     let summary: NodeSummary
     let configuration: NodeConfiguration

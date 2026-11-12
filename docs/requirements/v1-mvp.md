@@ -10,14 +10,15 @@
 
 | 范围 | 交付结果 |
 |---|---|
-| App shell | Home、Library、Discover、开发环境；左下方依次显示 Settings 和 About；两者位于主窗口内 |
+| App shell | Home、Library、Discover、环境、维护；左下方依次显示 Settings 和 About；两者位于主窗口内 |
 | 目录体验 | Formula、Cask、npm 卡片；本地库、官方搜索、网站链接、语义版本状态 |
 | Home | Homebrew 与 Node/npm/nvm 的本地状态、线上版本、数量、具体更新摘要和内联 setup |
 | Library | 已安装软件的统一查看、搜索、类型及待更新筛选、单项／批量更新与单项卸载 |
 | Discover | 有界的 Homebrew/npm 搜索，以及单项和单 provider/type 批量安装 |
 | 软件更新 | 位于 Library；当前类型、状态和搜索共同决定批量范围；npm ahead/unknown 不降级 |
-| 开发环境 | Node.js、终端、软件源、环境检查；项目 `.nvmrc`、对应对象下的受限维护与 Zsh tidy |
-| Settings | 仅提供 Cellar 自身的语言与日志偏好，不显示分类 Tab |
+| 环境 | 终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 四个独立页面；项目 `.nvmrc` 与 Zsh tidy，操作附近只保留必要上下文 |
+| 维护 | Homebrew 状态检查、npm 缓存校验与五类已有受限清理；保留确认、复验和实际结果 |
+| Settings | 通用提供语言与日志偏好；环境信息集中展示 Cellar 识别和使用的已有环境详情 |
 | About | 独立侧栏入口；128 点图标、名称、版本、检查更新与 Studio 版权署名 |
 | Operations | 全局写任务互斥、顺序批量、取消、部分完成、post-refresh 和退出保护 |
 | 任务反馈与日志 | 跨页面任务进度与可关闭的最近结果；本地去敏文件日志、等级与保存期限设置；原始输出只在显式会话诊断中展示 |

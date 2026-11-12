@@ -46,11 +46,12 @@ extension AppModel {
                 refreshedShell = try await refresh.value
                 postflightError = nil
             } catch {
+                applyShellReadResult(.failure(error))
                 refreshedShell = nil
                 postflightError = error.localizedDescription
             }
             if let refreshedShell {
-                shell = refreshedShell
+                applyShellReadResult(.success(refreshedShell))
                 refreshedAt = Date()
             }
             let result = ShellActionResult(
@@ -75,9 +76,11 @@ extension AppModel {
         } catch {
             shellOperationError = failureMessage(error)
             let refresh = Task { try await service.loadShell(snapshot: managers) }
-            if let refreshedShell = try? await refresh.value {
-                shell = refreshedShell
+            do {
+                applyShellReadResult(.success(try await refresh.value))
                 refreshedAt = Date()
+            } catch {
+                applyShellReadResult(.failure(error))
             }
             finishActivity(
                 activityID,

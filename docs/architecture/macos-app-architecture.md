@@ -16,8 +16,8 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责主�
 
 当前源码已经实现：
 
-- Home/Library/Discover/开发环境与底部 Settings/About 的原生任务导航；内部 tools 路由保留，开发环境包含 Node.js/Terminal/Sources/Environment Check，Settings 只提供 App 自身的语言与日志偏好；
-- Home 依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，每个统计项使用独立小卡片与品牌色圆角图标底，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、类型／待更新／搜索交集筛选、单项和批量更新、任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；开发环境按 Node.js、终端、软件源与环境检查组织，项目版本归入 Node.js，维护归回对应对象；Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；任务进度与最近结果跨页面显示，排错记录写入本地文件，环境检查提供显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
+- Home/Library/Discover/环境/维护与底部 Settings/About 的原生任务导航；内部 tools 路由保留为环境，包含 Terminal/Brew Tap/npm Registry/Node.js；维护独立提供检查/清理，Settings 提供通用/环境信息；
+- Home 依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，每个统计项使用独立小卡片与品牌色圆角图标底，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、类型／待更新／搜索交集筛选、单项和批量更新、任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序组织，项目版本归入 Node.js，检查与受限清理迁入维护，Zsh 文件整理仍归终端；Homebrew Tap 与 npm 软件源分别接入 Tap 和 Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；任务进度与最近结果跨页面显示，排错记录写入本地文件，Settings > 通用 > 日志提供显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供软件图标、类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - 全部可达页面的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条会话诊断；
@@ -56,9 +56,9 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 `CellarApp` 只提供绑定 `MainWindowIdentity.main` 的 typed-value `WindowGroup`，不声明独立 `Settings` scene。主窗口默认及最小内容尺寸均为 1080 × 720 点，通过内容最小尺寸约束保持可放大；不设置 `LSUIElement`，不声明 `MenuBarExtra`。
 
-主 `NavigationSplitView` 的主导航包含 Home、Library、Discover、开发环境（内部 `AppDestination.tools`）；Settings 与 About 通过 Sidebar 的底部 safe-area bar 依次固定在左下方，不再声明 Activity 路由或菜单。Settings 是 `AppDestination.settings`，detail 区域复用 `SettingsView`，共享同一 `AppModel` 与 `OperationStore`。App 菜单和 Command-Comma 经 `AppModel.showDestination` 选择 Settings；About App 命令经同一导航入口选择独立的 AppDestination.about，并复用 App 的 updater controller。两者都以固定主窗口 identity 调用 `openWindow(id:value:)`，复用或重建主窗口。
+主 `NavigationSplitView` 的主导航包含 Home、Library、Discover、环境（内部 `AppDestination.tools`）和维护；Settings 与 About 通过 Sidebar 的底部 safe-area bar 依次固定在左下方，不再声明 Activity 路由或菜单。Settings 是 `AppDestination.settings`，detail 区域复用 `SettingsView`，共享同一 `AppModel` 与 `OperationStore`。App 菜单和 Command-Comma 经 `AppModel.showDestination` 选择 Settings；About App 命令经同一导航入口选择独立的 AppDestination.about，并复用 App 的 updater controller。两者都以固定主窗口 identity 调用 `openWindow(id:value:)`，复用或重建主窗口。
 
-六个侧边栏入口共用 SwiftUI Button 行，仅由 `selectedDestination` 驱动 10% primary 色的圆角背景，与侧栏材质混合，不使用 `List` 的自动强调色选中高亮。`listItemTint` 只控制内容着色，不能保证获得键盘焦点后仍使用灰色背景。`FocusState` 与方向键事件支持六个入口间的连续导航，首尾不循环；Tab 与按钮激活使用系统焦点机制，关闭自动焦点特效且不另外绘制焦点边框，避免焦点与选中状态产生两个视觉标记。辅助功能保留按钮名称与选中语义，共用 label 保持正常文字和无底色、系统强调色的 SF Symbol。
+七个侧边栏入口共用 SwiftUI Button 行，仅由 `selectedDestination` 驱动 10% primary 色的圆角背景，与侧栏材质混合，不使用 `List` 的自动强调色选中高亮。`listItemTint` 只控制内容着色，不能保证获得键盘焦点后仍使用灰色背景。`FocusState` 与方向键事件支持七个入口间的连续导航，首尾不循环；Tab 与按钮激活使用系统焦点机制，关闭自动焦点特效且不另外绘制焦点边框，避免焦点与选中状态产生两个视觉标记。辅助功能保留按钮名称与选中语义，共用 label 保持正常文字和无底色、系统强调色的 SF Symbol。
 
 `OperationStore` 是退出保护的事实来源；空闲退出前会等待文件日志队列完成，等待期间新登记任务仍会阻止退出：
 
@@ -69,9 +69,9 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 菜单命令与 toolbar 动作共享同一 intent，不复制业务执行路径。
 
-全部主页面统一移除系统 toolbar title item；Home 在 navigation 位置显示本地化的 headline 页面标题，并隐藏该文字项的共享按钮背景。使用弹性 spacer 将动作推到右侧。工具栏背景与滚动边缘采用系统自动行为，不设置强制 `.visible` 或 `.hard`，也不添加自定义 hover 背景。开发环境使用 `ToolbarCategoryPicker` 的原生 `NSSegmentedControl` 切换四个分类，Settings 不再显示分类控件。Home/Library/Discover/About 的滚动容器铺满正文，留白通过 scroll-content margins 应用于内容。开发环境与 Settings 沿用 SettingsPage / SettingsSection 的单列分组布局，状态、操作和技术详情按实际内容组织。
+全部主页面统一移除系统 toolbar title item；Home 在 navigation 位置显示本地化的 headline 页面标题，并隐藏该文字项的共享按钮背景。使用弹性 spacer 将动作推到右侧。工具栏背景与滚动边缘采用系统自动行为，不设置强制 `.visible` 或 `.hard`，也不添加自定义 hover 背景。环境、维护和 Settings 使用 `ToolbarCategoryPicker` 的原生 `NSSegmentedControl`，分别切换 Terminal/Brew Tap/npm Registry/Node.js、检查/清理和通用/环境信息。Home/Library/Discover/About 的滚动容器铺满正文，留白通过 scroll-content margins 应用于内容。环境、维护与 Settings 使用单列布局；操作分组沿用 SettingsPage / SettingsSection，必要上下文使用无卡片 caption 次要文字，短页面借助可用高度与弹性空间置于底部，长页面随正文滚动至末尾，居中排列、行间距 2 点且不设置最低行高；完整环境信息使用居中、最大宽度 600 点的小票纸面，SwiftUI Shape 绘制上下锯齿边和组间虚线；短值左右排列，长路径置于标签下方，PATH 逐目录显示，不设置最低行高。
 
-当前 shell 的刷新进入 `AppModel.performShellAction`，不定义停止 intent；Go 和 Settings 的主窗口呈现共享可注入的 `AppModel.showDestination`。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，主窗口不存在时创建，重复请求不新增窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library 与 Discover 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Batch Install 菜单和 toolbar 共用动作。尚无实际搜索内容的页面不提供搜索命令。开发环境分类在根 toolbar 切换，直接绑定 App 状态；Settings 不再持有 pane 状态或 focused pane Binding，只展示语言与日志。原工具五分类重组为 Node.js、Terminal、Sources、Environment Check，项目版本是 Node.js 小节，维护分别归到对应对象的直接展示区域。输入保留明确标签，路径与内部配置逐行展示。About 保留 128 点图标、版本、Sparkle 检查及 Studio 版权署名，不再展示更新通道和开源入口。共享更新控制器观察 Sparkle 的检查可用状态并发布变化，About 与菜单订阅同一状态，后台检查结束后自动恢复按钮可用性。正文顶部的共享任务反馈独立于当前路由和日志等级，显示安装、配置与维护等任务进度与可展开、可关闭的最近完成结果；refresh 继续只在工具栏显示进度。
+当前 shell 的刷新进入 `AppModel.performShellAction`，不定义停止 intent；Go 和 Settings 的主窗口呈现共享可注入的 `AppModel.showDestination`。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，主窗口不存在时创建，重复请求不新增窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library 与 Discover 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Batch Install 菜单和 toolbar 共用动作。尚无实际搜索内容的页面不提供搜索命令。环境、维护与 Settings 分类在根 toolbar 切换并绑定 App 状态。环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序提供四个独立页面，项目版本是 Node.js 小节，Homebrew 检查与 npm 缓存校验归维护 > 检查，其余五类 Node 清理归维护 > 清理。Settings > 通用保留语言和日志，Settings > 环境信息集中展示已有环境状态、版本、路径与受控 PATH；这些值属于 Cellar 识别和使用的环境，不显示额外说明横幅。操作页只保留目标版本、配置生效范围等必要上下文，不重复完整技术资料。输入保留明确标签，完整路径可换行与复制。About 保留 128 点图标、版本、Sparkle 检查及 Studio 版权署名，不再展示更新通道和开源入口。共享更新控制器观察 Sparkle 的检查可用状态并发布变化，About 与菜单订阅同一状态，后台检查结束后自动恢复按钮可用性。正文顶部的共享任务反馈独立于当前路由和日志等级，显示安装、配置与维护等任务进度与可展开、可关闭的最近完成结果；refresh 继续只在工具栏显示进度。
 
 ## 状态与刷新
 
@@ -89,7 +89,11 @@ merge official versions / updates / partial errors
 
 Hosted XCTest 仍通过测试进程环境禁止自动刷新。一个 provider、一个分区或一项线上检查失败时，只更新对应 error state，不清空已经成功的数据。
 
-启动与手动本机刷新由一个 `OperationStore` owner 覆盖 Manager 安装、三个 provider 子读取及进程回收；toolbar 只在原刷新按钮中显示系统进度，不提供停止入口。已经成功的 provider 独立保留；任务所有者结束或超时导致的内部取消记录为 cancelled，不作为 provider 读取错误。写操作后的必要状态复查仍使用原来的不可取消收尾。
+Shell 快照和最近一次读取是否失败分别保存在 `AppModel`；本机刷新与操作后的复查共用同一状态更新入口。读取失败保留上次成功快照，Settings > 环境信息明确提示旧数据被保留；首次读取失败显示终端状态不可用，后续读取成功清除失败标记，内部刷新取消不记为读取失败。
+
+启动与手动本机刷新由一个 `OperationStore` owner 覆盖 nvm 安装检测、Manager 安装、三个 provider 子读取及进程回收；toolbar 只在原刷新按钮中显示系统进度，不提供停止入口。nvm 安装状态由受控 HOME 下的 `.nvm/nvm.sh` 检测，统一保存在 `AppModel`，供首页、Node.js 和设置页使用，不依赖页面出现或 Node 是否已加载 nvm。已经成功的 provider 独立保留；任务所有者结束或超时导致的内部取消记录为 cancelled，不作为 provider 读取错误。写操作后的必要状态复查仍使用原来的不可取消收尾。
+
+npm 缓存校验状态由 `AppModel` 在当前会话中独立保留，包含执行中、完成结果与失败，绑定 Node 环境、npm 路径和缓存目录。其他操作的准备、取消及通用反馈关闭不清空该检查；当前目标不匹配时显示未检查，避免展示其他环境的结果。
 
 Home 的本机读取跳过 Homebrew/npm outdated 查询，先发布版本、清单和配置。本机刷新结束后，视图生命周期通过 `OperationStore` 登记一个受控任务，并发持有两个 provider 的 outdated 查询和四个官方版本来源，各自独立发布结果、状态与检查时间；界面不提供手动停止，进程回收和子任务结束前继续拒绝退出。离开 Home 或新一轮刷新会在内部取消旧任务，旧结果不能覆盖新任务状态，失效的 loading 状态会明确结束。同一次已完成的本机刷新不重复检查，空闲时没有循环。本机 Homebrew/Node 读取失败时保留先前成功快照与其时间，并单独显示刷新失败；outdated 失败只改变相应更新状态，不清空核心数据。npm outdated 保留核心快照的精确 Node/npm 可执行路径，先验证入口仍可执行，再复验路径、版本与全局目录，不按版本或 nvm default 重新选择环境。既有完整快照 API 继续供操作前后校验使用。
 
@@ -97,11 +101,11 @@ Home 的本机读取跳过 Homebrew/npm outdated 查询，先发布版本、清�
 
 刷新与写操作不使用轮询。独立 IO 可以有界并发；批量 mutation 必须顺序执行。状态模型区分 not loaded、loading、available、partial failure 和 unavailable，不能用空集合替代失败。
 
-主窗口共用 `AppLayout.spacing`（16 点）作为内容边距基准，目录卡片间距共用 `AppLayout.cardSpacing`（8 点）。Home 的每个统计项使用独立小卡片。开发环境与 Settings 的正文铺满内容栏，使用 16 点滚动内容边距与组间距；分组内保持紧凑间距，行高按纯信息、带控件和带说明三类内容统一设置。版本、状态、官网和必要操作尽量同行，不为独立官网图标保留空行。软件源、终端和 Node 维护直接展示，通过分组与分割线区分内容，不使用折叠区域。Terminal 的插件继续通过原生 popover 与 checkbox Toggle 多选，480 点宽、360 点高的滚动面板中将已选项与未选项分组呈现，右侧保留来源标签，勾选保留在页面草稿中，仍由 Apply 统一提交。确认 sheet 与诊断窗口保持各自布局。
+主窗口共用 `AppLayout.spacing`（16 点）作为内容边距基准，目录卡片间距共用 `AppLayout.cardSpacing`（8 点）。Home 的每个统计项使用独立小卡片。环境、维护与 Settings 的正文铺满内容栏，使用 16 点滚动内容边距与组间距；分组内保持紧凑间距，操作分组行高按纯信息、带控件和带说明三类内容统一设置，页尾上下文与环境信息不设置最低行高。版本、状态、官网和必要操作尽量同行，不为独立官网图标保留空行。软件源、终端配置和维护操作按职责分组展示；必要上下文在短页面靠可用内容区底部、长页面随正文位于末尾，使用居中紧凑的小号次要文字，不加卡片背景。Settings > 环境信息按对象分组，以小票纸面集中展示完整已有数据，分组虚线与标题体现层级，短值左右排列、长路径在标签下方使用等宽字体；未知与读取失败不伪装为有效值。检查结果、错误和清理确认范围仍明确展示。Terminal 的插件继续通过原生 popover 与 checkbox Toggle 多选，480 点宽、360 点高的滚动面板中将已选项与未选项分组呈现，右侧保留来源标签，勾选保留在页面草稿中，仍由 Apply 统一提交。确认 sheet 与诊断窗口保持各自布局。
 
 ## Catalog 与展示模型
 
-网站入口统一由 `WebsiteLink` 承载系统 `Link`，只显示蓝色 `safari` 指南针图标，不附加背景、边框或文字标签。符号继承调用方字体；首页标题使用 caption 字号，目录卡片网站图标与软件包名称使用 title3 semibold 字体，开发环境随相邻名称或标题。组件官网与标题同行，缺少组件时的官方安装指引位于相关任务附近；至少 20 点的透明点击区域、原悬停提示和辅助功能名称保留。URL、系统浏览器打开方式和安全边界不变，不增加图标网络请求。
+网站入口统一由 `WebsiteLink` 承载系统 `Link`，只显示蓝色 `safari` 指南针图标，不附加背景、边框或文字标签。符号继承调用方字体；首页标题使用 caption 字号，目录卡片网站图标与软件包名称使用 title3 semibold 字体，环境与维护随相邻名称或标题。组件官网与标题同行，缺少组件时的官方安装指引位于相关任务附近；至少 20 点的透明点击区域、原悬停提示和辅助功能名称保留。URL、系统浏览器打开方式和安全边界不变，不增加图标网络请求。
 
 共享卡片模型保留 provider/type、稳定 identity、名称、current/available version、semantic status、website URL、Node environment、progress 和 typed primary action。Library 的卸载卡片与 canonical update card 分别保留原操作契约，按钮组按动作传递对应卡片，不把卸载卡片伪装为更新目标。
 
@@ -119,7 +123,7 @@ Local library 从本机 provider 状态派生。Discover 通过官方 Homebrew �
 
 Library 移除系统 toolbar title，左侧沿用 `CatalogToolbarScopeTabs` 的原生 All/Brew/NPM 与展开的 All/Formula/Cask，并通过 `LibraryToolbarUpdateFilter` 提供独立单段 Pending Updates Tab，与类型组使用同一原生 `NSSegmentedControl` 组件。类型组与待更新均使用原生 `.automatic` 分段样式和 `.selectOne` 选择模式，保留系统工具栏背景；两组 item 和中间固定 spacer 均使用 `.automatic` placement，按普通工具栏项从左到右排列，避免导航区对项的特殊定位。不得隐藏两组背景或添加自绘材质。待更新点击时切换绑定的 `LibraryUpdateFilter`，同步原生选中状态，支持再次取消。Library 查询文本与搜索聚焦请求由 `AppRootView` 持有，`LibraryView` 接收 Binding，搜索项仅按当前页面是否为 Library 创建，不依赖可选 focused scene 搜索上下文。`onGeometryChange` 读取正文可用宽度及类型、待更新控件的实际宽度；右侧 HStack 工具栏项依次包含按需显示的 Update All、搜索框和圆形刷新，扣除左侧控件及系统间隔预算后分配宽度，搜索在 140～380 点之间承接剩余空间。刷新位于搜索框右侧，使用系统圆形 glass 外观并保留原位进度；整体分配空间，避免 Brew 展开时独立工具栏项被收入溢出菜单。类型筛选、弹性 spacer 与右侧容器均使用 `.automatic` placement，展开或收起 Brew 时保持右对齐。Library 与 Discover 的共享搜索字段均应用系统 `.glassEffect(.regular, in: Capsule())` 并隐藏外层共享背景，保证空输入、未聚焦时外观一致。`PackageUpdateActions.canUpdateAll` 同时要求待更新选中、当前目标非空及操作可用，菜单沿用相同资格。单个主 ScrollView 覆盖内容栏，内容 margins 不缩进滚动条；空状态居中，卡片从顶部排列。筛选只处理本机快照；类型、子类型、待更新和搜索按交集组合。每个 npm identity 继续绑定精确 Node executable 与版本。卸载仍只接受一个目标并进行任务专用确认，Cask 只提供 standard，artifact 不由 App 删除。
 
-Discover 删除系统 toolbar 标题，左侧使用与批量安装弹窗共用的 `GlassCategoryPicker` 显示 All/Formula/Cask/NPM，默认 All；该组件使用 SwiftUI 按钮与系统胶囊形 Liquid Glass 材质，区别于 Library 和开发环境使用的原生 `NSSegmentedControl`。固定 360 点的共享 `CatalogToolbarSearchField` 使用 `.primaryAction` placement，与刷新、批量安装一起靠右，由弹性 spacer 与左侧范围分隔；查询、范围、聚焦和回车提交通过 focused scene context 交给根 toolbar。主内容使用铺满内容栏的 `ScrollView`，16 点内容边距不缩进滚动条；默认空状态按当前 viewport 高度居中，结果从顶部排列。内容区不显示 Registry/Node 摘要、结果数量提示或搜索按钮；批量确认继续保留来源和目的地。搜索由原生字段编辑 delegate 的 Return 命令发起。空输入不请求；每个来源默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。All 通过最多三个子任务并发查询所有可用来源，以 Formula/Cask/NPM 顺序合并结果；来源缺失或查询失败保留其他成功结果，并提供对应来源提示。搜索范围由独立 `DiscoverSearchScope` 表达，不把 All 引入安装 provider/type；npm 结果继续绑定搜索时解析的有效 Registry 与 Node 环境。npm 搜索保留精确 Node context；普通查询使用有效默认 Registry，`@scope/name` 查询先读取该 scope 的有效 Registry，并将实际请求来源绑定到搜索结果。结果安装前准备的有效 Registry 必须与搜索结果绑定的来源相同，不能静默改用另一个 Registry。输入、范围或页面生命周期变化在内部取消旧搜索；替换查询等待旧任务清理后才登记新 owner，界面不提供手动停止。已安装卡片不提供重复安装，更新由 Library 负责。批量输入经本地规范化后，以受控只读操作准备全部 typed plan，再显示绑定的实际来源、Node/npm 入口、canonical globalPrefix/globalRoot、逐项可执行性和数量。最终一次确认仅执行原批次计划；执行或复查失败分别呈现，搜索结果保留。
+Discover 删除系统 toolbar 标题，左侧使用与批量安装弹窗共用的 `GlassCategoryPicker` 显示 All/Formula/Cask/NPM，默认 All；该组件使用 SwiftUI 按钮与系统胶囊形 Liquid Glass 材质，区别于 Library、环境、维护和 Settings 使用的原生 `NSSegmentedControl`。固定 360 点的共享 `CatalogToolbarSearchField` 使用 `.primaryAction` placement，与刷新、批量安装一起靠右，由弹性 spacer 与左侧范围分隔；查询、范围、聚焦和回车提交通过 focused scene context 交给根 toolbar。主内容使用铺满内容栏的 `ScrollView`，16 点内容边距不缩进滚动条；默认空状态按当前 viewport 高度居中，结果从顶部排列。内容区不显示 Registry/Node 摘要、结果数量提示或搜索按钮；批量确认继续保留来源和目的地。搜索由原生字段编辑 delegate 的 Return 命令发起。空输入不请求；每个来源默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。All 通过最多三个子任务并发查询所有可用来源，以 Formula/Cask/NPM 顺序合并结果；来源缺失或查询失败保留其他成功结果，并提供对应来源提示。搜索范围由独立 `DiscoverSearchScope` 表达，不把 All 引入安装 provider/type；npm 结果继续绑定搜索时解析的有效 Registry 与 Node 环境。npm 搜索保留精确 Node context；普通查询使用有效默认 Registry，`@scope/name` 查询先读取该 scope 的有效 Registry，并将实际请求来源绑定到搜索结果。结果安装前准备的有效 Registry 必须与搜索结果绑定的来源相同，不能静默改用另一个 Registry。输入、范围或页面生命周期变化在内部取消旧搜索；替换查询等待旧任务清理后才登记新 owner，界面不提供手动停止。已安装卡片不提供重复安装，更新由 Library 负责。批量输入经本地规范化后，以受控只读操作准备全部 typed plan，再显示绑定的实际来源、Node/npm 入口、canonical globalPrefix/globalRoot、逐项可执行性和数量。最终一次确认仅执行原批次计划；执行或复查失败分别呈现，搜索结果保留。
 
 软件更新不再拥有独立 AppDestination 或页面。Library 持有 `PackageUpdatesModel`，原确认与结果视图保留在 `LibraryUpdatePresentation`。`LibraryCatalog.updateTargets` 将当前可见安装项与 `AppModel.updateCards` 按精确 identity 和已安装版本匹配，只保留可执行 behind 目标；待更新筛选、单项按钮与批量动作均使用同一目标契约。批量更新捕获类型、子类型、状态和搜索后的目标，不随后续筛选扩大范围。Library 自动检查沿用原视图生命周期 owner、失败保留和重试入口；进度使用全部 activeIntents，涵盖排队的后续 provider/type 与最终复查。单项更新直接准备并执行；Update All 捕获当时可见的 behind 目标，在确认前准备全部 Formula、Cask 和明确 npm 环境的 typed groups，确认只消费原组一次。所有组由一个受控任务顺序持有全局槽，逐项准备失败与执行失败保留且继续，界面不提供手动停止。完成后 Homebrew Formula/Cask 共用一次最终库存复查，每个 npm 环境独立复查。核心读取不可用时保留原快照；核心成功但 outdated 返回分区错误时，复查状态仍为 failed，同一 Homebrew 安装或 npm 全局目录内安全合并新核心数据与旧版本补充信息，卡片保持 unknown 且不可更新。逐项结果保持不变，刷新警告与任务结果分别记录。更新后的复查不会触发重复自动检查，用户仍可显式重试。
 
@@ -173,7 +177,7 @@ Homebrew 的 Tap 与元数据任务使用明确的 provider scope 和有限操�
 
 共享任务反馈按当前语言渲染 operation、scope、状态、原因与步骤，完成结果可展开逐项检查并关闭。整个反馈区域按内容高度占用空间，空反馈不预留高度；内容较多时限制总高度并整体滚动，为下方主页面保留可用空间，不按每张结果卡片分别嵌套滚动。安装、配置与维护等任务进度跨页面可见，搜索只在页面结果区显示加载状态，refresh 只在工具栏显示进度，均不提供停止入口。Activity 页面、历史搜索、筛选和复制菜单已移除。
 
-`ActivityDiagnosticsStore` 只在当前进程内保留最多 100 条、每字段最多 16,000 字符的去敏技术记录。单项任务和摘要共享会话内 ID；批次 provider 诊断作为单独的当前会话集合提供。用户从开发环境 > 环境检查的单一会话诊断入口显式打开诊断窗口并选择记录；命令、stdout、stderr 和技术详情只在此展示和复制，不进入文件日志，并提示截断与敏感信息风险。去敏处理覆盖已知凭证/header/私钥/用户路径模式，不声称可以识别所有秘密，也不读取诊断中引用的文件路径。有限原因区分状态变化、工具不可用、网络、权限、准备失败、取消和无法复验；批次逐项结果与普通页面反馈共享这些恢复建议。CLT 请求与已验证 Homebrew Installer 的系统交接以各自语义动作记录成功，不表示工具已安装。
+`ActivityDiagnosticsStore` 只在当前进程内保留最多 100 条、每字段最多 16,000 字符的去敏技术记录。单项任务和摘要共享会话内 ID；批次 provider 诊断作为单独的当前会话集合提供。用户从Settings > 通用 > 日志的通用会话诊断入口显式打开诊断窗口并选择记录；命令、stdout、stderr 和技术详情只在此展示和复制，不进入文件日志，并提示截断与敏感信息风险。去敏处理覆盖已知凭证/header/私钥/用户路径模式，不声称可以识别所有秘密，也不读取诊断中引用的文件路径。有限原因区分状态变化、工具不可用、网络、权限、准备失败、取消和无法复验；批次逐项结果与普通页面反馈共享这些恢复建议。CLT 请求与已验证 Homebrew Installer 的系统交接以各自语义动作记录成功，不表示工具已安装。
 
 ## Homebrew
 
@@ -205,9 +209,9 @@ Command Line Tools service 只检测状态并执行 Apple 文档规定的 `xcode
 
 `NodeManagerClient` 继续使用 schema v1。核心本地读取与 `outdated`/线上版本错误分开。Mutation 只有在单次执行环境中打开 JSON execute gate，项目 `.nvmrc` 使用额外 project-write gate。
 
-开发环境的 Node.js 页面区分当前检测到的 Node/npm 与 nvm 管理的安装列表；前者保留真实版本和可执行路径，不以路径猜测 provider 归属，后者为空不表示整机没有 Node。nvm 状态及官方安装指引放在同一页面，未检查与缺失分开表达；Cellar 不执行远端安装脚本。用户主动打开版本安装后，从官方 Node 发布索引读取最多 100 个支持 macOS arm64 的具体版本，与 npm Registry 查询分离；读取中、失败与空结果分别呈现。恢复 nvm default 会先确认它能解析到已安装版本，Cellar 会话选择不改变现有终端。
+环境的 Node.js 页面区分当前检测到的 Node/npm 与 nvm 管理的安装列表；前者以无卡片次要文字保留真实版本作为操作上下文，完整可执行路径移至 Settings > 环境信息，不以路径猜测 provider 归属，后者为空不表示整机没有 Node。nvm 状态及官方安装指引放在同一页面，未检查与缺失分开表达；Cellar 不执行远端安装脚本。用户主动打开版本安装后，从官方 Node 发布索引读取最多 100 个支持 macOS arm64 的具体版本，与 npm Registry 查询分离；读取中、失败与空结果分别呈现。恢复 nvm default 会先确认它能解析到已安装版本，Cellar 会话选择不改变现有终端。
 
-项目版本作为 Node.js 内的小节，只读取用户通过系统目录选择器选择的项目；提供已安装版本选择并保留手动输入。写入确认继续绑定 `.nvmrc`、`package.json`、nvm default 与受控环境，执行前复验并消费一次；保存只写项目声明，不自动安装或切换 Node。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。Node 的缓存、旧版本和 Manager 日志维护收在 Node.js 的维护区域；日志维护列出精确旧日志候选，确认后目录清单变化会拒绝执行。
+项目版本作为 Node.js 内的小节，只读取用户通过系统目录选择器选择的项目；提供已安装版本选择并保留手动输入。写入确认继续绑定 `.nvmrc`、`package.json`、nvm default 与受控环境，执行前复验并消费一次；保存只写项目声明，不自动安装或切换 Node。npm 软件源页仅以无卡片上下文保留目标 Node 版本与实际生效 Registry；默认 Registry 的用户／项目／全局配置层详情集中到 Settings > 环境信息，scope 查询结果仍保留各层以解释修改影响。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。Node 的 npm 缓存校验位于维护 > 检查；npm 下载缓存、node-gyp 构建缓存、失效 npm 链接、未使用 Node 版本和 Manager 日志清理位于维护 > 清理；日志维护列出精确旧日志候选，确认后目录清单变化会拒绝执行。
 
 Node 配置指纹通过 `O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开普通文件，读取前后核对 metadata、路径与 inode；`.nvmrc`/alias 上限 4 KiB，npm 配置上限 64 KiB，`package.json` 上限 1 MiB。FIFO、设备、目录、符号链接、超限、替换和读取期间变化均拒绝，文件描述符在所有路径关闭。Registry 包含默认安装的 global config 及显式引用的 userconfig/globalconfig/prefix 配置，引用集合最多 16 个文件。
 
@@ -220,16 +224,16 @@ npm 目录能力只针对全局包：
 - Library 安装项及更新目标的 identity 包含当前受控 Node environment；
 - Discover 使用用户选择/有效 Registry 的有界 search client；
 - install/update/uninstall 只在目标身份绑定的 Node 环境执行；
-- Registry 管理位于开发环境 > 软件源，Node 版本与项目版本位于开发环境 > Node.js；
+- Registry 管理位于环境 > Homebrew Tap，Node 版本与项目版本位于环境 > Node.js；
 - current/wanted/latest 不能比较时产生 `unknown`，不得猜测或自动降级。
 
-## Shell 与开发环境
+## Shell 与环境
 
 冻结的 `omz-manager.sh` 与来源逐字节一致。Cellar-owned `app-json.sh` 和模块继续作为独立 schema v1 adapter，不驱动交互菜单。
 
-开发环境的 Terminal 与主窗口共享同一 `AppModel` 和 `OperationStore`。Terminal 的内置插件直接枚举已安装 Oh My Zsh 的插件目录，不使用快照中的推荐列表；自定义插件只接受规范化 GitHub HTTPS repository URL，主题只来自本机安装。一次 Apply 绑定原 `.zshrc` 和有序 typed plugin/theme plans，在一个受控任务中执行；第二项使用第一项预期生成的精确文件内容作为基线，不接受外部漂移或第二次确认。每项保留原 adapter 的状态 token、备份、marker 与 `zsh -n`。语法失败时，仅在文件仍等于本项生成内容的条件下恢复本项原文；后续失败保留之前完成项与备份，不承诺整体事务回滚。符号链接或非普通 `.zshrc` 拒绝写入；不运行 `chsh`。
+环境的 Terminal 与主窗口共享同一 `AppModel` 和 `OperationStore`。Terminal 的内置插件直接枚举已安装 Oh My Zsh 的插件目录，不使用快照中的推荐列表；自定义插件只接受规范化 GitHub HTTPS repository URL，主题只来自本机安装。一次 Apply 绑定原 `.zshrc` 和有序 typed plugin/theme plans，在一个受控任务中执行；第二项使用第一项预期生成的精确文件内容作为基线，不接受外部漂移或第二次确认。每项保留原 adapter 的状态 token、备份、marker 与 `zsh -n`。语法失败时，仅在文件仍等于本项生成内容的条件下恢复本项原文；后续失败保留之前完成项与备份，不承诺整体事务回滚。符号链接或非普通 `.zshrc` 拒绝写入；不运行 `chsh`。
 
-Zsh tidy 位于开发环境 > 终端的维护区域，只移动确认列出的受限文件到 `~/.zsh`；Bridge 拒绝符号链接候选、重定向的整理目录和已占用的目标文件，复验候选清单与 adapter 状态 token，不修改 `.zprofile` 正文。Oh My Zsh 安装继续设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
+Zsh tidy 位于环境 > 终端的维护区域，只移动确认列出的受限文件到 `~/.zsh`；Bridge 拒绝符号链接候选、重定向的整理目录和已占用的目标文件，复验候选清单与 adapter 状态 token，不修改 `.zprofile` 正文。Oh My Zsh 安装继续设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
 
 插件克隆先进入同一批准父目录下的独有 staging，adapter 在核验 marker/device/inode 后固定工作目录；Swift 以 `renameatx_np(RENAME_EXCL)` 原子发布，既有最终目录永不替换或删除。清理仅限已证明归属的 staging；发布后配置失败保留插件并报告 partial。
 

@@ -9,27 +9,19 @@ struct TerminalSettingsView: View {
     @State private var showsPluginInstallation = false
     @State private var submittedPluginURL: URL?
     var body: some View {
-        SettingsPage {
-            SettingsSection(title: "Oh My Zsh", website: CatalogWebsites.url(host: "github.com", path: "/ohmyzsh/ohmyzsh"), websiteTitle: "Oh My Zsh Project") {
-                if let shell = model.shell {
+        SettingsPage(fillsViewport: true) {
+            if let shell = model.shell, !shell.ohMyZshInstalled {
+                SettingsSection(title: "Oh My Zsh", website: CatalogWebsites.url(host: "github.com", path: "/ohmyzsh/ohmyzsh"), websiteTitle: "Oh My Zsh Project") {
                     HStack {
-                        if shell.ohMyZshInstalled {
-                            Label("Installed", systemImage: "checkmark.circle.fill")
-                                .foregroundStyle(.primary)
-                        } else {
-                            Text("Oh My Zsh is not installed.")
-                            Spacer()
-                            Button("Install Oh My Zsh") { Task { await model.prepareShellAction(.init(action: .installOhMyZsh)) } }
-                                .disabled(model.isBusy)
-                        }
+                        Text("Oh My Zsh is not installed.")
+                        Spacer()
+                        Button("Install Oh My Zsh") { Task { await model.prepareShellAction(.init(action: .installOhMyZsh)) } }
+                            .disabled(model.isBusy)
                     }
-                    Text("Cellar keeps the login shell unchanged. Configuration changes are backed up and checked for syntax.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                } else { Text("Terminal State Unavailable") }
+                }
             }
             if let shell = model.shell, shell.ohMyZshInstalled {
-                SettingsSection(title: "Plugins and Theme") {
+                SettingsSection(title: "Plugins and Theme", website: CatalogWebsites.url(host: "github.com", path: "/ohmyzsh/ohmyzsh"), websiteTitle: "Oh My Zsh Project") {
                     HStack {
                         Text("Local Theme")
                         Spacer()
@@ -118,6 +110,14 @@ struct TerminalSettingsView: View {
                     ForEach(Array(result.stepOutcomes.enumerated()), id: \.offset) { _, outcome in
                         Label { Text(outcome.step.title); Text(outcome.status.activityTitle) } icon: { Image(systemName: outcome.status.systemImage) }
                     }
+                }
+            }
+            Spacer(minLength: 0)
+            EnvironmentFooterView {
+                if let shell = model.shell {
+                    LabeledContent("Oh My Zsh", value: String(localized: shell.ohMyZshInstalled ? "Installed" : "Not Installed"))
+                } else {
+                    Text("Terminal State Unavailable")
                 }
             }
         }

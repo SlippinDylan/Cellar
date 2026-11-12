@@ -14,13 +14,14 @@ Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理
 | Home | Homebrew、Node/npm/nvm 与终端环境的关键状态、版本、数量和可更新数量 |
 | Library | 查看、搜索和筛选已安装软件；单项或当前筛选范围内批量更新，以及单项卸载 |
 | Discover | 搜索 Homebrew 与 npm Registry，单项或同 provider/type 批量安装 |
-| 开发环境 | Node.js 版本与项目版本、终端主题和插件、软件源、环境检查及对应的受限维护 |
+| 环境 | Node.js 版本与项目版本、终端主题和插件、软件源及 Zsh 文件整理 |
+| 维护 | Homebrew 检查、npm 缓存校验和已有受限清理 |
 
-主窗口侧边栏左下方依次显示 Settings 和 About，不再提供活动记录页面或菜单。Settings 只保留 Cellar 的语言与日志偏好，不再显示分类 Tab；软件源和终端配置归入开发环境；About 是独立页面，显示放大的图标、名称、版本、检查更新按钮和底部 Studio 版权署名。App 菜单或 Command-Comma 会前置或重建主窗口并选择 Settings，不打开独立设置窗口；菜单“关于 Cellar”打开 About。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
+主窗口侧边栏左下方依次显示 Settings 和 About，不再提供活动记录页面或菜单。Settings 使用“通用／环境信息”分类：通用保留语言与日志偏好，环境信息集中展示 Cellar 识别和使用的开发工具版本、状态与路径；软件源和终端配置归入环境；About 是独立页面，显示放大的图标、名称、版本、检查更新按钮和底部 Studio 版权署名。App 菜单或 Command-Comma 会前置或重建主窗口并选择 Settings，不打开独立设置窗口；菜单“关于 Cellar”打开 About。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
 
-开发环境按 Node.js、终端、软件源和环境检查组织。Node.js 区分 Cellar 当前使用的 Node 与 nvm 管理的已安装版本，版本安装在用户主动打开后读取官方版本；项目版本只读取或写入明确选择项目的 `.nvmrc`，不自动安装或切换终端。npm／Node 维护、Zsh 文件整理和 Homebrew 目录数据更新分别归回 Node.js、终端和软件源；技术路径与维护操作直接展示。CLT/Homebrew 的状态与必要安装动作保留在首页，nvm 安装指引位于 Node.js。
+环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序组织。Node.js 区分 Cellar 当前使用的 Node 与 nvm 管理的已安装版本，版本安装在用户主动打开后读取官方版本；项目版本只读取或写入明确选择项目的 `.nvmrc`，不自动安装或切换终端。操作页面仅在短页面底部或长页面正文末尾以无卡片、居中紧凑的小号次要文字保留必要上下文，完整环境信息位于 Settings > 环境信息，不代表所有已打开终端的运行环境。维护独立分为检查与清理：检查保留 Homebrew 状态检查和 npm 缓存校验，清理保留 npm／构建缓存、失效 npm 链接、未使用 Node 版本与旧 Manager 日志处理；Zsh 文件整理和 Homebrew 目录数据更新仍分别位于终端和 Homebrew Tap 页。检查保留实际结果，清理保留精确范围、一次确认与实际完成结果。CLT/Homebrew 的状态与必要安装动作保留在首页，nvm 安装指引位于 Node.js。
 
-软件源页右上角刷新同时更新 Homebrew/Tap 目录元数据与本机状态，不升级已安装软件；其他页面的刷新仍只读取本机环境。添加 Tap 位于分组标题右侧。
+Homebrew Tap 页右上角刷新同时更新 Homebrew/Tap 目录元数据与本机状态，不升级已安装软件；其他页面的刷新仍只读取本机环境。添加 Tap 位于分组标题右侧。
 
 软件更新不再单独占据侧边栏入口。Library 的类型、可取消选中的待更新 Tab 和搜索条件组合筛选；刷新独立显示，只有选中待更新时显示更新全部，批量更新只影响当前筛选后的可更新项。
 
@@ -51,7 +52,7 @@ Manager 只读资源随 App 打包，运行副本安装到：
 
 非刷新任务的进度和最近一次完成结果在主窗口顶部显示，切换页面后仍可查看；批量操作保留逐项结果和部分完成说明。结果可收起或关闭，不受日志等级影响，重启后不恢复。刷新进度仍只显示在工具栏刷新按钮内。
 
-日志保存在 `~/Library/Logs/Cellar/`。可在 Settings 的日志分组选择最低记录等级（Trace、Debug、Info、Warning、Error、Critical，默认 Info）、保存期限（7、14 或 30 天，默认 7 天），并在访达中打开日志文件夹。设置立即生效；文件按 UTC 日期分组，单文件最多 10 MiB，总占用最多 50 MiB，写入或调整设置时淘汰过期和最旧日志。日志只保存去敏后的任务语义、结果及必要排错信息，不保存原始命令或 stdout/stderr；技术输出仍只在显式打开的当前会话诊断区域或既有受控 Manager 日志中提供。旧版 `~/Library/Application Support/Cellar/Activity/activity.json` 不再读写，也不自动迁移或删除。
+日志保存在 `~/Library/Logs/Cellar/`。可在 Settings > 通用的日志分组选择最低记录等级（Trace、Debug、Info、Warning、Error、Critical，默认 Info）、保存期限（7、14 或 30 天，默认 7 天），并在访达中打开日志文件夹。设置立即生效；文件按 UTC 日期分组，单文件最多 10 MiB，总占用最多 50 MiB，写入或调整设置时淘汰过期和最旧日志。日志只保存去敏后的任务语义、结果及必要排错信息，不保存原始命令或 stdout/stderr；技术输出仍只在显式打开的当前会话诊断区域或既有受控 Manager 日志中提供。旧版 `~/Library/Application Support/Cellar/Activity/activity.json` 不再读写，也不自动迁移或删除。
 
 Release 构建使用 Sparkle 检查 `https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml`。Debug 和普通本地构建默认关闭 updater；只有发布流水线配置密钥并显式开启时才检查更新。
 

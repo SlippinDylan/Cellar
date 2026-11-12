@@ -3,11 +3,33 @@ import Foundation
 extension AppModel {
     func performDirectNodeAction(_ request: NodeActionRequest) async {
         guard [.installNode, .useNode].contains(request.action) || request == NodeMaintenanceAction.verify.request else { return }
+        let verificationTarget: NodeCacheVerification.Target?
+        if request == NodeMaintenanceAction.verify.request {
+            guard !isBusy, let node else { return }
+            verificationTarget = .init(node: node)
+        } else {
+            verificationTarget = nil
+        }
+        if let verificationTarget {
+            nodeCacheVerification = .init(target: verificationTarget, state: .running)
+        }
+        var verificationResult: NodeActionResult?
+        defer {
+            if let verificationTarget {
+                let state: NodeCacheVerification.State
+                if let result = verificationResult {
+                    state = .completed(result)
+                } else {
+                    state = .failed
+                }
+                nodeCacheVerification = .init(target: verificationTarget, state: state)
+            }
+        }
         do {
             let prepared = try await createNodePlan(request)
             let plan = prepared.plan
             guard plan.canExecute else { nodeOperationError = String(localized: plan.blockingMessage); return }
-            await executeNodeAction(plan, snapshot: prepared.snapshot)
+            verificationResult = await executeNodeAction(plan, snapshot: prepared.snapshot)
         } catch { nodeOperationError = failureMessage(error) }
     }
 
@@ -45,8 +67,9 @@ extension AppModel {
         await executeNodeAction(plan, snapshot: managers)
     }
 
-    private func executeNodeAction(_ plan: NodeActionPlan, snapshot managers: SnapshotStatus) async {
-        guard !isBusy, plan.canExecute else { return }
+    @discardableResult
+    private func executeNodeAction(_ plan: NodeActionPlan, snapshot managers: SnapshotStatus) async -> NodeActionResult? {
+        guard !isBusy, plan.canExecute else { return nil }
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
@@ -98,6 +121,7 @@ extension AppModel {
             let itemStatus = operation.batchItemStatus.activityStatus
             let status = itemStatus == .succeeded && postflightError != nil ? ActivityStatus.partiallySucceeded : itemStatus
             recordNodeSummary(plan, id: activityID, status: status, reason: postflightError != nil ? .stateUnavailable : operation.activityReason)
+            return result
         } catch {
             nodeOperationError = failureMessage(error)
             let refresh = Task { try await service.loadNode(snapshot: managers, preferredNodeVersion: preferredNodeVersion) }
@@ -112,6 +136,7 @@ extension AppModel {
                 detail: error.localizedDescription
             )
             recordNodeSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : ActivityItemReason.postWriteStatus(error: error)?.activityStatus ?? .failed, reason: .init(error: error))
+            return nil
         }
     }
 

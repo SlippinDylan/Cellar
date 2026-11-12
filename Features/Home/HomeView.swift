@@ -272,12 +272,12 @@ struct HomeView: View {
     }
 
     private var nvmAvailable: Bool {
-        dashboard.nvmInstalled == true || model.node?.summary.nvmLoaded == true
+        model.nvmInstalled == true
     }
 
     private var nvmValue: String {
         if nvmAvailable { return String(localized: "Installed") }
-        if dashboard.nvmInstalled == false { return String(localized: "Not Installed") }
+        if model.nvmInstalled == false { return String(localized: "Not Installed") }
         return "—"
     }
 

@@ -120,7 +120,7 @@ final class ToolsConfigurationTests: XCTestCase {
     func testReachableTaskSurfacesDoNotPresentCommandsOrNVMRemoteInstall() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let files = ["Features/Tools/RuntimeToolsView.swift", "Features/Home/HomeView.swift", "Features/Tools/NodeMaintenanceView.swift", "Features/Tools/ProjectToolsView.swift",
-                     "Features/Settings/SourcesSettingsView.swift", "Features/Settings/TerminalSettingsView.swift"]
+                     "Features/Settings/HomebrewSourcesView.swift", "Features/Settings/NPMRegistrySettingsView.swift", "Features/Settings/TerminalSettingsView.swift"]
         for file in files {
             let source = try String(contentsOf: root.appending(path: file), encoding: .utf8)
             for forbidden in [".installNVM", "bash -c", "curl |", "sudo", "chsh", "Text(\"Generate Plan", "Text(\"Execute Plan", "command.arguments", "DEFAULT_PLUGIN_SPECS"] {
@@ -143,9 +143,13 @@ final class ToolsConfigurationTests: XCTestCase {
         XCTAssertFalse(result.contains("cookie=session"))
     }
     func testToolsCategoriesAndMaintenanceAllowlist() {
-        XCTAssertEqual(ToolsCategory.allCases, [.runtime, .terminal, .sources, .diagnostics])
+        XCTAssertEqual(ToolsCategory.allCases, [.terminal, .homebrewSources, .npmSources, .runtime])
         XCTAssertEqual(NodeMaintenanceAction.allCases.map(\.rawValue), ["npm-cache-verify", "npm-cache-clean", "node-gyp-cache", "orphan-bins", "nvm-old-versions", "logs"])
         XCTAssertFalse(NodeMaintenanceAction.allCases.map(\.rawValue).contains("cleanup"))
+        XCTAssertEqual(NodeMaintenanceAction.allCases.filter { $0.category == .checks }, [.verify])
+        XCTAssertEqual(NodeMaintenanceAction.allCases.filter { $0.category == .cleanup }, [.npmCache, .nodeGyp, .orphanBins, .oldNode, .logs])
+        XCTAssertEqual(MaintenanceCategory.allCases, [.checks, .cleanup])
+        XCTAssertEqual(SettingsCategory.allCases, [.general, .environment])
     }
 
     func testCustomPluginRequiresExactCredentialFreeGitHubRepository() {

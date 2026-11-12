@@ -8,8 +8,8 @@ struct ToolsView: View {
             case .runtime: RuntimeToolsView(model: model)
                 .modifier(ProviderTaskPresentation(model: model, surface: .tools))
             case .terminal: TerminalSettingsView(model: model)
-            case .sources: SourcesSettingsView(model: model)
-            case .diagnostics: DiagnosticsToolsView(model: model)
+            case .homebrewSources: HomebrewSourcesView(model: model)
+            case .npmSources: NPMRegistrySettingsView(model: model)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

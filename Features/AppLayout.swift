@@ -9,16 +9,21 @@ enum AppLayout {
 }
 
 struct SettingsPage<Content: View>: View {
+    var fillsViewport = false
     @ViewBuilder var content: Content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                content
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    content
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minHeight: fillsViewport ? max(0, geometry.size.height - AppLayout.spacing * 2) : nil,
+                       alignment: .topLeading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentMargins(AppLayout.spacing, for: .scrollContent)
         }
-        .contentMargins(AppLayout.spacing, for: .scrollContent)
     }
 }
 

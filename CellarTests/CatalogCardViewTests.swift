@@ -1,8 +1,29 @@
+import AppKit
 import Foundation
+import SwiftUI
 import XCTest
 @testable import Cellar
 
 final class CatalogCardViewTests: XCTestCase {
+    @MainActor
+    func testDescriptionReservesTwoLinesForMissingEmptyAndWrappedContent() {
+        let descriptions: [String?] = [nil, "", "Short description", "First line\nSecond line",
+            "A long description that wraps across several lines and must truncate after the second line."]
+        for width: CGFloat in [160, 240, 360] {
+            let reference = NSHostingView(rootView: Text("First line\nSecond line")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: width))
+            let expectedHeight = reference.fittingSize.height
+            XCTAssertGreaterThan(expectedHeight, 0)
+            for description in descriptions {
+                let view = NSHostingView(rootView: CatalogCardDescription(description: description).frame(width: width))
+                XCTAssertEqual(view.fittingSize.height, expectedHeight, accuracy: 0.5,
+                               "Description \(String(describing: description)) at width \(width)")
+            }
+        }
+    }
+
     func testVerificationProgressIsExplicitAndDecorativeSpinnerIsHidden() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appending(path: "Features/Catalog/CatalogCardView.swift"), encoding: .utf8)

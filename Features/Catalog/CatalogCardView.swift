@@ -31,19 +31,13 @@ struct CatalogCardView: View {
 
     var body: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                header
-                    .frame(height: 32, alignment: .leading)
-                Text(state.description ?? "")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2, reservesSpace: true)
-                    .truncationMode(.tail)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(height: 32, alignment: .topLeading)
-                    .accessibilityHidden(state.description == nil)
-                metadata
-                    .frame(height: 20, alignment: .leading)
+            HStack(alignment: .center, spacing: 10) {
+                CatalogIconView(state: state)
+                VStack(alignment: .leading, spacing: 4) {
+                    header
+                    metadata
+                        .frame(height: 20, alignment: .leading)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
@@ -53,9 +47,23 @@ struct CatalogCardView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 6) {
-            name
-            Spacer(minLength: 0)
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    name
+                    Text(state.identity.providerScope.tagTitle)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.quaternary, in: Capsule())
+                        .fixedSize()
+                        .accessibilityLabel(Text(state.identity.providerScope.cardTitle))
+                    Spacer(minLength: 0)
+                }
+                CatalogCardDescription(description: state.description)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
             controls
                 .controlSize(.large)
         }
@@ -63,19 +71,11 @@ struct CatalogCardView: View {
 
     private var metadata: some View {
         HStack(spacing: 6) {
-            Text(state.identity.providerScope.tagTitle)
-                .font(.caption.weight(.medium))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(.quaternary, in: Capsule())
-                .fixedSize()
-                .accessibilityLabel(Text(state.identity.providerScope.cardTitle))
-            if let website = state.websiteURL {
-                WebsiteLink(destination: website, title: LocalizedStringResource("Website for \(state.displayName)"))
-                    .font(.title3.weight(.semibold))
-            }
             versionSummary
+            if let website = state.websiteURL {
+                WebsiteLink(destination: website, title: LocalizedStringResource("Website for \(state.displayName)"), showsLabel: true)
+                    .font(.callout)
+            }
             Spacer(minLength: 0)
             taskStatus
                 .fixedSize()
@@ -96,9 +96,15 @@ struct CatalogCardView: View {
 
     @ViewBuilder private var versionSummary: some View {
         if let version = state.currentVersion ?? state.availableVersion {
-            let display = updateVersion.map { "\(version) → \($0)" } ?? version
+            let prefix = Text("V").font(.caption2)
+            // Hair spaces keep the smaller prefix close to each version number.
+            let title: Text = if let update = updateVersion {
+                Text("\(prefix) \(version) → \(prefix) \(update)")
+            } else {
+                Text("\(prefix) \(version)")
+            }
             HStack(spacing: 4) {
-                Text("Version \(display)")
+                title
                     .font(.callout)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -171,6 +177,23 @@ struct CatalogCardView: View {
             .accessibilityLabel(Text("\(actionTitle) \(state.displayName)"))
             .help(Text(action.cardTitle))
         }
+    }
+}
+
+struct CatalogCardDescription: View {
+    let description: String?
+
+    var body: some View {
+        let text = description ?? ""
+        // Empty Text reserves only one line; a blank glyph preserves the two-line layout.
+        Text(text.isEmpty ? " " : text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(2, reservesSpace: true)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityHidden(text.isEmpty)
     }
 }
 

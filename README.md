@@ -24,7 +24,7 @@ Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理
 
 软件更新不再单独占据侧边栏入口。Library 的类型、可取消选中的待更新 Tab 和搜索条件组合筛选；刷新独立显示，只有选中待更新时显示更新全部，批量更新只影响当前筛选后的可更新项。
 
-目录使用等高卡片，缺少简介时保留空白：第一行显示稍大的软件包名称，第二行显示无独立背景的灰色简介，第三行依次显示 Formula/Cask/NPM 类型 Tag、网站指南针图标和带“版本号 ”前缀的版本。不使用分割线，不显示软件图标。需要更新时显示“当前 → 新版本”与更新箭头。Library 右上角提供 Liquid Glass 胶囊形更新／卸载按钮组，鼠标悬停时对应按钮显示浅色背景，无更新资格时只显示卸载，Discover 保留安装主动作。网站由系统浏览器打开，卡片本体不承担跳转。
+目录卡片左侧保留固定 48 × 48 点的图标布局空间，在整张卡片内垂直居中；没有真实图标时使用居中的 40 × 40 点占位底框；右侧软件包名称和 Formula/Cask/NPM 类型 Tag 组成标题行。简介位于图标右侧、名称和标签下方，与名称左边缘对齐，使用无独立背景的灰色文字，最多两行，超出以省略号截断；无论简介缺失、为空或只有一行，都预留两行高度，让卡片等高。名称、简介与版本行之间的两处间距均为 4 点。右侧底部版本使用大写 `V` 前缀（如 `V 8.12.44`），与简介左对齐；其后显示蓝色“网站”文字和指南针图标，文字与图标共同组成可点击的网站入口。不使用分割线。官方 Homebrew Cask 按精确 token 显示真实软件图标；加载中、缺失或失败时显示名称首字母，第三方 Tap 不借用官方同名图标。Formula 和 npm 使用通用图标。需要更新时显示“V 当前 → V 新版本”与更新箭头。Library 右上角提供 Liquid Glass 胶囊形更新／卸载按钮组，鼠标悬停时对应按钮显示浅色背景，无更新资格时只显示卸载，Discover 保留安装主动作。网站由系统浏览器打开，卡片本体不承担跳转。
 
 ## 操作与安全
 
@@ -40,6 +40,8 @@ Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理
 ## 数据与网络
 
 Cellar 没有账户、遥测或自有服务端。Homebrew、npm Registry、nvm/Node 版本、Oh My Zsh、GitHub 插件和 Sparkle 更新会按用户可见功能访问官方或用户配置的来源。Homebrew/npm 查询也可能写入各自 cache；单一网络检查失败不会清空已读取的本地状态。
+
+Library 和 Discover 的官方 Cask 图标由 [CaskFlow](https://github.com/alielsokary/CaskFlow) 提供，通过 `cdn.jsdelivr.net` 按展示需要请求精确 Cask token 对应的 PNG；第三方 CDN 会收到所请求的 token 和通常的网络连接信息。图标缓存在 `~/Library/Caches/com.dylanwang.Cellar/CatalogIcons/`，内存上限 8 MiB、磁盘上限 64 MiB，成功缓存 7 天，失败在当前会话内缓存 5 分钟。图标失败不影响查询和软件操作。CaskFlow 使用 MIT 许可证，软件 Logo 的商标权益归各自权利人；许可文本随 App 的 `BrandIcons-LICENSE.txt` 提供。
 
 Manager 只读资源随 App 打包，运行副本安装到：
 

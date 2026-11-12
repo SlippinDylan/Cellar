@@ -1,6 +1,6 @@
 # Cellar 研究依据
 
-更新日期：2026-10-04
+更新日期：2026-11-12
 
 本文保存会影响 Cellar 架构和产品承诺的外部依据。实现事实以代码和测试为准；本文件区分官方文档、源码证据和项目推论，避免把尚未人工验证的行为写成平台保证。
 
@@ -13,6 +13,13 @@
 | Homebrew 官方 | Homebrew 官方文档、manpage 或 brew 源码直接描述 |
 | 本机验证 | 在当前 Xcode、SDK 或工具版本上读取和执行过 |
 | 项目推论 | 根据官方 API 与当前实现得出的设计结论，仍可能需要真实系统验证 |
+
+## 软件目录图标
+
+- 源码证据：核对 Applite commit `cf9712ae57a23628f4946389192959eb7079c6be` 的 [CaskViewModel.swift](https://github.com/milanvarady/Applite/blob/cf9712ae57a23628f4946389192959eb7079c6be/Applite/Core/CaskCore/CaskViewModel.swift) 和 [AppIconView.swift](https://github.com/milanvarady/Applite/blob/cf9712ae57a23628f4946389192959eb7079c6be/Applite/AppViews/AppIconView.swift)，使用 CaskFlow token PNG、Kingfisher 缓存及名称首字母回退。
+- 上游说明：[CaskFlow](https://github.com/alielsokary/CaskFlow) commit `fcea8e07c712d253d6de093cc6d8e3ab31e5a148` 的 README 说明 `icons` 分支发布 256 × 256 PNG，来自校验过的软件发行包提取。该说明不构成完整覆盖或 CDN 可用性保证；Cellar 不打包全量图标，不运行提取工具。
+- Apple 官方：[URLCache](https://developer.apple.com/documentation/foundation/urlcache) 支持设置内存、磁盘容量和缓存目录；[CGImageSourceCopyPropertiesAtIndex](https://developer.apple.com/documentation/imageio/cgimagesourcecopypropertiesatindex(_:_:_:)) 提供尺寸等图像属性。
+- 项目决策：Cellar 自行实现小范围图标展示，复用现有受限 transport 和系统缓存，不引入 Kingfisher；仅明确的官方 Cask 身份可请求图标，第三方 Tap、Formula、npm 保留本地占位。真实 CDN、磁盘跨进程复用和视觉验收仍见人工清单。
 
 ## 窗口与生命周期
 

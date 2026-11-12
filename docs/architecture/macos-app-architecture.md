@@ -18,7 +18,7 @@ Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责主�
 
 - Home/Library/Discover/开发环境与底部 Settings/About 的原生任务导航；内部 tools 路由保留，开发环境包含 Node.js/Terminal/Sources/Environment Check，Settings 只提供 App 自身的语言与日志偏好；
 - Home 依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，每个统计项使用独立小卡片与品牌色圆角图标底，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、类型／待更新／搜索交集筛选、单项和批量更新、任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；开发环境按 Node.js、终端、软件源与环境检查组织，项目版本归入 Node.js，维护归回对应对象；Sources 已接入 Tap/Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；任务进度与最近结果跨页面显示，排错记录写入本地文件，环境检查提供显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
-- 共享目录卡片与自适应网格已提供类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
+- 共享目录卡片与自适应网格已提供软件图标、类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - 全部可达页面的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条会话诊断；
 - typed batch prepare/execute、受控任务、会话内结构化结果与可配置的文件日志；
@@ -49,6 +49,8 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 - provider-specific client 不被“generic command executor”替代。
 
 仓库沿用 `Features → Services → Bridge → 外部系统` 的方向。新增类型优先放入现有职责目录，不建立没有当前用途的抽象层。
+
+目录图标由 `CatalogIcon.homebrew` 根据明确的官方 Tap 和精确 token 解析，Library/Discover 的卡片状态携带同一图标描述。`CatalogIconView` 仅负责展示及本地占位；独立的 `CatalogIconStore` actor 复用 `CatalogHTTPTransport`，限制 jsDelivr origin、10 秒超时、单张 1 MiB 和 PNG 尺寸／解码校验。最多并发 4 个请求，相同 URL 合并并独立记录每张卡片的订阅；卡片离开时立即结束该订阅，尚未开始且已无订阅的请求从队列移除，不产生失败缓存。已开始的共享请求在期限内完成并缓存，新卡片可重新加入；图标不登记为软件操作或影响退出保护。专用 `URLCache` 限制内存 8 MiB、磁盘 64 MiB，成功缓存 7 天，当前会话失败缓存 5 分钟。不扫描本机 App，不引入 Kingfisher，也不改变安装、更新、卸载流程。
 
 ## Scene、导航与生命周期
 

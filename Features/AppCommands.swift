@@ -7,7 +7,7 @@ struct AppCommands: Commands {
     @FocusedValue(\.activityActions) private var activityActions
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
-    let updateController: ApplicationUpdateController
+    @ObservedObject var updateController: ApplicationUpdateController
 
     init(model: AppModel, updateController: ApplicationUpdateController) {
         self.model = model

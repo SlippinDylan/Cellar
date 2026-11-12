@@ -109,7 +109,7 @@ extension SettingsPane {
 }
 
 struct AboutView: View {
-    let updateController: ApplicationUpdateController
+    @ObservedObject var updateController: ApplicationUpdateController
 
     private var sourceCodeURL: URL {
         guard let url = URL(string: "https://github.com/SlippinDylan/Cellar") else {

@@ -1,8 +1,10 @@
+import Combine
 import Foundation
 import Sparkle
 
 @MainActor
-final class ApplicationUpdateController: NSObject, SPUUpdaterDelegate {
+final class ApplicationUpdateController: NSObject, ObservableObject, SPUUpdaterDelegate {
+    @Published private(set) var canCheckForUpdates = false
     let updateChannel: String
     private let allowedUpdateChannels: Set<String>
     private var updaterController: SPUStandardUpdaterController?
@@ -19,16 +21,19 @@ final class ApplicationUpdateController: NSObject, SPUUpdaterDelegate {
         allowedUpdateChannels = Self.allowedChannels(for: updateChannel)
         super.init()
         if updaterEnabled {
-            updaterController = SPUStandardUpdaterController(
+            let controller = SPUStandardUpdaterController(
                 startingUpdater: true,
                 updaterDelegate: self,
                 userDriverDelegate: nil
             )
+            updaterController = controller
+            observeUpdateAvailability(controller.updater.publisher(for: \.canCheckForUpdates))
         }
     }
 
-    var canCheckForUpdates: Bool {
-        updaterController?.updater.canCheckForUpdates == true
+    func observeUpdateAvailability<Availability: Publisher>(_ availability: Availability)
+        where Availability.Output == Bool, Availability.Failure == Never {
+        availability.assign(to: &$canCheckForUpdates)
     }
 
     func checkForUpdates() {

@@ -52,7 +52,10 @@ export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant'];
 const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|Toggle|DisclosureGroup|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|Menu|TableColumn|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint|localized|diagnosticSection)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
 const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning|registryLayer)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;
 const discoverPresentationLiteral = /\b(?:guidance\s*\(|message:)\s*"((?:\\.|[^"\\])*)"/g;
-const signature = value => value.match(/%(?:\d+\$)?(?:[-+0 #]*)(?:\d+|\*)?(?:\.\d+)?(?:hh|ll|[hlz])?[@diuoxXfFeEgGcCs]/g) ?? [];
+const formatSpecifier = /%%|%(?:\d+\$)?(?:[-+0 #]*)(?:\d+|\*)?(?:\.\d+)?(?:hh|ll|[hlz])?[@diuoxXfFeEgGcCs]/g;
+const signature = value => (value.match(formatSpecifier) ?? []).filter(value => value !== '%%');
+const interpolationToken = '\u0000';
+const catalogKeyShape = key => key.replace(formatSpecifier, value => value === '%%' ? '%' : interpolationToken);
 
 export function validateLocalizations(catalog, sources) {
   const errors = [];
@@ -74,9 +77,16 @@ export function validateLocalizations(catalog, sources) {
   }
   for (const [file, source] of Object.entries(sources)) {
     for (const match of [...source.matchAll(presentationLiteral), ...source.matchAll(homePresentationLiteral), ...source.matchAll(discoverPresentationLiteral)]) {
-      // SwiftUI's String interpolation uses %@ for these shell metadata values.
-      const key = match[1].replace(/\\\([^)]*\)/g, '%@').replace(/\\n/g, '\n').replace(/\\"/g, '"');
-      if (!catalog.strings?.[key]) errors.push(`${file}: uncatalogued presentation string ${JSON.stringify(key)}`);
+      const literal = match[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      const shape = literal.replace(/\\\([^)]*\)/g, interpolationToken);
+      if (shape === literal) {
+        if (!catalog.strings?.[literal]) errors.push(`${file}: uncatalogued presentation string ${JSON.stringify(literal)}`);
+      } else {
+        // The compiler owns Swift types; this check matches wording and interpolation slots only.
+        const candidates = Object.keys(catalog.strings ?? {}).filter(key => catalogKeyShape(key) === shape);
+        if (!candidates.length) errors.push(`${file}: uncatalogued presentation string ${JSON.stringify(literal)}`);
+        if (candidates.length > 1) errors.push(`${file}: ambiguous presentation string ${JSON.stringify(literal)}: ${candidates.join(', ')}`);
+      }
     }
     if (/\bText\s*\(\s*verbatim:\s*"/.test(source)) errors.push(`${file}: presentation literal bypasses localization`);
     for (const declaration of source.matchAll(/\b(?:let|var)\s+(\w+)(?:\s*:\s*String)?\s*=\s*"/g)) {

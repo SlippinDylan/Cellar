@@ -37,3 +37,34 @@ test('catalogued interpolation passes and mismatched placeholders fail', () => {
   invalid.strings['Version %@'].localizations['zh-Hant'].stringUnit.value = '版本';
   assert.match(validateLocalizations(invalid, {})[0], /placeholders differ/);
 });
+
+
+test('integer, string and mixed Swift interpolation use catalog format types', () => {
+  const typed = catalog();
+  typed.strings['%lld Selected Plugins'] = entry('%lld Selected Plugins');
+  typed.strings['%1$lld plugins for %2$@ (100%%)'] = entry('%1$lld plugins for %2$@ (100%%)');
+  assert.deepEqual(validateLocalizations(typed, {
+    'View.swift': 'Text("\\(plugins.count) Selected Plugins"); Text("\\(plugins.count) plugins for \\(name) (100%)")',
+  }), []);
+  assert.match(validateLocalizations(typed, {
+    'View.swift': 'Text("\\(plugins.count) Selected Missing Plugins")',
+  })[0], /uncatalogued presentation string/);
+  assert.match(validateLocalizations(typed, {
+    'View.swift': 'Text("\\(plugins.count) Selected Plugins \\(name)")',
+  })[0], /uncatalogued presentation string/);
+  typed.strings['%lld Selected Plugins'].localizations['zh-Hans'].stringUnit.value = '%@ Selected Plugins';
+  assert.match(validateLocalizations(typed, {})[0], /placeholders differ/);
+});
+
+test('ambiguous interpolation shapes fail instead of guessing Swift types', () => {
+  const ambiguous = catalog();
+  ambiguous.strings['Version %lld'] = entry('Version %lld');
+  assert.match(validateLocalizations(ambiguous, { 'View.swift': 'Text("Version \\(version)")' })[0], /ambiguous presentation string/);
+  assert.deepEqual(validateLocalizations(ambiguous, { 'View.swift': 'Text("Version %@")' }), []);
+});
+
+test('escaped percent signs are literal and format types still match', () => {
+  const percent = { sourceLanguage: 'en', strings: { 'Literal %%@: %@': entry('Literal %%@: %@') } };
+  percent.strings['Literal %%@: %@'].localizations['zh-Hans'].stringUnit.value = '文字 %%d：%@';
+  assert.deepEqual(validateLocalizations(percent, {}), []);
+});

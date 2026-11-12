@@ -153,3 +153,16 @@ Command Line Tools 则直接采用 Apple 文档中的 `xcode-select --install` �
 - English、简体中文和繁体中文 UI 在 1080 × 720 及更窄窗口中的截断、键盘与 VoiceOver 可用性。
 
 这些项目进入[人工验收清单](manual-smoke-checklist.md)。人工验证失败时修改实现或收缩产品承诺，不增加未经证明的 fallback。
+
+## 首页统计图标配色
+
+2026-11-12 核对官方站点与官方 Logo 仓库；首页 13 张统计卡片均使用随 App 打包的图像资源。六个品牌项使用彩色 SVG；Formula、Cask、更新、全局包与 nvm 默认版本使用微软 Fluent 的功能 SVG，两处更新共用一个资源；Command Line Tools 按用户选择使用本机 Apple Terminal 官方图标导出的 PNG。下载来源、固定 commit、原文件及许可记录见[品牌素材记录](images/home-icon-candidates/README.md)和[功能素材记录](images/home-icon-candidates/functional/README.md)。品牌原图保留原色，卡片图标底色与版本旁更新小标使用适配明暗外观的配色；下表记录官方来源的颜色依据，不将功能图标表述为对应工具的官方 Logo。Command Line Tools 的卡片配色使用系统蓝；更新数量继续使用绿色／橙色表达状态。
+
+| 对象 | 官方依据 | 观察到的配色 |
+|---|---|---|
+| Homebrew（含 Formula/Cask） | [官网 Logo](https://brew.sh/assets/img/homebrew.svg) | 麦芽金 `#FBB040` |
+| Node.js | [品牌资源](https://nodejs.org/en/about/branding) | 绿色 `#5FA04E`、`#3F873F`、`#6ABF4B` |
+| npm（含全局包） | [官方红色 Logo](https://github.com/npm/logos/blob/cc343d8c50139f645d165aedfe4d375240599fd1/npm%20logo/npm-logo-red.svg) | 红色 `#C12127`；npm 官网请求返回 403，使用官方 Logo 仓库核对 |
+| nvm（含默认版本） | [官方彩色 Logo](https://github.com/nvm-sh/logos/blob/414e1a32b2f0f07101717f1c301aa14f00f91f59/nvm-logo-color.svg) | 黄色 `#F4DD4B`、深灰 `#333333` |
+| Zsh | [官网](https://www.zsh.org/) | 网站强调色橙色 `#F15A24`，不将网站用色表述为正式品牌规范 |
+| Oh My Zsh | [官网](https://ohmyz.sh/) | 网站主要强调色黄绿色 `#C5D928`，不将网站用色表述为正式品牌规范 |

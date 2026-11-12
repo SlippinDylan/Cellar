@@ -26,6 +26,28 @@ App 使用固定的 Sparkle 2.10.0 Swift Package。仓库没有 Makefile、Swift
 
 Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用前先读取 session defaults，再设置工程、scheme、平台、架构和仓库内 DerivedData 路径。
 
+## 应用图标
+
+图标设计源文件位于仓库根目录的 `Cellar.icon`，由 Apple Icon Composer 保存；App target 的 Debug 和 Release 均将 `ASSETCATALOG_COMPILER_APPICON_NAME` 设为 `Cellar`，并将该文件加入 Resources 构建阶段。Xcode 在命令行构建时编译图标并合并图标元数据，无需手工维护多尺寸 PNG 或修改 Info.plist。About 通过 `NSApplication.shared.applicationIconImage` 读取同一 App 图标。
+
+README 顶部使用 `docs/images/readme/app-icon.png`。修改设计后，先构建 Debug，再从编译后的图标更新预览：
+
+```bash
+sips -s format png \
+  build/DerivedData-Debug/Build/Products/Debug/Cellar.app/Contents/Resources/Cellar.icns \
+  --out docs/images/readme/app-icon.png
+```
+
+首页图标位于 `Resources/BrandIcons.xcassets`，SVG 按原色和保留矢量数据编译；Command Line Tools 使用从本机 Apple 终端 App 官方图标导出的透明 PNG，明暗外观均使用近白色浅渐变底框保证原图深色笔画可辨，图标与底框分别添加轻阴影，由 `Image` 通过资源名称加载。下载原文件、来源与校验值保存在[素材记录](images/home-icon-candidates/README.md)；Devicon 与微软 Fluent UI System Icons 的许可通过 `Resources/BrandIcons-LICENSE.txt` 随 App 打包，不在运行时下载图标。
+
+## 本地调试签名
+
+打开 `Cellar.xcodeproj`，选择 `Cellar` scheme 和 My Mac，按 `⌘R` 使用 Debug 构建并运行。App 和测试 target 的 Debug 均使用 Manual 与本地临时签名（`CODE_SIGN_IDENTITY = "-"`，Xcode 显示为 Sign to Run Locally），无需登录 Apple 账号、选择开发团队或安装开发证书。使用默认 Debug 配置即可，不需要额外传入关闭签名的参数。
+
+本地临时签名仅用于开发，不证明发布签名、Gatekeeper 或公证行为。macOS 也无法据此跨构建稳定识别应用身份，重新构建后可能需要重新授予隐私权限。Cellar 没有依赖团队签名互信的特权 Helper；Debug 的 Sparkle updater 仍默认关闭。Release 签名由发布流水线通过证书和团队参数覆盖。
+
+构建脚本裁剪 Sparkle 架构并调整最低系统版本后，本地临时签名构建必须按依赖顺序重新签名其 XPC、Autoupdate、Updater 和 framework，再由 Xcode 签名主 App。脚本会校验 framework 的完整嵌套签名。构建后可用 `codesign --verify --deep --strict build/DerivedData-Debug/Build/Products/Debug/Cellar.app` 校验整个 App；只校验主程序不能发现嵌入框架的签名失效。无签名构建跳过此步骤，证书发布继续使用流水线的独立签名流程。
+
 ## 测试隔离
 
 自动测试不能读取或修改用户真实的开发环境：
@@ -42,8 +64,8 @@ Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用
 - Catalog、线上版本和 npm Registry search 测试注入本地 fake transport，覆盖有界结果、ETag/cache、取消、超时、无效响应和独立部分失败；不得访问真实 endpoint。
 - CLT/Homebrew setup 测试注入状态探测、latest stable Release metadata、下载、SHA-256、package signature、Gatekeeper assessment 和 system opener。必须分别断言 digest 缺失/无效/不匹配及两项 trust check 失败均不调用 opener，并返回原因和官方链接。只使用 fixture 与临时目录，不请求系统 CLT UI，不打开 Installer，不写 `/opt/homebrew`。
 - Batch coordinator 测试使用 fake typed operations，断言同 provider/type、顺序执行、项目失败后继续、父任务取消时停止未开始项、无回滚声明和正确 post-refresh。
-- Activity 持久化测试注入临时 Application Support，断言最多 100 条、结构化本地化数据、凭证/原始输出不落盘和损坏数据隔离。
-- Activity 同时遵守 1 MiB 编码上限；合并待重试摘要后按最旧优先淘汰，保留可单独表示的最新摘要。覆盖连续大批次、写入失败重试和重启恢复。
+- 任务反馈测试断言会话内摘要、部分完成和逐项结果，以及重启后不恢复历史、不读写旧 `activity.json`。
+- 文件日志测试注入临时日志目录、独立 UserDefaults 和时钟，验证等级过滤、设置持久化、UTC 跨日分卷、保留期限、单文件 10 MiB／总量 50 MiB 限制、去敏及 IO 失败重试；不写入用户日志目录。
 - Shell 插件测试使用假 clone 和独立 staging，验证发布时目的地并发出现、失败清理和符号链接不逃逸；配置夹具包含官方模板初始化及假 loader，直接断言 source 时看到的插件、主题和 compdump。
 - Node 配置特殊文件测试在独立 helper 进程内设置 deadline，验证无 writer FIFO、超限、替换及 descriptor 回收，不通过 sleep 判定正确性。
 - Localization 检查必须覆盖 String Catalog 中 English、简体中文和繁体中文的缺失项，并搜索新增的非本地化用户字符串。
@@ -97,10 +119,7 @@ xcodebuild build \
   -scheme Cellar \
   -configuration Debug \
   -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath build/DerivedData-Debug \
-  CODE_SIGNING_ALLOWED=NO \
-  CODE_SIGNING_REQUIRED=NO \
-  CODE_SIGN_IDENTITY=""
+  -derivedDataPath build/DerivedData-Debug
 ```
 
 ### Release 构建
@@ -128,7 +147,7 @@ xcodebuild build \
 | 仅文档或 `AGENTS.md` | 链接、路径、术语和 diff 检查 |
 | Models、版本语义或纯解析规则 | 相关测试 suite |
 | Bridge、环境解析、Process 或 Manager 契约 | 相关测试；跨边界时运行完整测试 |
-| Catalog/setup、batch、Activity persistence | fake/临时根目录相关测试；跨边界时完整测试和 Debug 构建 |
+| Catalog/setup、batch、会话结果与文件日志 | fake/临时根目录相关测试；跨边界时完整测试和 Debug 构建 |
 | Services、生命周期、localization 或 Features | 相关测试、localization coverage 和 Debug 构建 |
 | Homebrew 查询、计划或写操作 | Homebrew 相关测试、完整测试和 Debug 构建；真实操作仅进入人工验收 |
 | Xcode 工程、资源或平台设置 | 完整测试、Debug 与 Release 构建、产物检查 |

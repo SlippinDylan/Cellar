@@ -52,3 +52,18 @@ for binary in "${binaries[@]}"; do
   test "$(lipo -archs "$binary")" = 'arm64'
   test "$(vtool -show-build "$binary" | awk '$1 == "minos" { print $2; exit }')" = '26.0'
 done
+
+if [[ "${CODE_SIGNING_ALLOWED:-NO}" == YES && "${EXPANDED_CODE_SIGN_IDENTITY:-}" == '-' ]]; then
+  # Binary changes invalidate signatures; seal nested code before the framework.
+  for component in \
+    "$version/XPCServices/Downloader.xpc" \
+    "$version/XPCServices/Installer.xpc" \
+    "$version/Autoupdate" \
+    "$version/Updater.app" \
+    "$framework"; do
+    codesign --force --sign - \
+      --preserve-metadata=identifier,entitlements,flags,runtime \
+      "$component"
+  done
+  codesign --verify --deep --strict "$framework"
+fi

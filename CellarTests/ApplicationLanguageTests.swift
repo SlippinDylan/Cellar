@@ -32,8 +32,8 @@ final class ApplicationLanguageTests: XCTestCase {
                                          shellClient: ShellManagerClient(runner: runner, environmentResolver: ShellEnvironmentResolver(homeDirectory: root)),
                                          environmentResolver: resolver)
         let model = AppModel(service: service, operationStore: store)
-        let settings = SettingsView(model: model, updateController: ApplicationUpdateController(updaterEnabled: false),
-                                    relaunchController: relaunch, defaults: defaults)
+        let settings = SettingsView(model: model,
+                                    relaunchController: relaunch)
         XCTAssertTrue(settings.model === model)
         XCTAssertTrue(settings.operationStore === model.operationStore)
         XCTAssertFalse(FileManager.default.fileExists(atPath: root.path))

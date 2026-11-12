@@ -10,7 +10,7 @@ final class HomebrewClientTests: XCTestCase {
         let stderr = "Cookie: session=doctor-cookie\n" + String(repeating: "err ", count: 530_000)
         try Data(stdout.utf8).write(to: fixture.directoryURL.appending(path: "doctor.stdout"))
         try Data(stderr.utf8).write(to: fixture.directoryURL.appending(path: "doctor.stderr"))
-        let model = fixture.model(activityStore: ActivityStore(applicationSupportRoot: fixture.directoryURL))
+        let model = fixture.model(activityStore: ActivityStore())
         await model.diagnoseHomebrew()
         let diagnostic = try XCTUnwrap(model.activityDiagnostics.records.first)
         XCTAssertEqual(diagnostic.standardOutput.count, ActivityDiagnosticRecord.textLimit)
@@ -25,20 +25,19 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertTrue(copied.contains("truncated"))
         let history = try XCTUnwrap(model.activityStore)
         XCTAssertTrue(history.summaries.isEmpty)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: history.fileURL.path))
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let tools = try String(contentsOf: root.appending(path: "Features/Tools/DiagnosticsToolsView.swift"), encoding: .utf8)
-        let activity = try String(contentsOf: root.appending(path: "Features/Activity/ActivityView.swift"), encoding: .utf8)
+        let activity = try String(contentsOf: root.appending(path: "Features/TaskFeedbackView.swift"), encoding: .utf8)
         XCTAssertTrue(tools.contains("ActivityDiagnosticsView("))
         for raw in ["standardOutput", "standardError", "model.activities"] { XCTAssertFalse(activity.contains(raw), raw) }
         XCTAssertFalse(tools.contains("report.command.standardOutput"))
     }
 
     @MainActor
-    func testTapAndMetadataKeepHomebrewContextTargetsAndRestartFiltering() async throws {
+    func testTapAndMetadataKeepHomebrewContextTargetsAndSessionResults() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
-        let store = ActivityStore(applicationSupportRoot: fixture.directoryURL)
+        let store = ActivityStore()
         let model = fixture.model(activityStore: store)
         var contexts: [ActiveOperationContext] = []
         let subscription = model.operationStore.$currentOperation.sink { if let operation = $0 { contexts.append(operation.context) } }
@@ -48,7 +47,7 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertNotNil(tap.scope)
         XCTAssertEqual(tap.targetDisplayNames, ["newco/apps"])
         XCTAssertTrue(contexts.contains { $0.targets == ["newco/apps"] && $0.scope != nil })
-        XCTAssertEqual(ActivityFilter(provider: .homebrew).apply(store.summaries, locale: .init(identifier: "en")).count, 1)
+        XCTAssertEqual(store.summaries.count, 1)
         await model.prepareHomebrewRemoveTap("newco/apps")
         await model.executeHomebrewPlan()
         XCTAssertEqual(store.summaries.first?.targetDisplayNames, ["newco/apps"])
@@ -59,9 +58,9 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertFalse(renderer.target(metadata).isEmpty)
         XCTAssertTrue(renderer.scope(metadata.scope).contains("Homebrew"))
         XCTAssertTrue(contexts.contains { $0.operation == .updateHomebrewMetadata && $0.scope != nil })
-        let restored = ActivityStore(applicationSupportRoot: fixture.directoryURL)
-        restored.restore()
-        XCTAssertEqual(ActivityFilter(provider: .homebrew).apply(restored.summaries, locale: .init(identifier: "en")).count, 3)
+        let restored = ActivityStore()
+        XCTAssertTrue(restored.summaries.isEmpty)
+        XCTAssertEqual(store.summaries.count, 3)
         XCTAssertTrue(renderer.detail(tap).contains("newco/apps"))
         XCTAssertNotEqual(renderer.detail(metadata), ActivityRenderer(locale: .init(identifier: "zh-Hans")).detail(metadata))
         withExtendedLifetime(subscription) {}

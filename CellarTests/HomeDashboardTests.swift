@@ -10,7 +10,7 @@ final class HomeDashboardTests: XCTestCase {
     func testSetupRequestsPersistHandoffSemanticsAndFiniteTrustFailures() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarSetupActivity-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         var deps = dependencies(events: HomeTestEvents())
         deps.openInstaller = { throw HomebrewSetupError(failure: .packageSignature) }
         let model = HomeDashboardModel(dependencies: deps, operationStore: OperationStore(), activityStore: activity)
@@ -591,11 +591,12 @@ final class HomeDashboardTests: XCTestCase {
         XCTAssertTrue(shell.contains("HomeView(model: model)"))
     }
 
-    func testHomeStacksProviderSectionsAndUsesHorizontalMetricRows() throws {
+    func testHomeStacksProviderSectionsAndUsesIndependentMetricCards() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let home = try String(contentsOf: root.appending(path: "Features/Home/HomeView.swift"), encoding: .utf8)
 
-        XCTAssertFalse(home.contains("LazyVGrid"))
+        XCTAssertFalse(home.contains("StatusMetricDivider"))
+        XCTAssertEqual(home.components(separatedBy: "isStandaloneCard: true").count - 1, 13)
         XCTAssertTrue(home.contains("homebrewSection\n                nodeSection\n                terminalEnvironmentSection"))
         XCTAssertTrue(home.contains("private func homebrewMetrics"))
         XCTAssertTrue(home.contains("private func nodeMetrics(_ summary: NodeDashboardSummary?)"))
@@ -612,6 +613,17 @@ final class HomeDashboardTests: XCTestCase {
         XCTAssertFalse(home.contains("HomeTimestampRow"))
         XCTAssertFalse(home.contains("Open Environment Setup"))
         XCTAssertFalse(home.contains("Open Runtime Tools"))
+    }
+
+    func testHomeImagesLoadFromTheAppBundle() throws {
+        for name in ["HomebrewBrand", "NodeBrand", "NPMBrand", "NVMBrand", "ZshBrand", "OhMyZshBrand",
+                     "FormulaIcon", "CaskIcon", "UpdatesIcon", "GlobalPackagesIcon", "NVMDefaultIcon", "CommandLineToolsIcon"] {
+            let image = try XCTUnwrap(NSImage(named: name), "Missing brand asset: \(name)")
+            XCTAssertGreaterThan(image.size.width, 0)
+            XCTAssertGreaterThan(image.size.height, 0)
+            XCTAssertFalse(image.isTemplate, "Brand colors must be preserved: \(name)")
+        }
+        XCTAssertNotNil(Bundle.main.url(forResource: "BrandIcons-LICENSE", withExtension: "txt"))
     }
 
     private func dependencies(events: HomeTestEvents, failedSource: HomeOnlineSource? = nil) -> HomeDashboardDependencies {

@@ -4,7 +4,7 @@ import XCTest
 final class ToolsConfigurationTests: XCTestCase {
     func testMaintenanceRawErrorsAreOnlyAvailableInExplicitSessionDiagnostics() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appending(path: "Features/Tools/MaintenanceToolsView.swift"), encoding: .utf8)
+        let source = try String(contentsOf: root.appending(path: "Features/Tools/NodeMaintenanceView.swift"), encoding: .utf8)
         XCTAssertFalse(source.contains("DiagnosticText.sanitized(error)"))
         XCTAssertTrue(source.contains("ActivityDiagnosticsView"))
     }
@@ -36,7 +36,14 @@ final class ToolsConfigurationTests: XCTestCase {
     func testTerminalConfirmationsBoundLongPluginListsAndPathsWithoutScrollingActions() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         for file in ["Features/Settings/TerminalSettingsView.swift", "Features/Settings/ShellTaskConfirmation.swift"] {
-            let source = try String(contentsOf: root.appending(path: file), encoding: .utf8)
+            let fileSource = try String(contentsOf: root.appending(path: file), encoding: .utf8)
+            let source: String
+            if file.hasSuffix("TerminalSettingsView.swift") {
+                let confirmation = try XCTUnwrap(fileSource.range(of: "private struct TerminalApplyConfirmation"))
+                source = String(fileSource[confirmation.lowerBound...])
+            } else {
+                source = fileSource
+            }
             XCTAssertTrue(source.contains(".frame(maxHeight: 280)"), file)
             if let scrollEnd = source.range(of: ".frame(maxHeight: 280)"), let cancel = source.range(of: "Button(\"Cancel\"") {
                 XCTAssertTrue(scrollEnd.lowerBound < cancel.lowerBound, file)
@@ -112,7 +119,7 @@ final class ToolsConfigurationTests: XCTestCase {
 
     func testReachableTaskSurfacesDoNotPresentCommandsOrNVMRemoteInstall() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let files = ["Features/Tools/RuntimeToolsView.swift", "Features/Tools/EnvironmentSetupView.swift", "Features/Tools/MaintenanceToolsView.swift", "Features/Tools/ProjectToolsView.swift",
+        let files = ["Features/Tools/RuntimeToolsView.swift", "Features/Home/HomeView.swift", "Features/Tools/NodeMaintenanceView.swift", "Features/Tools/ProjectToolsView.swift",
                      "Features/Settings/SourcesSettingsView.swift", "Features/Settings/TerminalSettingsView.swift"]
         for file in files {
             let source = try String(contentsOf: root.appending(path: file), encoding: .utf8)
@@ -136,7 +143,7 @@ final class ToolsConfigurationTests: XCTestCase {
         XCTAssertFalse(result.contains("cookie=session"))
     }
     func testToolsCategoriesAndMaintenanceAllowlist() {
-        XCTAssertEqual(ToolsCategory.allCases, [.environment, .runtime, .project, .diagnostics, .maintenance])
+        XCTAssertEqual(ToolsCategory.allCases, [.runtime, .terminal, .sources, .diagnostics])
         XCTAssertEqual(NodeMaintenanceAction.allCases.map(\.rawValue), ["npm-cache-verify", "npm-cache-clean", "node-gyp-cache", "orphan-bins", "nvm-old-versions", "logs"])
         XCTAssertFalse(NodeMaintenanceAction.allCases.map(\.rawValue).contains("cleanup"))
     }

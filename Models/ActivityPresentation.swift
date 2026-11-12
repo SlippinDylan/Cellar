@@ -1,47 +1,10 @@
 import Foundation
 
-enum ActivityProviderFilter: String, CaseIterable { case all, homebrew, formula, cask, npm, nodeRuntime, shell }
-
 extension NodeSummary {
     var activityEnvironment: NodeEnvironmentContext? {
         // An installed nvm without a resolved Node is a real state, not an empty environment.
         guard !nodePath.isEmpty, !npmPath.isEmpty else { return nil }
         return LibraryCatalog.context(self)
-    }
-}
-
-struct ActivityFilter {
-    var provider: ActivityProviderFilter = .all
-    var status: ActivityStatus? = nil
-    var search = ""
-
-    func apply(_ summaries: [ActivitySummary], locale: Locale) -> [ActivitySummary] {
-        let renderer = ActivityRenderer(locale: locale)
-        let term = search.trimmingCharacters(in: .whitespacesAndNewlines)
-        return summaries.filter { summary in
-            let matchesProvider: Bool = switch (provider, summary.scope) {
-            case (.all, _), (.homebrew, .homebrew), (.homebrew, .homebrewTaps), (.homebrew, .homebrewMetadata), (.homebrew, .homebrewDiagnostics),
-                 (.formula, .homebrew(.formula)), (.cask, .homebrew(.cask)),
-                 (.npm, .npm), (.nodeRuntime, .nodeRuntime), (.shell, .shell): true
-            default: false
-            }
-            return matchesProvider && (status == nil || summary.status == status)
-                && (term.isEmpty || renderer.detail(summary).localizedStandardContains(term))
-        }
-    }
-
-    static func reconciledSelection(_ selection: UUID?, visible: [ActivitySummary]) -> UUID? {
-        guard let selection, visible.contains(where: { $0.id == selection }) else { return nil }
-        return selection
-    }
-}
-
-enum ActivityHistoryState: Equatable {
-    case populated, empty, noMatches, unavailable
-    init(summaries: [ActivitySummary], visible: [ActivitySummary], error: ActivityStoreError?) {
-        if !visible.isEmpty { self = .populated }
-        else if !summaries.isEmpty { self = .noMatches }
-        else { self = error == nil ? .empty : .unavailable }
     }
 }
 
@@ -70,19 +33,6 @@ struct ActivityRenderer {
         case .shell: localized("Terminal")
         case nil: localized("Environment")
         }
-    }
-
-    func provider(_ provider: ActivityProviderFilter) -> String {
-        let title: LocalizedStringResource = switch provider {
-        case .all: LocalizedStringResource("All Providers")
-        case .homebrew: LocalizedStringResource("Homebrew")
-        case .formula: LocalizedStringResource("Homebrew · Formula")
-        case .cask: LocalizedStringResource("Homebrew · Cask")
-        case .npm: "npm Global Packages"
-        case .nodeRuntime: LocalizedStringResource("Node Runtime")
-        case .shell: LocalizedStringResource("Terminal")
-        }
-        return localized(title)
     }
 
     func status(_ status: ActivityStatus) -> String { localized(status.title) }
@@ -294,11 +244,7 @@ extension ActivityTaskStage {
 extension ActivityStoreError {
     var message: LocalizedStringResource {
         switch self {
-        case .corruptData, .unsupportedSchema: LocalizedStringResource("Saved history could not be read and was isolated. New tasks can still be recorded.")
-        case .isolationFailed: LocalizedStringResource("Saved history could not be isolated safely. Recording is paused. Check storage access and retry loading history.")
-        case .readFailed: LocalizedStringResource("Saved history is unavailable. Check storage access and retry loading history.")
-        case .invalidSummary: LocalizedStringResource("This task could not be saved safely. Other history is retained.")
-        case .writeFailed: LocalizedStringResource("History could not be saved. Check available storage and permissions, then retry saving history.")
+        case .invalidSummary: LocalizedStringResource("This task result could not be displayed safely.")
         }
     }
 }

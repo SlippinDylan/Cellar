@@ -408,6 +408,8 @@ enum ActivityOperationKind: String, Codable, CaseIterable, Sendable {
     case addHomebrewTap
     case removeHomebrewTap
     case updateHomebrewMetadata
+
+    var showsTaskFeedback: Bool { self != .refresh && self != .search }
 }
 
 enum ActivityItemReason: String, Codable, CaseIterable, Sendable {
@@ -449,18 +451,6 @@ struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {
     let status: ActivityStatus
     let itemOutcomes: [ActivityItemSummary]
     var reason: ActivityItemReason? = nil
-}
-
-struct PersistedActivityEnvelope: Equatable, Codable, Sendable {
-    static let currentSchemaVersion = 2
-
-    let schemaVersion: Int
-    let summaries: [ActivitySummary]
-
-    init(summaries: [ActivitySummary]) {
-        schemaVersion = Self.currentSchemaVersion
-        self.summaries = summaries
-    }
 }
 
 enum AppLanguage: String, Codable, CaseIterable, Sendable {

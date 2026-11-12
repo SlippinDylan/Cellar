@@ -3,27 +3,6 @@ import XCTest
 
 @MainActor
 final class ActivityPresentationTests: XCTestCase {
-    func testFiltersCombineAndSelectionTracksVisibleRecords() {
-        let formula = summary(scope: .homebrew(.formula), status: .succeeded, names: ["git"])
-        let failed = summary(scope: .homebrew(.cask), status: .failed, names: ["editor"])
-        let npm = summary(scope: .npm(environment), status: .failed, names: ["typescript"])
-        let filter = ActivityFilter(provider: .homebrew, status: .failed, search: "EDITOR")
-        let visible = filter.apply([formula, failed, npm], locale: .init(identifier: "en"))
-        XCTAssertEqual(visible.map(\.id), [failed.id])
-        XCTAssertNil(ActivityFilter.reconciledSelection(formula.id, visible: visible))
-        XCTAssertEqual(ActivityFilter.reconciledSelection(failed.id, visible: visible), failed.id)
-        XCTAssertEqual(ActivityHistoryState(summaries: [], visible: [], error: nil), .empty)
-        XCTAssertEqual(ActivityHistoryState(summaries: [formula], visible: [], error: nil), .noMatches)
-        XCTAssertEqual(ActivityHistoryState(summaries: [], visible: [], error: .corruptData), .unavailable)
-        let runtime = summary(scope: .nodeRuntime(environment), status: .cancelled, names: ["v24.0.0"])
-        let terminal = summary(scope: .shell, status: .failed, names: [])
-        let records = [formula, failed, npm, runtime, terminal]
-        for (provider, expected) in [(ActivityProviderFilter.formula, formula.id), (.cask, failed.id), (.npm, npm.id), (.nodeRuntime, runtime.id), (.shell, terminal.id)] {
-            XCTAssertEqual(ActivityFilter(provider: provider).apply(records, locale: .init(identifier: "en")).map(\.id), [expected])
-        }
-        XCTAssertEqual(ActivityFilter().apply(records, locale: .init(identifier: "en")).count, records.count)
-    }
-
     func testCopyUsesLocalizedSemanticDataAndEveryItemOutcome() {
         let record = summary(scope: .npm(environment), status: .partiallySucceeded, names: ["git", "editor"], outcomes: [
             .init(displayName: "git", status: .succeeded, reason: nil),
@@ -48,7 +27,6 @@ final class ActivityPresentationTests: XCTestCase {
         for operation in ActivityOperationKind.allCases { XCTAssertFalse(renderer.operation(operation).isEmpty) }
         for status in ActivityStatus.allCases { XCTAssertFalse(renderer.status(status).isEmpty); XCTAssertFalse(status.systemImage.isEmpty) }
         for reason in ActivityItemReason.allCases { XCTAssertFalse(renderer.reason(reason).isEmpty) }
-        for provider in ActivityProviderFilter.allCases { XCTAssertFalse(renderer.provider(provider).isEmpty) }
         for scope in [ActivityScope.homebrew(.formula), .homebrew(.cask), .homebrewTaps, .homebrewMetadata, .homebrewDiagnostics, .npm(environment), .nodeRuntime(environment), .shell] {
             XCTAssertFalse(renderer.scope(scope).isEmpty)
         }
@@ -127,14 +105,6 @@ final class ActivityPresentationTests: XCTestCase {
         XCTAssertEqual(store.currentOperation?.total, 2)
         store.end(id)
         XCTAssertNil(store.currentOperation)
-    }
-
-    func testCancellationDoesNotClaimVerificationBeforeReconciliationAndProgressAdaptsToWidth() throws {
-        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appending(path: "Features/Activity/ActivityView.swift"), encoding: .utf8)
-        XCTAssertFalse(source.contains("Cancellation Requested · Verifying Completed Changes"))
-        XCTAssertTrue(source.contains("ViewThatFits(in: .horizontal)"))
-        XCTAssertTrue(source.contains("Text(current.context.stage.title)"))
     }
 
     private var environment: NodeEnvironmentContext { .init(identifier: "/private/node", nodeVersion: "v22.0.0", npmVersion: "10.0.0") }

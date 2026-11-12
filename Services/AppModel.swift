@@ -4,7 +4,6 @@ import Foundation
 @MainActor
 final class AppModel: ObservableObject {
     @Published var selectedDestination: AppDestination = .home
-    @Published private(set) var pendingSettingsPane: SettingsPane?
     @Published var homebrew: HomebrewStatus?
     @Published var node: NodeSnapshot?
     @Published var shell: ShellStatus?
@@ -38,13 +37,14 @@ final class AppModel: ObservableObject {
     @Published var shellActionResult: ShellActionResult?
     @Published var shellOperationError: String?
     @Published var isShellWorking = false
-    @Published var selectedToolsCategory: ToolsCategory = .environment
+    @Published var selectedToolsCategory: ToolsCategory = .runtime
     @Published var terminalConfigurationPlan: ShellConfigurationPlan?
     @Published var terminalConfigurationResult: ShellConfigurationResult?
 
     let service: SystemProbeService
     let operationStore: OperationStore
     let activityStore: ActivityStore?
+    let logStore: FileLogStore?
     let activityDiagnostics = ActivityDiagnosticsStore()
     let batchCoordinator: BatchOperationCoordinator
     let homeDashboard: HomeDashboardModel
@@ -58,6 +58,7 @@ final class AppModel: ObservableObject {
         service: SystemProbeService,
         operationStore: OperationStore = .shared,
         activityStore: ActivityStore? = nil,
+        logStore: FileLogStore? = nil,
         batchProvider: (any BatchOperationProviding)? = nil,
         homeDashboardDependencies: HomeDashboardDependencies? = nil,
         homeOutdatedDependencies: HomeOutdatedDependencies? = nil,
@@ -67,6 +68,8 @@ final class AppModel: ObservableObject {
         managers = managerSnapshot
         self.operationStore = operationStore
         self.activityStore = activityStore
+        self.logStore = logStore
+        operationStore.logStore = logStore
         self.homeOutdatedDependencies = homeOutdatedDependencies ?? HomeOutdatedDependencies(service: service)
         homeDashboard = HomeDashboardModel(dependencies: homeDashboardDependencies ?? .live(runner: ProcessRunner()), operationStore: operationStore,
                                            activityStore: activityStore, diagnosticsStore: activityDiagnostics)
@@ -79,20 +82,22 @@ final class AppModel: ObservableObject {
         let installer = ManagerSnapshotInstaller()
         let client = NodeManagerClient(runner: runner)
         let shellClient = ShellManagerClient(runner: runner)
-        let activityStore: ActivityStore?
-        if !AppRuntime.isRunningTests {
-            let store = ActivityStore(applicationSupportRoot: .applicationSupportDirectory)
-            store.restore()
-            activityStore = store
+        let logStore: FileLogStore?
+        if AppRuntime.isRunningTests {
+            logStore = nil
         } else {
-            activityStore = nil
+            let store = FileLogStore(directory: FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Cellar"), defaults: .standard)
+            store.retry()
+            store.record(level: .info, category: "application", message: "Cellar started")
+            logStore = store
         }
+        let activityStore = AppRuntime.isRunningTests ? nil : ActivityStore(logStore: logStore, operationStore: .shared)
         return AppModel(service: SystemProbeService(
             runner: runner,
             installer: installer,
             nodeClient: client,
             shellClient: shellClient
-        ), activityStore: activityStore, homeDashboardDependencies: .live(runner: runner))
+        ), activityStore: activityStore, logStore: logStore, homeDashboardDependencies: .live(runner: runner))
     }
 
     var dashboard: DashboardSnapshot? {
@@ -131,23 +136,14 @@ final class AppModel: ObservableObject {
 
     func performShellAction(_ action: AppShellAction) async {
         switch action {
-        case .refresh: await refresh()
+        case .refresh:
+            guard !isBusy else { return }
+            if selectedDestination == .tools && selectedToolsCategory == .sources && homebrew?.isInstalled == true {
+                await performHomebrewMetadataUpdate()
+            }
+            await refresh()
         case .show(let destination): selectedDestination = destination
         }
-    }
-
-    func showActivity(presentMainWindow: (String, MainWindowIdentity) -> Void) {
-        showDestination(.activity, presentMainWindow: presentMainWindow)
-    }
-
-    func showSettingsPane(_ pane: SettingsPane, presentMainWindow: (String, MainWindowIdentity) -> Void) {
-        pendingSettingsPane = pane
-        showDestination(.settings, presentMainWindow: presentMainWindow)
-    }
-
-    func consumePendingSettingsPane() -> SettingsPane? {
-        defer { pendingSettingsPane = nil }
-        return pendingSettingsPane
     }
 
     func showDestination(_ destination: AppDestination, presentMainWindow: (String, MainWindowIdentity) -> Void) {
@@ -161,7 +157,7 @@ final class AppModel: ObservableObject {
         isRefreshing = true
         errorMessages = []
         let operationID = operationStore.begin()
-        let activityID = UUID()
+        let activityID = operationID
         recordActivity(ActivityEntry(
             id: activityID,
             date: Date(),
@@ -323,7 +319,7 @@ final class AppModel: ObservableObject {
     }
 
     func beginActivity(title: String, detail: String) -> UUID {
-        let id = UUID()
+        let id = operationStore.currentOperation?.id ?? UUID()
         recordActivity(ActivityEntry(
             id: id,
             date: Date(),
@@ -367,7 +363,9 @@ final class AppModel: ObservableObject {
     func failureMessage(_ error: Error, preparing: Bool = false) -> String {
         let context = operationStore.currentOperation?.context
         activityDiagnostics.record(operation: context?.operation ?? .configuration, scope: context?.scope, detail: error.localizedDescription)
-        return String(localized: ActivityItemReason(error: error, preparing: preparing).message)
+        let reason = ActivityItemReason(error: error, preparing: preparing)
+        logStore?.record(level: .error, category: "operation", message: "\(context?.operation.rawValue ?? "configuration"): \(reason.rawValue)", taskID: operationStore.currentOperation?.id)
+        return String(localized: reason.message)
     }
 
 }

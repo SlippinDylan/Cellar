@@ -1,15 +1,14 @@
 import Foundation
 
 enum ToolsCategory: String, CaseIterable, Identifiable {
-    case environment, runtime, project, diagnostics, maintenance
+    case runtime, terminal, sources, diagnostics
     var id: Self { self }
     var title: LocalizedStringResource {
         switch self {
-        case .environment: LocalizedStringResource("Environment Setup")
-        case .runtime: LocalizedStringResource("Runtime")
-        case .project: LocalizedStringResource("Project")
-        case .diagnostics: LocalizedStringResource("Diagnostics")
-        case .maintenance: LocalizedStringResource("Maintenance")
+        case .runtime: LocalizedStringResource("Node.js")
+        case .terminal: LocalizedStringResource("Terminal")
+        case .sources: LocalizedStringResource("Sources")
+        case .diagnostics: LocalizedStringResource("Environment Check")
         }
     }
 }

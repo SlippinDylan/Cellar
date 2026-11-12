@@ -4,7 +4,6 @@ struct AppCommands: Commands {
     @FocusedValue(\.catalogSearchAction) private var catalogSearchAction
     @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
-    @FocusedValue(\.activityActions) private var activityActions
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
     @ObservedObject var updateController: ApplicationUpdateController
@@ -17,7 +16,7 @@ struct AppCommands: Commands {
     var body: some Commands {
         CommandGroup(replacing: .appInfo) {
             Button("About Cellar") {
-                model.showSettingsPane(.about) { openWindow(id: $0, value: $1) }
+                model.showDestination(.about) { openWindow(id: $0, value: $1) }
             }
         }
         CommandGroup(after: .appInfo) {
@@ -35,20 +34,6 @@ struct AppCommands: Commands {
                 } label: { Text(destination.title) }
             }
         }
-        CommandMenu("Activity") {
-            Button("Copy Summary") { activityActions?.copy() }.disabled(activityActions?.canCopy != true)
-            Button("Session Diagnostics…") { activityActions?.showDiagnostics() }.disabled(activityActions == nil)
-            Menu("Provider") {
-                ForEach(ActivityProviderFilter.allCases, id: \.self) { provider in
-                    Button(ActivityRenderer().provider(provider)) { activityActions?.setProvider(provider) }
-                }
-            }.disabled(activityActions == nil)
-            Menu("Status") {
-                Button("All Statuses") { activityActions?.setStatus(nil) }
-                ForEach(ActivityStatus.allCases, id: \.self) { status in Button { activityActions?.setStatus(status) } label: { Text(status.title) } }
-            }.disabled(activityActions == nil)
-            Button("Clear Activity Filters") { activityActions?.clearFilters() }.disabled(activityActions == nil)
-        }
         CommandGroup(after: .toolbar) {
             Button("Find") { catalogSearchAction?() }
                 .keyboardShortcut("f", modifiers: .command)
@@ -62,7 +47,6 @@ struct AppCommands: Commands {
             Button("Refresh") { Task { await model.performShellAction(.refresh) } }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(model.isBusy)
-            Button("View Activity") { model.showActivity { openWindow(id: $0, value: $1) } }
         }
     }
 }

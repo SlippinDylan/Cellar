@@ -12,10 +12,10 @@ enum AppDestination: String, CaseIterable, Identifiable {
     case discover
     case tools
     case settings
-    case activity
+    case about
 
     static let primaryDestinations: [Self] = [.home, .library, .discover, .tools]
-    static let bottomDestinations: [Self] = [.settings, .activity]
+    static let bottomDestinations: [Self] = [.settings, .about]
     var id: Self { self }
 
     var title: LocalizedStringResource {
@@ -23,9 +23,9 @@ enum AppDestination: String, CaseIterable, Identifiable {
         case .home: LocalizedStringResource("Home")
         case .library: LocalizedStringResource("Library")
         case .discover: LocalizedStringResource("Discover")
-        case .tools: LocalizedStringResource("Tools")
+        case .tools: LocalizedStringResource("Development Environment")
         case .settings: LocalizedStringResource("Settings")
-        case .activity: LocalizedStringResource("Activity")
+        case .about: LocalizedStringResource("About")
         }
     }
 
@@ -36,7 +36,7 @@ enum AppDestination: String, CaseIterable, Identifiable {
         case .discover: "safari"
         case .tools: "wrench.and.screwdriver"
         case .settings: "gearshape"
-        case .activity: "clock.arrow.circlepath"
+        case .about: "info.circle"
         }
     }
 }
@@ -44,11 +44,4 @@ enum AppDestination: String, CaseIterable, Identifiable {
 enum AppShellAction {
     case refresh
     case show(AppDestination)
-}
-
-enum SettingsPane: String, CaseIterable {
-    case general
-    case sources
-    case terminal
-    case about
 }

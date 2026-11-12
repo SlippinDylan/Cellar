@@ -1,7 +1,27 @@
+import AppKit
 import SwiftUI
 
 private enum HomeSetupRequest: Equatable {
     case commandLineTools, homebrew, finishInstaller
+}
+
+private enum HomeMetricPalette {
+    // Darken official brand hues on light surfaces to keep small symbols legible.
+    static let homebrew = adaptive(light: 0x906119, dark: 0xFBB040)
+    static let node = adaptive(light: 0x3F873F, dark: 0x6ABF4B)
+    static let npm = adaptive(light: 0xC12127, dark: 0xEF6B70)
+    static let nvm = adaptive(light: 0x807000, dark: 0xF4DD4B)
+    static let zsh = adaptive(light: 0xC0451A, dark: 0xF8855C)
+    static let ohMyZsh = adaptive(light: 0x657315, dark: 0xC5D928)
+
+    private static func adaptive(light: UInt32, dark: UInt32) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let rgb = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: Double((rgb >> 16) & 0xFF) / 255,
+                           green: Double((rgb >> 8) & 0xFF) / 255,
+                           blue: Double(rgb & 0xFF) / 255, alpha: 1)
+        })
+    }
 }
 
 struct HomeView: View {
@@ -16,7 +36,7 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: AppLayout.cardSpacing) {
+            VStack(alignment: .leading, spacing: 20) {
                 homebrewSection
                 nodeSection
                 terminalEnvironmentSection
@@ -80,7 +100,7 @@ struct HomeView: View {
     }
 
     private func homebrewMetrics(_ summary: HomebrewDashboardSummary?) -> some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 12) {
             let hasHomebrewUpdate = homebrewHasUpdate(summary)
             StatusMetric(
                 title: String(localized: "Homebrew"),
@@ -89,121 +109,135 @@ struct HomeView: View {
                 titleLink: dashboard.officialHomebrewURL,
                 titleLinkLabel: "Homebrew Website",
                 systemImage: "mug.fill",
-                tint: summary == nil ? .secondary : .blue
+                brandAssetName: "HomebrewBrand",
+                tint: HomeMetricPalette.homebrew,
+                isStandaloneCard: true
             )
-            StatusMetricDivider()
             StatusMetric(
                 title: String(localized: "Formula"),
                 value: metricCount(summary?.formulaCount),
                 systemImage: "shippingbox.fill",
-                tint: summary?.formulaCount == nil ? .secondary : .blue
+                brandAssetName: "FormulaIcon",
+                tint: HomeMetricPalette.homebrew,
+                isStandaloneCard: true
             )
-            StatusMetricDivider()
             StatusMetric(
                 title: String(localized: "Cask"),
                 value: metricCount(summary?.caskCount),
                 systemImage: "app.grid",
-                tint: summary?.caskCount == nil ? .secondary : .purple
+                brandAssetName: "CaskIcon",
+                tint: HomeMetricPalette.homebrew,
+                isStandaloneCard: true
             )
-            StatusMetricDivider()
             StatusMetric(
                 title: String(localized: "Updates"),
                 value: updateMetricValue(summary?.updates, state: model.homebrewUpdateState),
                 systemImage: "arrow.up.circle.fill",
-                tint: updateMetricTint(summary?.updates, state: model.homebrewUpdateState)
+                brandAssetName: "UpdatesIcon",
+                tint: updateMetricTint(summary?.updates, state: model.homebrewUpdateState),
+                isStandaloneCard: true
             )
         }
         .frame(maxWidth: .infinity)
-        .padding(12)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var terminalEnvironmentMetrics: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: 12) {
             StatusMetric(
                 title: String(localized: "Command Line Tools"),
                 value: commandLineToolsValue,
+                titleLink: CatalogWebsites.commandLineTools,
+                titleLinkLabel: "Apple Installation Guide",
                 systemImage: "hammer.fill",
-                tint: commandLineToolsTint
+                brandAssetName: "CommandLineToolsIcon",
+                tint: .blue,
+                isStandaloneCard: true
             )
-            StatusMetricDivider()
             StatusMetric(
                 title: String(localized: "Zsh"),
-                value: zshVersion,
+                value: zshVersion.number,
+                valueSuffix: zshVersion.architecture,
                 systemImage: "terminal.fill",
-                tint: model.shell == nil ? .secondary : .blue
+                brandAssetName: "ZshBrand",
+                tint: HomeMetricPalette.zsh,
+                isStandaloneCard: true
             )
-            StatusMetricDivider()
             StatusMetric(
                 title: String(localized: "Oh My Zsh"),
                 value: ohMyZshValue,
                 systemImage: "bolt.fill",
-                tint: ohMyZshTint
+                brandAssetName: "OhMyZshBrand",
+                tint: HomeMetricPalette.ohMyZsh,
+                isStandaloneCard: true
             )
         }
         .frame(maxWidth: .infinity)
-        .padding(12)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func nodeMetrics(_ summary: NodeDashboardSummary?) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 12) {
             let hasNodeUpdate = summary.map { HomeVersion.hasUpdate(current: $0.nodeVersion, online: dashboard.onlineVersion(for: .node)) } ?? false
             let hasNPMUpdate = summary.map { HomeVersion.hasUpdate(current: $0.npmVersion, online: dashboard.onlineVersion(for: .npm)) } ?? false
-            HStack(spacing: 0) {
+            HStack(spacing: 12) {
                 StatusMetric(
                     title: String(localized: "Node"),
                     value: summary.map { HomeVersion.display(current: $0.nodeVersion, online: dashboard.onlineVersion(for: .node)) } ?? "—",
                     valueSystemImage: hasNodeUpdate ? "arrow.up.circle.fill" : nil,
                     systemImage: "shippingbox.fill",
-                    tint: summary == nil ? .secondary : .green
+                    brandAssetName: "NodeBrand",
+                    tint: HomeMetricPalette.node,
+                    isStandaloneCard: true
                 )
-                StatusMetricDivider()
                 StatusMetric(
                     title: String(localized: "npm"),
                     value: summary.map { HomeVersion.display(current: $0.npmVersion, online: dashboard.onlineVersion(for: .npm)) } ?? "—",
                     valueSystemImage: hasNPMUpdate ? "arrow.up.circle.fill" : nil,
                     systemImage: "shippingbox.circle.fill",
-                    tint: summary == nil ? .secondary : .red
+                    brandAssetName: "NPMBrand",
+                    assetSize: 24,
+                    tint: HomeMetricPalette.npm,
+                    isStandaloneCard: true
                 )
-                StatusMetricDivider()
                 StatusMetric(
                     title: String(localized: "Global Packages"),
                     value: metricCount(summary?.packageCount),
                     systemImage: "square.stack.3d.up.fill",
-                    tint: summary == nil ? .secondary : .blue
+                    brandAssetName: "GlobalPackagesIcon",
+                    tint: HomeMetricPalette.npm,
+                    isStandaloneCard: true
                 )
             }
 
-            Divider()
-                .padding(.horizontal, 12)
-
-            HStack(spacing: 0) {
+            HStack(spacing: 12) {
                 StatusMetric(
                     title: String(localized: "Updates"),
                     value: updateMetricValue(summary?.updates, state: model.nodeUpdateState),
                     systemImage: "arrow.up.circle.fill",
-                    tint: updateMetricTint(summary?.updates, state: model.nodeUpdateState)
+                    brandAssetName: "UpdatesIcon",
+                    tint: updateMetricTint(summary?.updates, state: model.nodeUpdateState),
+                    isStandaloneCard: true
                 )
-                StatusMetricDivider()
                 StatusMetric(
                     title: String(localized: "nvm"),
                     value: nvmValue,
+                    titleLink: CatalogWebsites.nvm,
+                    titleLinkLabel: "nvm Installation Guide",
                     systemImage: "point.3.connected.trianglepath.dotted",
-                    tint: nvmTint
+                    brandAssetName: "NVMBrand",
+                    tint: HomeMetricPalette.nvm,
+                    isStandaloneCard: true
                 )
-                StatusMetricDivider()
                 StatusMetric(
                     title: String(localized: "nvm Default"),
                     value: nvmDefaultValue(summary),
                     systemImage: "checkmark.seal.fill",
-                    tint: summary?.defaultVersion == nil ? .secondary : .purple
+                    brandAssetName: "NVMDefaultIcon",
+                    tint: HomeMetricPalette.nvm,
+                    isStandaloneCard: true
                 )
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(12)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private var commandLineToolsValue: String {
@@ -214,26 +248,15 @@ struct HomeView: View {
         }
     }
 
-    private var commandLineToolsTint: Color {
-        switch dashboard.commandLineTools {
-        case .available(.installed): .green
-        case .available(.notInstalled): .orange
-        case .notLoaded, .loading, .failed: .secondary
-        }
-    }
-
-    private var zshVersion: String {
-        model.shell?.zshVersion?.replacingOccurrences(of: "zsh ", with: "") ?? "—"
+    private var zshVersion: (number: String, architecture: String?) {
+        let version = model.shell?.zshVersion?.replacingOccurrences(of: "zsh ", with: "") ?? "—"
+        guard let suffixStart = version.firstIndex(of: "(") else { return (version, nil) }
+        return (String(version[..<suffixStart]).trimmingCharacters(in: .whitespaces), String(version[suffixStart...]))
     }
 
     private var ohMyZshValue: String {
         guard let shell = model.shell else { return "—" }
         return shell.ohMyZshInstalled ? String(localized: "Installed") : String(localized: "Not Installed")
-    }
-
-    private var ohMyZshTint: Color {
-        guard let shell = model.shell else { return .secondary }
-        return shell.ohMyZshInstalled ? .purple : .secondary
     }
 
     private func homebrewVersion(_ summary: HomebrewDashboardSummary?) -> String {
@@ -256,11 +279,6 @@ struct HomeView: View {
         if nvmAvailable { return String(localized: "Installed") }
         if dashboard.nvmInstalled == false { return String(localized: "Not Installed") }
         return "—"
-    }
-
-    private var nvmTint: Color {
-        if nvmAvailable { return .green }
-        return dashboard.nvmInstalled == false ? .orange : .secondary
     }
 
     private func nvmDefaultValue(_ summary: NodeDashboardSummary?) -> String {

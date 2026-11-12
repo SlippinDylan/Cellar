@@ -2,148 +2,89 @@ import Combine
 import Foundation
 
 enum ActivityStoreError: Error, Equatable {
-    case corruptData
-    case unsupportedSchema(Int)
-    case isolationFailed
-    case readFailed
     case invalidSummary
-    case writeFailed
 }
 
 @MainActor
 final class ActivityStore: ObservableObject {
-    static let maximumFileBytes = 1_048_576
     @Published private(set) var summaries: [ActivitySummary] = []
-    @Published private(set) var persistenceError: ActivityStoreError?
-    let fileURL: URL
-    private var blockedError: ActivityStoreError?
-    private var didRestore = false
-    private var pendingSummaries: [ActivitySummary] = []
+    @Published private(set) var latestResults: [ActivitySummary] = []
+    var latestResult: ActivitySummary? { latestResults.last }
+    private var resultTaskID: UUID?
+    @Published private(set) var verificationWarning: ActivityItemReason?
+    @Published private(set) var validationError: ActivityStoreError?
+    private let logStore: FileLogStore?
+    private let operationStore: OperationStore?
 
-    init(applicationSupportRoot: URL) {
-        fileURL = applicationSupportRoot.appending(path: "Cellar/Activity/activity.json")
-    }
-
-    func restore() {
-        guard !didRestore else { return }
-        didRestore = true
-        retryLoading()
-    }
-
-    func retryLoading() {
-        do {
-            try load()
-            persistenceError = nil
-        } catch {
-            persistenceError = error
-        }
+    init(logStore: FileLogStore? = nil, operationStore: OperationStore? = nil) {
+        self.logStore = logStore
+        self.operationStore = operationStore
     }
 
     func append(_ summary: ActivitySummary) {
         do {
             try record(summary)
-            persistenceError = nil
+            validationError = nil
         } catch {
-            persistenceError = error
-        }
-    }
-
-    func retrySaving() {
-        guard let pending = pendingSummaries.first else { return }
-        append(pending)
-    }
-
-    func load() throws(ActivityStoreError) {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            blockedError = nil
-            summaries = pendingSummaries
-            return
-        }
-        let data: Data
-        do {
-            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-            guard let size = attributes[.size] as? NSNumber,
-                  size.intValue <= Self.maximumFileBytes
-            else { try isolate(.corruptData) }
-            data = try Data(contentsOf: fileURL)
-        } catch let error as ActivityStoreError {
-            throw error
-        } catch {
-            blockedError = .readFailed
-            throw .readFailed
-        }
-        let envelope: PersistedActivityEnvelope
-        do {
-            let header = try JSONDecoder().decode(SchemaHeader.self, from: data)
-            guard [1, PersistedActivityEnvelope.currentSchemaVersion].contains(header.schemaVersion) else {
-                try isolate(.unsupportedSchema(header.schemaVersion))
-            }
-            envelope = try JSONDecoder().decode(PersistedActivityEnvelope.self, from: data)
-        } catch let error as ActivityStoreError {
-            throw error
-        } catch {
-            try isolate(.corruptData)
-        }
-        do {
-            let sanitized = try envelope.summaries.map(ActivitySummarySanitizer.sanitize)
-            summaries = try Self.encodedCollection(pendingSummaries + sanitized).summaries
-            blockedError = nil
-        } catch {
-            try isolate(.corruptData)
+            validationError = error
+            logStore?.record(level: .error, category: "tasks", message: "Task result rejected: invalid summary", taskID: summary.id)
         }
     }
 
     func record(_ summary: ActivitySummary) throws(ActivityStoreError) {
-        if let blockedError { throw blockedError }
         let sanitized = try ActivitySummarySanitizer.sanitize(summary)
-        let collection = try Self.encodedCollection([sanitized] + pendingSummaries + summaries)
-        let updated = collection.summaries
-        do {
-            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try collection.data.write(to: fileURL, options: .atomic)
-        } catch let error as ActivityStoreError {
-            throw error
-        } catch {
-            pendingSummaries = updated
-            summaries = updated
-            throw .writeFailed
-        }
-        pendingSummaries = []
-        summaries = updated
-    }
-
-    private func isolate(_ error: ActivityStoreError) throws(ActivityStoreError) -> Never {
-        summaries = pendingSummaries
-        let isolatedURL = fileURL.deletingLastPathComponent().appending(path: "activity-\(UUID().uuidString).isolated")
-        do {
-            try FileManager.default.moveItem(at: fileURL, to: isolatedURL)
-        } catch {
-            blockedError = .isolationFailed
-            throw .isolationFailed
-        }
-        blockedError = nil
-        throw error
-    }
-
-    private struct SchemaHeader: Decodable {
-        let schemaVersion: Int
-    }
-
-    private static func boundedUnique(_ records: [ActivitySummary]) -> [ActivitySummary] {
-        var identifiers: Set<UUID> = []
-        return Array(records.filter { identifiers.insert($0.id).inserted }.prefix(100))
-    }
-
-    private static func encodedCollection(_ records: [ActivitySummary]) throws(ActivityStoreError) -> (summaries: [ActivitySummary], data: Data) {
-        var updated = boundedUnique(records)
-        do {
-            while true {
-                let data = try JSONEncoder().encode(PersistedActivityEnvelope(summaries: updated))
-                if data.count <= maximumFileBytes { return (updated, data) }
-                guard updated.count > 1 else { throw ActivityStoreError.invalidSummary }
-                updated.removeLast()
+        summaries = Array(([sanitized] + summaries.filter { $0.id != sanitized.id }).prefix(100))
+        // Read-only queries must not replace the operation result the user still needs to review.
+        if sanitized.operation.showsTaskFeedback {
+            let currentTaskID = operationStore?.currentOperation?.id
+            if let currentTaskID, resultTaskID == currentTaskID {
+                latestResults.removeAll { $0.id == sanitized.id }
+                latestResults.append(sanitized)
+            } else {
+                latestResults = [sanitized]
             }
-        } catch { throw .invalidSummary }
+            resultTaskID = currentTaskID
+            verificationWarning = nil
+        } else if sanitized.operation == .refresh, sanitized.scope != nil, sanitized.status != .succeeded, latestResult != nil {
+            verificationWarning = sanitized.reason ?? .stateUnavailable
+        }
+        let taskID = operationStore?.currentOperation?.id ?? sanitized.id
+        let context = "result=\(sanitized.id.uuidString) operation=\(sanitized.operation.rawValue) scope=\(Self.logScope(sanitized.scope))"
+        logStore?.record(level: Self.logLevel(sanitized.status), category: "tasks",
+                         message: "Completed \(context) status=\(sanitized.status.rawValue) targets=\(sanitized.targetDisplayNames.joined(separator: ",")) reason=\(sanitized.reason?.rawValue ?? "none")",
+                         taskID: taskID)
+        for item in sanitized.itemOutcomes {
+            logStore?.record(level: Self.logLevel(item.status.activityStatus), category: "tasks",
+                             message: "Item \(context) target=\(item.shellStep?.rawValue ?? item.displayName) status=\(item.status.rawValue) reason=\(item.reason?.rawValue ?? "none")",
+                             taskID: taskID)
+        }
+    }
+
+    func dismissResult() {
+        latestResults = []
+        resultTaskID = nil
+        verificationWarning = nil
+    }
+
+    private static func logLevel(_ status: ActivityStatus) -> LogLevel {
+        switch status {
+        case .running, .succeeded: .info
+        case .partiallySucceeded, .cancelled, .unknown: .warning
+        case .failed: .error
+        }
+    }
+
+    private static func logScope(_ scope: ActivityScope?) -> String {
+        switch scope {
+        case .homebrew(let kind): "homebrew.\(kind.rawValue)"
+        case .homebrewTaps: "homebrew.taps"
+        case .homebrewMetadata: "homebrew.metadata"
+        case .homebrewDiagnostics: "homebrew.diagnostics"
+        case .npm(let environment): "npm(node=\(environment.nodeVersion),npm=\(environment.npmVersion))"
+        case .nodeRuntime(let environment): "node(\(environment.nodeVersion))"
+        case .shell: "terminal"
+        case nil: "environment"
+        }
     }
 }
 
@@ -164,7 +105,7 @@ enum ActivitySummarySanitizer {
         switch summary.scope {
         case .npm(let environment), .nodeRuntime(let environment):
             guard validVersion(environment.nodeVersion), validVersion(environment.npmVersion) else { throw .invalidSummary }
-            // Persist versions as semantic context; identifiers may contain private installation paths.
+            // Keep versions as semantic context; identifiers may contain private installation paths.
             let sanitizedEnvironment = NodeEnvironmentContext(
                 identifier: "nvm:\(environment.nodeVersion)",
                 nodeVersion: environment.nodeVersion,

@@ -4,11 +4,9 @@ import XCTest
 
 @MainActor
 final class BatchOperationCoordinatorTests: XCTestCase {
-    func testFrozenPostWriteVerificationCodesRemainUnknownAndLocalizableAfterRestart() async throws {
+    func testFrozenPostWriteVerificationCodesRemainUnknownAndLocalizableInSession() async throws {
         for code in ["post-install-state-unavailable", "post-uninstall-state-unavailable", "update-verification-unavailable"] {
-            let root = FileManager.default.temporaryDirectory.appending(path: "CellarUnknownActivity-\(UUID())")
-            defer { try? FileManager.default.removeItem(at: root) }
-            let store = ActivityStore(applicationSupportRoot: root)
+            let store = ActivityStore()
             let provider = FakeBatchProvider(failingNames: ["two"], failureCode: code)
             let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: store)
             let operation: BatchOperation = code == "post-uninstall-state-unavailable" ? .uninstall : .install
@@ -18,9 +16,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
             XCTAssertEqual(result.outcome.itemOutcomes[index].status, .unknown, code)
             XCTAssertEqual(result.outcome.itemOutcomes[index].reason, .stateUnavailable, code)
             XCTAssertEqual(result.outcome.status, operation == .uninstall ? .unknown : .partiallySucceeded)
-            let restored = ActivityStore(applicationSupportRoot: root)
-            restored.restore()
-            let summary = try XCTUnwrap(restored.summaries.first)
+            let summary = try XCTUnwrap(store.summaries.first)
             XCTAssertEqual(summary.itemOutcomes[index].status, .unknown)
             let english = ActivityRenderer(locale: .init(identifier: "en")).detail(summary)
             let chinese = ActivityRenderer(locale: .init(identifier: "zh-Hans")).detail(summary)
@@ -41,9 +37,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
     }
 
     func testStaleProviderFailuresKeepFiniteReasonsAndSessionDiagnostics() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarStaleActivity-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let diagnostics = ActivityDiagnosticsStore()
         let provider = FakeBatchProvider(failingNames: ["two"], failureCode: "npm-uninstall-state-changed")
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity, diagnosticsStore: diagnostics)
@@ -55,14 +49,12 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.outcome.status, .failed)
         XCTAssertTrue(diagnostics.records.contains { $0.detail.contains("[redacted]") })
         XCTAssertFalse(diagnostics.records.contains { $0.detail.contains("TOKEN=secret") })
-        let json = try String(contentsOf: activity.fileURL, encoding: .utf8)
+        let json = String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self)
         for raw in ["secret", "TOKEN", "npm-uninstall-state-changed", "standardOutput", "/private"] { XCTAssertFalse(json.contains(raw), raw) }
     }
 
     func testNPMUninstallResidueWarningIsPartialAndDiagnosticsAreSessionOnly() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarWarningActivity-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let provider = FakeBatchProvider(npmWarningNames: ["one"])
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
         let plan = try await coordinator.prepare(npmUninstallIntent("one"))
@@ -73,9 +65,9 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(diagnostic.status, "warn")
         XCTAssertEqual(diagnostic.residues?.directories, ["/private/fake/lib/node_modules/one"])
         XCTAssertEqual(activity.summaries.first?.status, .partiallySucceeded)
-        let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
-        XCTAssertFalse(persisted.contains("/private/fake"))
-        XCTAssertFalse(persisted.contains("residue-detected"))
+        let semanticJSON = String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self)
+        XCTAssertFalse(semanticJSON.contains("/private/fake"))
+        XCTAssertFalse(semanticJSON.contains("residue-detected"))
     }
 
     func testHomebrewFailedPackagesSectionMakesBatchReconciliationFail() async throws {
@@ -203,9 +195,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
     }
 
     func testPreparationFailureDoesNotWriteAndCleansUpOperation() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarUnavailableActivity-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let provider = FakeBatchProvider(planFails: true)
         let store = OperationStore()
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store, activityStore: activity)
@@ -217,8 +207,8 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.refreshStatus, .notNeeded)
         XCTAssertEqual(activity.summaries.first?.status, .failed)
         XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.preparationFailed, .preparationFailed, .preparationFailed])
-        let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
-        XCTAssertFalse(persisted.contains("FakeBatchProvider"))
+        let semanticJSON = String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self)
+        XCTAssertFalse(semanticJSON.contains("FakeBatchProvider"))
         let names = await provider.executedNames()
         let refreshes = await provider.refreshCount()
         XCTAssertEqual(names, [])
@@ -241,9 +231,7 @@ final class BatchOperationCoordinatorTests: XCTestCase {
 
     func testKnownPreparationFailureAndCancellationPreserveOrderedActivitySemantics() async throws {
         let started = expectation(description: "Eligible install started")
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarPreparationActivity-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let provider = FakeBatchProvider(pausedName: "two", onPaused: { started.fulfill() }, planFailureNames: ["one"])
         let store = OperationStore()
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: store, activityStore: activity)
@@ -257,8 +245,8 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(activity.summaries.first?.itemOutcomes.map(\.reason), [.preparationFailed, .cancelledByUser, .cancelledByUser])
         let names = await provider.executedNames()
         XCTAssertEqual(names, ["two"])
-        let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
-        for secret in ["TOKEN", "secret", "FakeBatchProvider", "/private", "planFailure"] { XCTAssertFalse(persisted.contains(secret), secret) }
+        let semanticJSON = String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self)
+        for secret in ["TOKEN", "secret", "FakeBatchProvider", "/private", "planFailure"] { XCTAssertFalse(semanticJSON.contains(secret), secret) }
     }
 
     func testAlreadyInstalledAndUnavailableHomebrewItemsDoNotPreventLaterTypedTargets() async throws {
@@ -332,10 +320,8 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(third.command.standardOutput, "TOKEN=secret stdout")
     }
 
-    func testBatchPersistsSemanticOutcomesAndDistinctRefreshFailureWithoutProviderOutput() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarBatchActivityTests-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+    func testBatchKeepsSemanticOutcomesAndDistinctRefreshFailureWithoutProviderOutput() async throws {
+        let activity = ActivityStore()
         let provider = FakeBatchProvider(failingNames: ["two"], refreshFails: true)
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
         let plan = try await coordinator.prepare(npmUninstallIntent("two"))
@@ -344,16 +330,14 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(activity.summaries.map(\.operation), [.refresh, .uninstall])
         XCTAssertEqual(activity.summaries.last?.status, .failed)
         XCTAssertEqual(activity.summaries.last?.itemOutcomes.map(\.reason), [.providerFailure])
-        let json = try String(contentsOf: activity.fileURL, encoding: .utf8)
+        let json = String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self)
         for secret in ["TOKEN", "secret", "stdout", "/private", "logFile", "command"] {
             XCTAssertFalse(json.contains(secret), secret)
         }
     }
 
     func testHomebrewPartialIsPreservedWithoutAnyFullySucceededItem() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarBatchPartialTests-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let provider = FakeBatchProvider(failingNames: ["two"], partialNames: ["one"])
         let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore(), activityStore: activity)
         let intent = try XCTUnwrap(BatchIntent(operation: .install, items: ["one", "two"].map {
@@ -368,9 +352,8 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.outcome.succeededItemCount, 0)
         XCTAssertEqual(activity.summaries.first?.status, .partiallySucceeded)
         XCTAssertEqual(activity.summaries.first?.itemOutcomes.map { $0.status.rawValue }, ["partiallySucceeded", "failed"])
-        let restored = ActivityStore(applicationSupportRoot: root)
-        try restored.load()
-        XCTAssertEqual(restored.summaries, activity.summaries)
+        let restored = ActivityStore()
+        XCTAssertTrue(restored.summaries.isEmpty)
     }
 
     private var environment: NodeEnvironmentContext {

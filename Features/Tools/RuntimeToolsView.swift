@@ -2,62 +2,191 @@ import SwiftUI
 
 struct RuntimeToolsView: View {
     @ObservedObject var model: AppModel
-    @StateObject private var runtime = RuntimeToolsModel()
+    @ObservedObject private var dashboard: HomeDashboardModel
     @State private var installations: [NodeInstallation] = []
-    @State private var selectedRelease = ""
+    @State private var showsInstallation = false
+    @State private var installationsLoaded = false
+
+    init(model: AppModel) {
+        self.model = model
+        dashboard = model.homeDashboard
+    }
+
+    private var nvmAvailable: Bool? {
+        model.node?.summary.nvmLoaded == true ? true : dashboard.nvmInstalled
+    }
+
     var body: some View {
-        Form {
-            Section {
-                if let node = model.node { LabeledContent("Cellar Session", value: node.summary.nodeVersion) }
-                else { Text("Node Environment Unavailable") }
-                if let version = installations.first(where: \.isDefault)?.version { LabeledContent("nvm Default", value: version) }
-                else { Text("The nvm default cannot be resolved. Select an installed version or set a default.") }
-                Text("Session changes affect Cellar only. Setting the default affects future nvm sessions.").foregroundStyle(.secondary)
-                Button("Use nvm Default") { Task { await model.restoreDefaultNodeSession() } }.disabled(model.isBusy)
-            } header: { Text("Node Environment") }
-            Section {
-                if installations.isEmpty { Text("No installed nvm Node versions were found.") }
-                ForEach(installations) { item in
+        SettingsPage {
+            SettingsSection(title: "Current Node Environment", detail: String(localized: "Changing this version affects Cellar only, not terminals that are already open.")) {
+                if let node = model.node {
+                    LabeledContent("Node Version", value: node.summary.nodeVersion)
+                    Divider()
+                    LabeledContent("npm Version", value: node.summary.npmVersion)
+                    Divider()
+                    LabeledContent("Node Executable", value: node.summary.nodePath)
+                } else {
+                    Text("Node Environment Unavailable")
+                }
+            }
+            SettingsSection(title: "nvm", website: CatalogWebsites.nvm, websiteTitle: "nvm Installation Guide") {
+                HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text(item.version).font(.body.monospaced()).textSelection(.enabled)
-                            if item.isActive { Label("Current Session", systemImage: "checkmark.circle") }
-                            if item.isDefault { Label("Default", systemImage: "star") }
+                        switch nvmAvailable {
+                        case true: Label("Installed", systemImage: "checkmark.circle")
+                        case false: Text("Not Installed").foregroundStyle(.secondary)
+                        case nil: Text("Not Checked").foregroundStyle(.secondary)
                         }
-                        ViewThatFits(in: .horizontal) {
-                            HStack { versionActions(item) }
-                            VStack(alignment: .leading) { versionActions(item) }
+                        switch nvmAvailable {
+                        case true: EmptyView()
+                        case false:
+                            Text("nvm manages multiple Node versions. Install it using the official guide to add or switch versions here.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        case nil:
+                            Text("Check nvm availability before managing Node versions.")
+                                .font(.callout).foregroundStyle(.secondary)
                         }
                     }
-                }
-            } header: { Text("Installed Node Versions") }
-            Section {
-                Button("Load Official Node Versions") { Task { await runtime.refresh(model: model) } }.disabled(model.isBusy)
-                if let error = runtime.error { Text(error.message) }
-                if !runtime.releases.isEmpty {
-                    Picker("Node Version", selection: $selectedRelease) {
-                        Text("Choose a Version").tag("")
-                        ForEach(runtime.releases) { Text($0.version).tag($0.version) }
+                    Spacer()
+                    Button("Recheck") {
+                        Task {
+                            await model.refresh()
+                            await dashboard.refreshSetupStatus()
+                        }
                     }
-                    Button("Install Node") {
-                        let version = selectedRelease
-                        Task { await model.performDirectNodeAction(.init(action: .installNode, subject: version)) }
-                    }.disabled(selectedRelease.isEmpty || model.isBusy || model.homeDashboard.nvmInstalled == false)
+                        .disabled(model.isBusy)
                 }
-                WebsiteLink(destination: CatalogWebsites.nvm, title: LocalizedStringResource("nvm Installation Guide"))
-            } header: { Text("Install Node") }
+                .frame(minHeight: AppLayout.minimumControlRowHeight)
+                if nvmAvailable == true {
+                    defaultVersion
+                    installedVersions
+                }
+            }
+            ProjectToolsView(model: model, installations: installations)
+            NodeMaintenanceView(model: model)
         }
-        .formStyle(AppFormStyle())
         .task(id: model.refreshedAt) {
             guard !AppRuntime.isRunningTests else { return }
+            installationsLoaded = false
             installations = await model.service.runtimeInstallations(preferredVersion: model.preferredNodeVersion)
+            installationsLoaded = true
+            await dashboard.refreshSetupStatus()
+        }
+        .sheet(isPresented: $showsInstallation) {
+            NodeInstallationSheet(model: model, canInstall: nvmAvailable == true) { version in
+                showsInstallation = false
+                Task { await model.performDirectNodeAction(.init(action: .installNode, subject: version)) }
+            }
         }
     }
-    @ViewBuilder private func versionActions(_ item: NodeInstallation) -> some View {
-        Button("Use for Cellar") { Task { await model.performDirectNodeAction(.init(action: .useNode, subject: item.version)) } }
-            .disabled(item.isActive || model.isBusy)
-        Button("Set as Default…") { Task { await model.prepareNodeAction(.init(action: .setDefaultNode, subject: item.version)) } }.disabled(item.isDefault || model.isBusy)
-        Button("Uninstall Node…", role: .destructive) { Task { await model.prepareNodeAction(.init(action: .uninstallNode, subject: item.version)) } }
-            .disabled(!RuntimeProtection.canUninstall(item) || model.isBusy)
+
+    private var defaultVersion: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("nvm Default")
+                    if !installationsLoaded {
+                        Text("Not Checked").foregroundStyle(.secondary)
+                    } else if let version = installations.first(where: \.isDefault)?.version {
+                        Text(version).font(.body.monospaced()).foregroundStyle(.secondary)
+                    } else {
+                        Text("Unresolved").foregroundStyle(.secondary)
+                    }
+                }
+                Text("The default applies to future nvm sessions.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Use nvm Default") { Task { await model.restoreDefaultNodeSession() } }
+                .disabled(!installations.contains(where: \.isDefault) || model.isBusy)
+        }
+        .frame(minHeight: AppLayout.minimumDescribedRowHeight)
+    }
+
+    private var installedVersions: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Divider().padding(.vertical, 12)
+            HStack {
+                Text("Versions Managed by nvm").fontWeight(.medium)
+                Spacer()
+                Button("Install Version", systemImage: "plus") { showsInstallation = true }
+                    .disabled(model.isBusy)
+            }.padding(.bottom, 8)
+            if !installationsLoaded {
+                ProgressView("Reading Installed Versions…")
+            } else if installations.isEmpty {
+                Text("No versions are installed through nvm. The Node version used by Cellar may come from another installation.")
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            ForEach(installations) { item in
+                HStack(spacing: 12) {
+                    Text(item.version).font(.body.monospaced()).textSelection(.enabled)
+                    if item.isActive { Label("Used by Cellar", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
+                    if item.isDefault { Label("Default", systemImage: "star").foregroundStyle(.secondary) }
+                    Spacer()
+                    Button("Use for Cellar") { Task { await model.performDirectNodeAction(.init(action: .useNode, subject: item.version)) } }
+                        .disabled(item.isActive || model.isBusy)
+                    Menu {
+                        Button("Set as Default…") { Task { await model.prepareNodeAction(.init(action: .setDefaultNode, subject: item.version)) } }
+                            .disabled(item.isDefault || model.isBusy)
+                        Button("Uninstall Node…", role: .destructive) { Task { await model.prepareNodeAction(.init(action: .uninstallNode, subject: item.version)) } }
+                            .disabled(!RuntimeProtection.canUninstall(item) || model.isBusy)
+                    } label: {
+                        Label("Version Actions", systemImage: "ellipsis")
+                    }
+                    .menuIndicator(.hidden)
+                    .labelStyle(.iconOnly)
+                    .fixedSize()
+                    .disabled(model.isBusy)
+                }.frame(minHeight: 44)
+                    .disabled(!installationsLoaded)
+                if item.id != installations.last?.id { Divider() }
+            }
+        }
+    }
+}
+
+private struct NodeInstallationSheet: View {
+    @ObservedObject var model: AppModel
+    let canInstall: Bool
+    let install: (String) -> Void
+    @StateObject private var runtime = RuntimeToolsModel()
+    @State private var selectedRelease = ""
+    @State private var didLoad = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Install Node Version").font(.title2.bold())
+            Text("Choose an official Node version to install with nvm.").foregroundStyle(.secondary)
+            if !didLoad || runtime.isLoading {
+                ProgressView("Loading Official Node Versions…")
+            } else if let error = runtime.error {
+                Label { Text(error.message) } icon: { Image(systemName: "exclamationmark.triangle") }
+                Button("Retry") { Task { await runtime.refresh(model: model) } }.disabled(model.isBusy)
+            } else if runtime.releases.isEmpty {
+                Text("No Node releases are available. Try again.")
+                Button("Retry") { Task { await runtime.refresh(model: model) } }.disabled(model.isBusy)
+            } else {
+                Picker("Node Version", selection: $selectedRelease) {
+                    Text("Choose a Version").tag("")
+                    ForEach(runtime.releases) { release in Text(release.version).tag(release.version) }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Install Node") { install(selectedRelease) }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedRelease.isEmpty || runtime.isLoading || model.isBusy || !canInstall)
+            }
+        }
+        .padding(24)
+        .frame(width: 440)
+        .task {
+            guard !AppRuntime.isRunningTests else { return }
+            await runtime.refresh(model: model)
+            didLoad = true
+        }
     }
 }

@@ -39,6 +39,20 @@ final class ToolsDirectOperationTests: XCTestCase {
         }
     }
 
+    func testRefreshUpdatesCatalogOnlyFromSourcesAndStillRefreshesAfterFailure() async throws {
+        for destination in [AppDestination.home, .tools] {
+            let fixture = try ToolsDirectFixture()
+            defer { fixture.remove() }
+            fixture.model.homebrew = .init(executablePath: fixture.root.appending(path: "brew").path, version: "fixture", managerAvailable: true, snapshot: nil)
+            fixture.model.selectedDestination = destination
+            fixture.model.selectedToolsCategory = .sources
+            await fixture.model.performShellAction(.refresh)
+            XCTAssertEqual(try fixture.calls().contains("update|brew"), destination == .tools)
+            XCTAssertNotNil(fixture.model.refreshedAt)
+            XCTAssertFalse(fixture.model.operationStore.hasActiveOperations)
+        }
+    }
+
     func testOldTapSheetDismissalCannotClearNewMetadataPlan() throws {
         let fixture = try ToolsDirectFixture()
         defer { fixture.remove() }
@@ -66,7 +80,10 @@ final class ToolsDirectOperationTests: XCTestCase {
         let shellPayload = try JSONDecoder().decode(ShellActionPlanPayload.self, from: Data(#"{"action":"tidy","subject":"zsh-files","targetPath":"/fixture","requiresConfirmation":true,"executable":true,"blockedReason":"","planToken":"fixture","generatedAt":0}"#.utf8))
         let oldShell = ShellActionPlan(id: UUID(), request: .init(action: .tidy, subject: "zsh-files"), payload: shellPayload, generatedAt: Date())
         fixture.model.shellPlan = oldShell
-        let shellBinding = ProviderTaskPresentation(model: fixture.model, surface: .tools).shellConfirmation
+        let shellBinding = ProviderTaskPresentation(model: fixture.model, surface: .terminal).shellConfirmation
+        XCTAssertEqual(shellBinding.wrappedValue?.id, oldShell.id)
+        XCTAssertNil(ProviderTaskPresentation(model: fixture.model, surface: .tools).shellConfirmation.wrappedValue)
+        XCTAssertNil(ProviderTaskPresentation(model: fixture.model, surface: .sources).shellConfirmation.wrappedValue)
         let newerShell = ShellActionPlan(id: UUID(), request: oldShell.request, payload: shellPayload, generatedAt: Date())
         fixture.model.shellPlan = newerShell
         shellBinding.wrappedValue = nil

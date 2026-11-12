@@ -328,9 +328,7 @@ final class UpdatesTests: XCTestCase {
     }
 
     func testCompositeFailedRefreshRetainsPriorSnapshotAndTypedActivityOutcomes() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarUpdatesActivity-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let provider = FakeBatchProvider(refreshFails: true)
         let model = fixtureModel(provider, activity: activity)
         let updates = PackageUpdatesModel(model: model)
@@ -344,14 +342,12 @@ final class UpdatesTests: XCTestCase {
         let persistedContext = NodeEnvironmentContext(identifier: "nvm:v22.0.0", nodeVersion: context.nodeVersion, npmVersion: context.npmVersion)
         XCTAssertEqual(activity.summaries.filter { $0.operation == .update }.map(\.scope), [.npm(persistedContext), .homebrew(.cask), .homebrew(.formula)])
         XCTAssertEqual(activity.summaries.filter { $0.operation == .refresh }.count, 2)
-        let persisted = try String(contentsOf: activity.fileURL, encoding: .utf8)
-        for forbidden in ["TOKEN", "secret", "stdout", "/fake", "command"] { XCTAssertFalse(persisted.contains(forbidden)) }
+        let semanticJSON = String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self)
+        for forbidden in ["TOKEN", "secret", "stdout", "/fake", "command"] { XCTAssertFalse(semanticJSON.contains(forbidden)) }
     }
 
     func testReturnedHomebrewOutdatedFailureKeepsNewCoreOldAvailableVersionsAndOneWarning() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarPartialBrewUpdates-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let prior = brewSnapshot()
         let packages = prior.packages.map { package in
             HomebrewPackage(identity: package.identity, displayName: package.displayName, description: package.description, homepage: package.homepage, installedVersions: ["2.0.0"], currentVersion: package.currentVersion, tap: package.tap, dependencies: package.dependencies, pinned: package.pinned, deprecated: package.deprecated, disabled: package.disabled, artifacts: package.artifacts)
@@ -372,13 +368,11 @@ final class UpdatesTests: XCTestCase {
         XCTAssertFalse(model.homebrewRefreshFailed)
         XCTAssertEqual(activity.summaries.filter { $0.operation == .refresh }.map(\.status), [.failed])
         XCTAssertEqual(activity.summaries.filter { $0.operation == .update }.map(\.status), [.succeeded, .succeeded])
-        XCTAssertFalse(try String(contentsOf: activity.fileURL, encoding: .utf8).contains("enrichment unavailable"))
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self).contains("enrichment unavailable"))
     }
 
     func testReturnedNPMOutdatedFailureKeepsNewInstalledStateOldAvailableVersionAndWarning() async throws {
-        let root = FileManager.default.temporaryDirectory.appending(path: "CellarPartialNPMUpdates-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let prior = nodeSnapshot()
         let packages = prior.packages.map { NodePackageRow(name: $0.name, installedVersion: $0.name == "behind" ? "2.0.0" : $0.installedVersion, wantedVersion: nil, latestVersion: nil) }
         let partial = NodeSnapshot(summary: prior.summary, configuration: prior.configuration, packages: packages, installations: prior.installations, managerStatus: prior.managerStatus, logs: prior.logs, outdatedError: "fixture enrichment unavailable", maintenanceError: nil)
@@ -398,7 +392,7 @@ final class UpdatesTests: XCTestCase {
         XCTAssertFalse(model.nodeRefreshFailed)
         XCTAssertEqual(activity.summaries.filter { $0.operation == .refresh }.map(\.status), [.failed])
         XCTAssertEqual(activity.summaries.filter { $0.operation == .update }.map(\.status), [.succeeded])
-        XCTAssertFalse(try String(contentsOf: activity.fileURL, encoding: .utf8).contains("enrichment unavailable"))
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(activity.summaries), as: UTF8.self).contains("enrichment unavailable"))
     }
 
     func testPartialVersionRetentionDoesNotCrossProviderOrGlobalDirectoryIdentity() {

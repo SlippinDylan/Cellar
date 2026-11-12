@@ -163,7 +163,7 @@ final class ShellManagerClientTests: XCTestCase {
         let original = try Data(contentsOf: fixture.zshrcURL)
         let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
         try Data("cache".utf8).write(to: cache)
-        let model = fixture.model(activityStore: ActivityStore(applicationSupportRoot: fixture.root))
+        let model = fixture.model(activityStore: ActivityStore())
         await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
         let plan = try XCTUnwrap(model.shellPlan)
         let ownerFinished = expectation(description: "operation owner completes cancellation")
@@ -188,7 +188,7 @@ final class ShellManagerClientTests: XCTestCase {
     }
 
     @MainActor
-    func testPluginSuccessThemeFailurePersistsExactSemanticStepsAfterRestart() async throws {
+    func testPluginSuccessThemeFailureKeepsExactSemanticStepsInSession() async throws {
         let fixture = try ShellManagerFixture()
         defer { fixture.remove() }
         let plan = try await fixture.client.planConfiguration(plugins: ["git", "example"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
@@ -207,19 +207,18 @@ final class ShellManagerClientTests: XCTestCase {
         let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: fixture.root),
                                          nodeClient: NodeManagerClient(runner: runner, environmentResolver: .init(homeDirectory: fixture.homeDirectory)),
                                          shellClient: fixture.client, environmentResolver: .init(homeDirectory: fixture.homeDirectory))
-        let store = ActivityStore(applicationSupportRoot: fixture.root)
+        let store = ActivityStore()
         let model = AppModel(service: service, operationStore: OperationStore(), activityStore: store,
                              managerSnapshot: .init(version: "fixture", location: fixture.root.path, nodeAvailable: false, homebrewAvailable: false, shellAvailable: true))
         model.terminalConfigurationPlan = plan
         await model.executeTerminalConfiguration(plan)
         XCTAssertEqual(model.terminalConfigurationResult?.operations.count, 1)
-        let restored = ActivityStore(applicationSupportRoot: fixture.root)
-        try restored.load()
-        let summary = try XCTUnwrap(restored.summaries.first)
+        XCTAssertTrue(ActivityStore().summaries.isEmpty)
+        let summary = try XCTUnwrap(store.summaries.first)
         XCTAssertNotNil(summary.scope)
         XCTAssertEqual(summary.status, .partiallySucceeded)
         XCTAssertEqual(summary.itemOutcomes.map(\.status), [.succeeded, .failed])
-        let json = try String(contentsOf: restored.fileURL, encoding: .utf8)
+        let json = String(decoding: try JSONEncoder().encode(store.summaries), as: UTF8.self)
         XCTAssertTrue(json.contains("plugins"))
         XCTAssertTrue(json.contains("theme"))
         for forbidden in ["example", "agnoster", fixture.homeDirectory.path, "stdout", "stderr", "planToken"] { XCTAssertFalse(json.contains(forbidden), forbidden) }
@@ -282,7 +281,7 @@ final class ShellManagerClientTests: XCTestCase {
         let fixture = try ShellManagerFixture()
         defer { fixture.remove() }
         try Data("\nif then\n".utf8).append(to: fixture.zshrcURL)
-        let store = ActivityStore(applicationSupportRoot: fixture.root)
+        let store = ActivityStore()
         let model = fixture.model(activityStore: store)
         await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
         let plan = try XCTUnwrap(model.shellPlan)

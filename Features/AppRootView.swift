@@ -6,13 +6,10 @@ struct AppRootView: View {
     @FocusedValue(\.libraryTabs) private var libraryTabs
     @FocusedValue(\.libraryUpdateFilter) private var libraryUpdateFilter
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
-    @FocusedValue(\.activityActions) private var activityActions
-    @FocusedValue(\.activitySearch) private var activitySearch
-    @FocusedValue(\.settingsPane) private var settingsPane
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
     private let updateController: ApplicationUpdateController
-    @Environment(\.locale) private var locale
+    @FocusState private var focusedSidebarDestination: AppDestination?
     @State private var libraryQuery = ""
     @State private var librarySearchFocusRequest: UUID?
     @State private var contentWidth: CGFloat = 0
@@ -27,15 +24,19 @@ struct AppRootView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(AppDestination.primaryDestinations, selection: sidebarSelection(for: AppDestination.primaryDestinations)) { destination in
-                destinationLabel(destination)
-                    .tag(destination)
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(AppDestination.primaryDestinations) { destination in
+                        sidebarRow(destination)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 8)
             }
-            .listStyle(.sidebar)
             .safeAreaBar(edge: .bottom, alignment: .leading, spacing: 0) {
                 VStack(spacing: 2) {
                     ForEach(AppDestination.bottomDestinations) { destination in
-                        utilitySidebarRow(destination)
+                        sidebarRow(destination)
                     }
                 }
                 .padding(.horizontal, 8)
@@ -44,14 +45,19 @@ struct AppRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            destinationContent
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
+                    TaskFeedbackView(model: model, maximumHeight: geometry.size.height * 0.45)
+                    destinationContent
+                }
+            }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
                 .buttonStyle(.glass)
                 .navigationTitle(model.selectedDestination.title)
                 .toolbar {
-                    if model.selectedDestination == .home {
-                        ToolbarItem(id: "home-title", placement: .navigation) {
-                            Text(AppDestination.home.title)
+                    if model.selectedDestination == .home || model.selectedDestination == .settings {
+                        ToolbarItem(id: "page-title", placement: .navigation) {
+                            Text(model.selectedDestination.title)
                                 .font(.headline)
                                 .accessibilityAddTraits(.isHeader)
                         }
@@ -60,13 +66,7 @@ struct AppRootView: View {
                     if model.selectedDestination == .tools {
                         ToolbarItem(id: "tools-categories", placement: .navigation) {
                             ToolbarCategoryPicker(selection: $model.selectedToolsCategory,
-                                                  label: LocalizedStringResource("Tools Category"), title: { $0.title })
-                        }
-                    }
-                    if model.selectedDestination == .settings, let settingsPane {
-                        ToolbarItem(id: "settings-panes", placement: .navigation) {
-                            ToolbarCategoryPicker(selection: settingsPane,
-                                                  label: LocalizedStringResource("Settings"), title: { $0.title })
+                                                  label: LocalizedStringResource("Development Environment"), title: { $0.title })
                         }
                     }
                     if model.selectedDestination == .library, let libraryTabs {
@@ -93,29 +93,22 @@ struct AppRootView: View {
                         ToolbarItem(id: "discover-scopes", placement: .navigation) {
                             DiscoverToolbarScopes(selection: discoverToolbar.scope)
                         }
-                        ToolbarSpacer(.fixed, placement: .navigation)
-                        ToolbarItem(id: "discover-search", placement: .navigation) {
+                        .sharedBackgroundVisibility(.hidden)
+                    }
+                    ToolbarSpacer(.flexible, placement: model.selectedDestination == .library ? .automatic : .primaryAction)
+                    if model.selectedDestination == .discover, let discoverToolbar {
+                        ToolbarItem(id: "discover-search", placement: .primaryAction) {
                             CatalogToolbarSearchField(text: discoverToolbar.query, focusRequest: discoverToolbar.focusRequest,
                                                       prompt: LocalizedStringResource("Search Software"), onSubmit: discoverToolbar.submit)
                                 .frame(width: 360)
                                 .glassEffect(.regular, in: Capsule())
                         }
                         .sharedBackgroundVisibility(.hidden)
+                        ToolbarSpacer(.fixed, placement: .primaryAction)
                     }
-                    ToolbarSpacer(.flexible, placement: model.selectedDestination == .library ? .automatic : .primaryAction)
                     if model.selectedDestination == .library {
                         ToolbarItem(id: "library-actions-search", placement: .automatic) {
                             HStack(spacing: 8) {
-                                RefreshToolbarButton(model: model)
-                                    .buttonStyle(.glass)
-                                    .fixedSize()
-                                    .overlay {
-                                        if isRefreshActive {
-                                            ProgressView().controlSize(.small)
-                                                .allowsHitTesting(false)
-                                                .accessibilityHidden(true)
-                                        }
-                                    }
                                 if libraryUpdateFilter?.wrappedValue == .pendingUpdates {
                                     Button("Update All") { packageUpdateActions?.updateAll() }
                                         .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
@@ -126,6 +119,16 @@ struct AppRootView: View {
                                                           prompt: LocalizedStringResource("Search Installed Software"))
                                     .frame(minWidth: 140, maxWidth: 380)
                                     .glassEffect(.regular, in: Capsule())
+                                RefreshToolbarButton(model: model)
+                                    .frame(width: 36, height: 36)
+                                    .glassEffect(.regular, in: Circle())
+                                    .overlay {
+                                        if isRefreshActive {
+                                            ProgressView().controlSize(.small)
+                                                .allowsHitTesting(false)
+                                                .accessibilityHidden(true)
+                                        }
+                                    }
                             }
                             .frame(width: libraryActionsWidth, alignment: .trailing)
                         }
@@ -139,15 +142,7 @@ struct AppRootView: View {
                             toolbarControlGroup
                         }
                     }
-                    if model.selectedDestination == .activity, let activitySearch {
-                        ToolbarSpacer(.fixed, placement: .primaryAction)
-                        ToolbarItem(id: "activity-search", placement: .primaryAction) {
-                            CatalogToolbarSearchField(text: activitySearch.text, focusRequest: activitySearch.focusRequest,
-                                                      prompt: LocalizedStringResource("Search Operation History"))
-                                .frame(width: 360)
-                        }
-                        .sharedBackgroundVisibility(.hidden)
-                    }
+
                 }
                 .toolbar(removing: .title)
         }
@@ -176,8 +171,6 @@ struct AppRootView: View {
             Button("Update All") { packageUpdateActions?.updateAll() }
                 .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
                 .buttonStyle(.automatic)
-        case .activity:
-            activityToolbarActions
         default:
             EmptyView()
         }
@@ -202,46 +195,7 @@ struct AppRootView: View {
 
     private var isRefreshActive: Bool {
         model.isRefreshing || operationStore.currentOperation?.context.operation == .refresh
-    }
-
-    @ViewBuilder private var activityToolbarActions: some View {
-        let renderer = ActivityRenderer(locale: locale)
-        Menu {
-            Picker("Provider", selection: Binding(
-                get: { activityActions?.provider ?? .all },
-                set: { activityActions?.setProvider($0) }
-            )) {
-                ForEach(ActivityProviderFilter.allCases, id: \.self) { provider in
-                    Text(renderer.provider(provider)).tag(provider)
-                }
-            }
-            Picker("Status", selection: Binding(
-                get: { activityActions?.status },
-                set: { activityActions?.setStatus($0) }
-            )) {
-                Text("All Statuses").tag(nil as ActivityStatus?)
-                ForEach(ActivityStatus.allCases, id: \.self) { status in
-                    Text(status.title).tag(Optional(status))
-                }
-            }
-            Divider()
-            Button("Clear Activity Filters") { activityActions?.clearFilters() }
-        } label: {
-            Label("Filter History", systemImage: "line.3.horizontal.decrease")
-        }
-        .help("Filter Operation History")
-        .disabled(activityActions == nil)
-        .buttonStyle(.automatic)
-
-        Button("Copy Summary", systemImage: "doc.on.doc") { activityActions?.copy() }
-            .help("Copy Selected Activity Summary")
-            .disabled(activityActions?.canCopy != true)
-            .buttonStyle(.automatic)
-
-        Button("Session Diagnostics…", systemImage: "stethoscope") { activityActions?.showDiagnostics() }
-            .help("Show Current Session Diagnostics")
-            .disabled(activityActions == nil)
-            .buttonStyle(.automatic)
+            || operationStore.currentOperation?.context.operation == .updateHomebrewMetadata
     }
 
     @ViewBuilder private var destinationContent: some View {
@@ -251,39 +205,58 @@ struct AppRootView: View {
         }
         else if model.selectedDestination == .discover { DiscoverView(model: model) }
         else if model.selectedDestination == .tools { ToolsView(model: model) }
-        else if model.selectedDestination == .settings { SettingsView(model: model, updateController: updateController, relaunchController: .shared) }
-        else if model.selectedDestination == .activity { ActivityView(model: model) }
+        else if model.selectedDestination == .settings { SettingsView(model: model, relaunchController: .shared) }
+        else if model.selectedDestination == .about { AboutView(updateController: updateController) }
         else { ShellPlaceholderView(destination: model.selectedDestination) }
     }
 
-    func sidebarSelection(for destinations: [AppDestination]) -> Binding<AppDestination?> {
-        // Each native List must own its selection, while navigation has one source of truth.
-        Binding(get: { destinations.contains(model.selectedDestination) ? model.selectedDestination : nil }, set: { destination in
-            if let destination, destinations.contains(destination) { model.selectedDestination = destination }
-        })
+    func adjacentSidebarDestination(to destination: AppDestination, forward: Bool) -> AppDestination? {
+        let destinations = forward ? AppDestination.allCases : AppDestination.allCases.reversed()
+        return destinations.drop(while: { $0 != destination }).dropFirst().first
+    }
+
+    private func moveSidebarSelection(from destination: AppDestination, forward: Bool) -> KeyPress.Result {
+        if let next = adjacentSidebarDestination(to: destination, forward: forward) {
+            model.selectedDestination = next
+            focusedSidebarDestination = next
+        }
+        return .handled
     }
 
     private func destinationLabel(_ destination: AppDestination) -> some View {
-        Label { Text(destination.title) } icon: { Image(systemName: destination.systemImage) }
+        HStack(spacing: 10) {
+            Image(systemName: destination.systemImage)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 20)
+            Text(destination.title)
+                .foregroundStyle(.primary)
+        }
     }
 
-    private func utilitySidebarRow(_ destination: AppDestination) -> some View {
+    private func sidebarRow(_ destination: AppDestination) -> some View {
         let isSelected = model.selectedDestination == destination
 
         return Button {
             model.selectedDestination = destination
+            focusedSidebarDestination = destination
         } label: {
             destinationLabel(destination)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
+                .frame(minHeight: 32)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .background(
-            isSelected ? AnyShapeStyle(.selection) : AnyShapeStyle(.clear),
+            isSelected ? Color.primary.opacity(0.1) : .clear,
             in: .rect(cornerRadius: 6)
         )
+        .focusable()
+        .focused($focusedSidebarDestination, equals: destination)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) { moveSidebarSelection(from: destination, forward: false) }
+        .onKeyPress(.downArrow) { moveSidebarSelection(from: destination, forward: true) }
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
@@ -321,5 +294,6 @@ private struct RefreshToolbarButton: View {
 
     private var isRefreshActive: Bool {
         model.isRefreshing || operationStore.currentOperation?.context.operation == .refresh
+            || operationStore.currentOperation?.context.operation == .updateHomebrewMetadata
     }
 }

@@ -231,7 +231,7 @@ final class CatalogDomainModelsTests: XCTestCase {
         ]))
     }
 
-    func testActivityEnvelopeRoundTripsOnlySanitizedSummaryFields() throws {
+    func testActivitySummaryRoundTripsOnlySemanticFields() throws {
         let environment = NodeEnvironmentContext(
             identifier: "nvm:v22.12.0",
             nodeVersion: "v22.12.0",
@@ -248,15 +248,13 @@ final class CatalogDomainModelsTests: XCTestCase {
                 .init(displayName: "typescript", status: .failed, reason: .providerFailure)
             ]
         )
-        let envelope = PersistedActivityEnvelope(summaries: [summary])
-
-        let data = try JSONEncoder().encode(envelope)
-        let decoded = try JSONDecoder().decode(PersistedActivityEnvelope.self, from: data)
+        let data = try JSONEncoder().encode(summary)
+        let decoded = try JSONDecoder().decode(ActivitySummary.self, from: data)
         let json = try XCTUnwrap(String(data: data, encoding: .utf8))
 
-        XCTAssertEqual(decoded, envelope)
-        XCTAssertEqual(decoded.summaries.first?.scope, .npm(environment))
-        XCTAssertEqual(decoded.summaries.first?.itemOutcomes.first?.reason, .providerFailure)
+        XCTAssertEqual(decoded, summary)
+        XCTAssertEqual(decoded.scope, .npm(environment))
+        XCTAssertEqual(decoded.itemOutcomes.first?.reason, .providerFailure)
         XCTAssertFalse(json.contains("command"))
         XCTAssertFalse(json.contains("stdout"))
         XCTAssertFalse(json.contains("stderr"))

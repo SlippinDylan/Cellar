@@ -14,7 +14,7 @@ struct ActivityDiagnosticsView: View {
             Text("Current Session Diagnostics").font(.title2.bold())
             Text("Diagnostics may contain sensitive information. Review before sharing; redaction cannot recognize every secret.").foregroundStyle(.secondary)
             if store.records.isEmpty {
-                ContentUnavailableView("No Session Diagnostics", systemImage: "stethoscope", description: Text("Technical output is kept only for this App session. Restored history contains summaries only."))
+                ContentUnavailableView("No Session Diagnostics", systemImage: "stethoscope", description: Text("Technical output is kept only for this App session and is not written to log files."))
             } else {
                 VSplitView {
                     Table(store.records, selection: $selection) {

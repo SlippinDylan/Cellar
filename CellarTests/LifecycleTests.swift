@@ -29,7 +29,7 @@ final class LifecycleTests: XCTestCase {
             nodeClient: .init(runner: runner, environmentResolver: resolver),
             shellClient: .init(runner: runner, environmentResolver: .init(homeDirectory: root, temporaryDirectory: root)), environmentResolver: resolver)
         let store = OperationStore()
-        let activity = ActivityStore(applicationSupportRoot: root)
+        let activity = ActivityStore()
         let model = AppModel(service: service, operationStore: store, activityStore: activity)
         let task = Task { await model.refreshOnLaunch(environment: [:]) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
@@ -55,6 +55,58 @@ final class LifecycleTests: XCTestCase {
             AppTerminationPolicy.reply(hasActiveOperations: false),
             .terminateNow
         )
+    }
+
+    func testTerminationWaitsForPendingFileLogsAndRepliesOnce() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarTerminationLogs-\(UUID())")
+        let suite = "CellarTerminationLogs-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let operations = OperationStore()
+        let logger = FileLogStore(directory: root, defaults: defaults)
+        let replied = expectation(description: "Termination replied after flushing")
+        replied.assertForOverFulfill = true
+        let delegate = AppDelegate(operationStore: operations,
+                                   relaunchController: ApplicationRelaunchController(operationStore: operations),
+                                   replyToTermination: { allowed in
+            XCTAssertTrue(allowed)
+            replied.fulfill()
+        }, reopenApplication: {})
+        delegate.logStore = logger
+        logger.record(level: .info, category: "test", message: "last task result")
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateLater)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateLater)
+        await fulfillment(of: [replied], timeout: 5)
+        let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+        let text = try files.map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        XCTAssertTrue(text.contains("last task result"))
+        XCTAssertTrue(text.contains("Cellar terminating"))
+    }
+
+    func testNewTaskDuringLogFlushPreventsTermination() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarTerminationRace-\(UUID())")
+        let suite = "CellarTerminationRace-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let operations = OperationStore()
+        let replied = expectation(description: "New task blocks pending termination")
+        let delegate = AppDelegate(operationStore: operations,
+                                   relaunchController: ApplicationRelaunchController(operationStore: operations),
+                                   replyToTermination: { allowed in
+            XCTAssertFalse(allowed)
+            replied.fulfill()
+        }, reopenApplication: {})
+        delegate.logStore = FileLogStore(directory: root, defaults: defaults)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateLater)
+        let operation = operations.begin()
+        await fulfillment(of: [replied], timeout: 5)
+        operations.end(operation)
     }
 
     func testTerminationIsRefusedDuringActiveOperation() {

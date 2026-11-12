@@ -6,10 +6,7 @@ struct ProviderTaskPresentation: ViewModifier {
     @ObservedObject var model: AppModel
     let surface: ProviderTaskSurface
     func body(content: Content) -> some View {
-        VStack(spacing: 0) {
-            ProviderTaskFeedback(model: model)
-            content
-        }
+        content
         .sheet(item: nodeConfirmation) { plan in
             NodeTaskConfirmation(plan: plan, cancel: { model.dismissNodePlan(confirmed: plan) }, confirm: { Task { await model.executeNodePlan(confirmed: plan) } })
         }
@@ -49,50 +46,7 @@ struct ProviderTaskPresentation: ViewModifier {
         return plan
     }
     private var shellPlanForSurface: ShellActionPlan? {
-        guard let plan = model.shellPlan, surface == (plan.request.action == .tidy ? .tools : .terminal) else { return nil }
+        guard let plan = model.shellPlan, surface == .terminal else { return nil }
         return plan
-    }
-}
-
-struct ProviderTaskFeedback: View {
-    @ObservedObject var model: AppModel
-    @Environment(\.openWindow) private var openWindow
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if model.isNodeWorking || model.isHomebrewWorking || model.isShellWorking {
-                HStack { ProgressView().controlSize(.small); Text("Working on Environment") }
-            }
-            ForEach(errors, id: \.self) { error in
-                Label(error, systemImage: "exclamationmark.triangle")
-                if let plan = model.nodePlan, !plan.canExecute { Text(plan.blockingMessage) }
-            }
-            if let result = model.nodeActionResult {
-                let status = result.operation.batchItemStatus.activityStatus
-                resultLabel(status == .succeeded && result.postflightError != nil ? .partiallySucceeded : status)
-            }
-            if let result = model.shellActionResult {
-                let status: ActivityStatus = result.operation.status == "ok" ? result.postflightError == nil ? .succeeded : .partiallySucceeded : result.operation.status == "partial" ? .partiallySucceeded : .failed
-                resultLabel(status)
-            }
-            if let result = model.homebrewActionResult {
-                let status: ActivityStatus = switch result.outcome {
-                case .succeeded: .succeeded
-                case .partial: .partiallySucceeded
-                case .failed: .failed
-                case .stateUnknown: .unknown
-                }
-                resultLabel(status)
-            }
-            if !errors.isEmpty || model.nodeActionResult != nil || model.shellActionResult != nil || model.homebrewActionResult != nil {
-                Button("View Activity") { model.showActivity { openWindow(id: $0, value: $1) } }
-                Button("Dismiss Feedback") { model.dismissNodeFeedback(); model.dismissShellFeedback(); model.dismissHomebrewFeedback() }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(errors.isEmpty && model.nodeActionResult == nil && model.shellActionResult == nil && model.homebrewActionResult == nil && !model.isBusy ? 0 : AppLayout.spacing)
-    }
-    private var errors: [String] { [model.nodeOperationError, model.homebrewOperationError, model.shellOperationError].compactMap { $0 } }
-    private func resultLabel(_ status: ActivityStatus) -> some View {
-        Label { Text(status.title) } icon: { Image(systemName: status.systemImage) }
     }
 }

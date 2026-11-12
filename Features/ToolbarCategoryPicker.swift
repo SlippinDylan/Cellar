@@ -44,3 +44,33 @@ struct ToolbarCategoryPicker<Selection: CaseIterable & Hashable>: NSViewRepresen
         }
     }
 }
+
+struct GlassCategoryPicker<Selection: CaseIterable & Hashable>: View {
+    @Binding var selection: Selection
+    let label: LocalizedStringResource
+    let title: (Selection) -> LocalizedStringResource
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(Selection.allCases), id: \.self) { option in
+                Button {
+                    selection = option
+                } label: {
+                    Text(title(option))
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(selection == option ? Color.primary.opacity(0.1) : .clear, in: Capsule())
+                }
+                .accessibilityAddTraits(selection == option ? .isSelected : [])
+            }
+        }
+        .buttonStyle(.plain)
+        .padding(4)
+        .glassEffect(.regular, in: Capsule())
+        .fixedSize()
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(label))
+    }
+}

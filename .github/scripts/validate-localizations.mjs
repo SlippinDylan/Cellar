@@ -23,6 +23,7 @@ export const presentationSources = [
   'Features/Catalog/CatalogPageActions.swift',
   'Features/Discover/DiscoverView.swift',
   'Features/Discover/DiscoverBatchInstallSheet.swift',
+  'Features/Discover/BatchPackageEditor.swift',
   'Features/Library/LibraryView.swift',
   'Features/Library/LibraryUninstallConfirmation.swift',
   'Features/Library/LibraryUpdatePresentation.swift',

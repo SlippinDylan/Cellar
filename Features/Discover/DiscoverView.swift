@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 struct DiscoverView: View {
@@ -124,44 +123,17 @@ extension FocusedValues {
     }
 }
 
-struct DiscoverToolbarScopes: NSViewRepresentable {
+struct DiscoverToolbarScopes: View {
     @Binding var selection: DiscoverSearchScope
 
-    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
-
-    func makeNSView(context: Context) -> NSSegmentedControl {
-        let control = NSSegmentedControl(labels: [String(localized: "All"), String(localized: "Formula"), String(localized: "Cask"), String(localized: "NPM")],
-                                         trackingMode: .selectOne, target: context.coordinator,
-                                         action: #selector(Coordinator.selectScope(_:)))
-        control.segmentStyle = .automatic
-        control.segmentDistribution = .fit
-        control.setAccessibilityLabel(String(localized: "Search Scope"))
-        updateNSView(control, context: context)
-        return control
-    }
-
-    func updateNSView(_ control: NSSegmentedControl, context: Context) {
-        context.coordinator.parent = self
-        control.selectedSegment = switch selection {
-        case .all: 0
-        case .homebrewFormula: 1
-        case .homebrewCask: 2
-        case .npm: 3
-        }
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
-        nsView.fittingSize
-    }
-
-    @MainActor final class Coordinator: NSObject {
-        var parent: DiscoverToolbarScopes
-        init(parent: DiscoverToolbarScopes) { self.parent = parent }
-
-        @objc func selectScope(_ sender: NSSegmentedControl) {
-            let scopes = DiscoverSearchScope.allCases
-            guard scopes.indices.contains(sender.selectedSegment) else { return }
-            parent.selection = scopes[sender.selectedSegment]
+    var body: some View {
+        GlassCategoryPicker(selection: $selection, label: "Search Scope") {
+            switch $0 {
+            case .all: "All"
+            case .homebrewFormula: "Formula"
+            case .homebrewCask: "Cask"
+            case .npm: "NPM"
+            }
         }
     }
 }

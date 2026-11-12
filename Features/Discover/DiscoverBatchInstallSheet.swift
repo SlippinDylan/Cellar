@@ -15,7 +15,9 @@ struct DiscoverBatchInstallSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Install Software").font(.title2.bold())
+            GlassCategoryPicker(selection: $scope, label: "Install Scope", title: scopeTitle)
+                .disabled(installation.isPreparing || installation.preview != nil)
+                .frame(maxWidth: .infinity, alignment: .center)
             if let preview = installation.preview {
                 Text(preview.intent.scope.libraryTitle).font(.headline)
                 if let npm = preview.npm { DiscoverNPMContextView(context: npm) }
@@ -46,17 +48,20 @@ struct DiscoverBatchInstallSheet: View {
                         .disabled(preview.plan.executableCount == 0)
                 }
             } else {
-                Picker("Install Scope", selection: $scope) {
-                    ForEach(CatalogProviderScope.allCases, id: \.self) { Text($0.cardTitle).tag($0) }
-                }.pickerStyle(.segmented).disabled(installation.isPreparing)
                 if scope == .npm, let npm = context.npm { DiscoverNPMContextView(context: npm, isDefault: true) }
                 Text("Enter one package per line. Blank lines and duplicate entries are removed. Maximum 100 items from one scope.")
-                TextEditor(text: $input)
-                    .font(.body.monospaced())
-                    .accessibilityLabel("Packages to Install")
-                    .frame(minHeight: 140, maxHeight: 220)
-                    .border(.separator)
-                    .disabled(installation.isPreparing)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                BatchPackageEditor(text: $input, isEditable: !installation.isPreparing)
+                    .frame(height: 196)
+                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 10)
+                            .strokeBorder(.separator, lineWidth: 1)
+                            .allowsHitTesting(false)
+                    }
                 if installation.isPreparing { ProgressView("Checking Installation…") }
                 if let error = installation.error { Text(error.discoverMessage).foregroundStyle(.secondary) }
                 HStack {
@@ -67,7 +72,19 @@ struct DiscoverBatchInstallSheet: View {
                 }
             }
         }
-        .padding(24).frame(width: 520)
+        .padding(24)
+        .frame(width: 560)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+    }
+
+    private func scopeTitle(_ scope: CatalogProviderScope) -> LocalizedStringResource {
+        switch scope {
+        case .homebrewFormula: "Formula"
+        case .homebrewCask: "Cask"
+        case .npm: "NPM"
+        }
     }
 
     private func cancel() { installation.dismissPreview(); dismiss() }

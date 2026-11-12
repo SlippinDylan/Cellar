@@ -5,6 +5,17 @@ import XCTest
 final class DiscoverTests: XCTestCase {
     private let environment = NodeEnvironmentContext(identifier: "/fixture/node", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
 
+    func testPackageEditorLinesIncludeEmptyAndTrailingLines() {
+        XCTAssertEqual(PackageEditorLines.starts(in: ""), [0])
+        XCTAssertEqual(PackageEditorLines.starts(in: "git\nnode\n"), [0, 4, 9])
+        XCTAssertEqual(PackageEditorLines.starts(in: "git\r\n\r\nnode"), [0, 5, 7])
+        let starts = PackageEditorLines.starts(in: "📦\n中文\n")
+        XCTAssertEqual(starts, [0, 3, 6])
+        XCTAssertEqual(PackageEditorLines.currentLine(starts: starts, caret: 2), 0)
+        XCTAssertEqual(PackageEditorLines.currentLine(starts: starts, caret: 3), 1)
+        XCTAssertEqual(PackageEditorLines.currentLine(starts: starts, caret: 6), 2)
+    }
+
     func testAllSearchKeepsProviderIdentityBoundsAndResolvedNPMSource() async throws {
         let registry = try XCTUnwrap(URL(string: "https://registry.fixture/"))
         let scopedRegistry = try XCTUnwrap(URL(string: "https://scoped.fixture/"))

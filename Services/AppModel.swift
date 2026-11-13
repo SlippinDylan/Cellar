@@ -256,14 +256,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func applyHomebrewReadResult(_ result: Result<HomebrewStatus, Error>) {
+    func applyHomebrewReadResult(_ result: Result<HomebrewStatus, Error>, includingOutdated: Bool = false) {
         switch result {
         case .success(let status):
-            homebrew = status
+            let snapshot = status.snapshot.map { $0.retainingFailedSections(from: homebrew?.snapshot) }
+            homebrew = HomebrewStatus(executablePath: status.executablePath, version: status.version,
+                                      managerAvailable: status.managerAvailable, snapshot: snapshot)
             homebrewRefreshFailed = false
-            homebrewRefreshedAt = Date()
-            homebrewUpdateState = .notLoaded
-            homebrewOutdatedCheckedAt = nil
+            if snapshot?.sectionErrors.keys.contains(where: { $0 != .outdated }) != true {
+                homebrewRefreshedAt = Date()
+            }
+            homebrewUpdateState = includingOutdated && snapshot != nil
+                ? (snapshot?.sectionErrors[.outdated] == nil ? .available : .failed) : .notLoaded
+            homebrewOutdatedCheckedAt = includingOutdated && snapshot != nil ? Date() : nil
         case .failure(let error):
             homebrewRefreshFailed = true
             homebrewUpdateState = .failed
@@ -271,14 +276,14 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func applyNodeReadResult(_ result: Result<NodeSnapshot, Error>) {
+    func applyNodeReadResult(_ result: Result<NodeSnapshot, Error>, includingOutdated: Bool = false) {
         switch result {
         case .success(let snapshot):
-            node = snapshot
+            node = snapshot.retainingKnownOutdated(from: node)
             nodeRefreshFailed = false
             nodeRefreshedAt = Date()
-            nodeUpdateState = .notLoaded
-            nodeOutdatedCheckedAt = nil
+            nodeUpdateState = includingOutdated ? (snapshot.outdatedError == nil ? .available : .failed) : .notLoaded
+            nodeOutdatedCheckedAt = includingOutdated ? Date() : nil
         case .failure(let error):
             nodeRefreshFailed = true
             nodeUpdateState = .failed
@@ -288,6 +293,7 @@ final class AppModel: ObservableObject {
 
     func prepareBatch(_ intent: BatchIntent) async throws -> BatchPlan {
         guard !isBusy else { throw BatchOperationError.busy }
+        guard canMutatePackages(in: intent.scope) else { throw BatchOperationError.reconciliationUnavailable }
         setBatchWorking(intent.scope, true)
         defer { setBatchWorking(intent.scope, false) }
         return try await batchCoordinator.prepare(intent)
@@ -295,6 +301,7 @@ final class AppModel: ObservableObject {
 
     func executeBatch(_ plan: BatchPlan, caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> BatchExecutionResult {
         guard !isBusy else { throw BatchOperationError.busy }
+        guard canMutatePackages(in: plan.intent.scope) else { throw BatchOperationError.reconciliationUnavailable }
         setBatchWorking(plan.intent.scope, true)
         defer { setBatchWorking(plan.intent.scope, false) }
         let result = try await batchCoordinator.execute(plan, caskRemovalProgress: caskRemovalProgress)
@@ -305,17 +312,10 @@ final class AppModel: ObservableObject {
     func applyBatchResult(_ result: BatchExecutionResult) {
         switch result.refreshedState {
         case .homebrew(let status):
-            let snapshot = status.snapshot.map { $0.retainingKnownOutdated(from: homebrew?.snapshot) }
-            homebrew = HomebrewStatus(executablePath: status.executablePath, version: status.version, managerAvailable: status.managerAvailable, snapshot: snapshot)
-            homebrewRefreshFailed = false
-            homebrewRefreshedAt = Date()
-            homebrewUpdateState = status.snapshot.map { $0.sectionErrors[.outdated] == nil ? .available : .failed } ?? .notLoaded
+            applyHomebrewReadResult(.success(status), includingOutdated: true)
         case .npm(let snapshot), .nodeRuntime(let snapshot):
-            node = snapshot.retainingKnownOutdated(from: node)
+            applyNodeReadResult(.success(snapshot), includingOutdated: true)
             preferredNodeVersion = snapshot.summary.nodeVersion
-            nodeRefreshFailed = false
-            nodeRefreshedAt = Date()
-            nodeUpdateState = snapshot.outdatedError == nil ? .available : .failed
         case nil:
             if result.refreshStatus == .failed {
                 switch result.outcome.intent.scope {
@@ -331,6 +331,15 @@ final class AppModel: ObservableObject {
         if result.refreshedState != nil {
             refreshedAt = Date()
             checkedOutdatedRefresh = refreshedAt
+        }
+    }
+
+    func canMutatePackages(in scope: BatchScope) -> Bool {
+        switch scope {
+        case .homebrew:
+            return !homebrewRefreshFailed && homebrew?.snapshot?.sectionErrors[.packages] == nil
+        case .npm, .nodeRuntime:
+            return !nodeRefreshFailed
         }
     }
 

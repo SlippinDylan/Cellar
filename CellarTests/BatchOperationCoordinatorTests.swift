@@ -77,7 +77,10 @@ final class BatchOperationCoordinatorTests: XCTestCase {
         let result = try await coordinator.execute(coordinator.prepare(intent))
         XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded])
         XCTAssertEqual(result.refreshStatus, .failed)
-        XCTAssertNil(result.refreshedState)
+        guard case .homebrew(let status) = result.refreshedState else {
+            return XCTFail("A partial reconciliation must publish its independently successful sections")
+        }
+        XCTAssertNotNil(status.snapshot?.sectionErrors[.packages])
     }
     func testIntentRejectsEmptyDuplicateMixedProviderTypeAndEnvironment() {
         let formula = BatchItem.homebrew(.init(name: "one", kind: .formula))

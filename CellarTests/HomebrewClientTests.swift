@@ -536,7 +536,14 @@ final class HomebrewClientTests: XCTestCase {
         let result = try await coordinator.execute(plan)
         XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.unknown])
         XCTAssertEqual(result.refreshStatus, .failed)
-        XCTAssertNil(result.refreshedState)
+        guard case .homebrew(let status) = result.refreshedState else {
+            return XCTFail("The final partial snapshot must remain available for independent section publication")
+        }
+        let partial = try XCTUnwrap(status.snapshot)
+        XCTAssertNotNil(partial.sectionErrors[.packages])
+        XCTAssertNil(partial.sectionErrors[.configuration])
+        XCTAssertNil(partial.sectionErrors[.taps])
+        XCTAssertFalse(partial.taps.isEmpty)
     }
     @MainActor
     func testCaskStandardBatchUsesConservativeFlagsAndNeverDeletesArtifacts() async throws {
@@ -893,7 +900,7 @@ final class HomebrewClientTests: XCTestCase {
     }
 }
 
-private struct FakeBrewFixture {
+struct FakeBrewFixture {
     let directoryURL: URL
     let brewURL: URL
     let logURL: URL
@@ -928,6 +935,11 @@ private struct FakeBrewFixture {
         state_dir='\#(directoryURL.path)'
         printf '%s|%s|%s|%s\n' "$*" "${HOMEBREW_NO_AUTO_UPDATE:-}" "${HOMEBREW_NO_AUTOREMOVE:-}" "${HOMEBREW_NO_INSTALL_CLEANUP:-}" >> "$log_path"
 
+        case "$*" in
+          "--prefix") [ ! -f "$state_dir/fail-configuration" ] || exit 1 ;;
+          "info --json=v2 --installed") [ ! -f "$state_dir/fail-packages" ] || exit 1 ;;
+          "tap-info --installed --json=v1") [ ! -f "$state_dir/fail-taps" ] || exit 1 ;;
+        esac
         case "$*" in
           "--version")
             if [ -f "$state_dir/postflight-fails" ] && { [ -f "$state_dir/formula-removed" ] || [ -f "$state_dir/cask-removed" ]; }; then

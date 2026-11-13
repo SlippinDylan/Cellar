@@ -33,7 +33,8 @@ struct DiscoverView: View {
                     }
                     if let result = installation.result { DiscoverInstallResultView(result: result) }
                     if search.state == .available, let context = search.resultContext {
-                        CatalogCardGrid(states: cards, minimumCardWidth: 360, isActionEnabled: !model.isBusy) { card, _ in
+                        CatalogCardGrid(states: cards, minimumCardWidth: 360, isActionEnabled: !model.isBusy,
+                                        isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, _ in
                             Task { await installation.install(card, context: context) }
                         }
                     } else { searchContent }
@@ -64,7 +65,7 @@ struct DiscoverView: View {
     private var cards: [CatalogCardState] {
         search.results.map { result in
             result.card(homebrew: model.homebrew?.snapshot, node: model.node, activeIntent: coordinator.activeIntent,
-                        running: coordinator.runningItem, canInstall: result.identity.providerScope == .npm ? !model.nodeRefreshFailed : !model.homebrewRefreshFailed,
+                        running: coordinator.runningItem, canInstall: result.identity.providerScope == .npm ? !model.nodeRefreshFailed : model.canMutatePackages(in: .homebrew(.formula)),
                         stage: operationStore.currentOperation?.context.stage)
         }
     }

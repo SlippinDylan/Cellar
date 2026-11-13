@@ -110,6 +110,10 @@ extension AppModel {
 
     private func executeHomebrewAction(_ plan: HomebrewActionPlan) async {
         guard !isBusy, plan.canExecute else { return }
+        guard homebrewActionIsAvailable(plan.action) else {
+            homebrewOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
+            return
+        }
         isHomebrewWorking = true
         homebrewOperationError = nil
         homebrewActionResult = nil
@@ -128,13 +132,15 @@ extension AppModel {
             }
             homebrewActionResult = result
             if let snapshot = result.snapshot {
-                homebrew = HomebrewStatus(
+                applyHomebrewReadResult(.success(HomebrewStatus(
                     executablePath: snapshot.executablePath,
                     version: snapshot.version,
                     managerAvailable: managers?.homebrewAvailable ?? homebrew?.managerAvailable ?? false,
                     snapshot: snapshot
-                )
+                )), includingOutdated: true)
                 refreshedAt = Date()
+            } else {
+                applyHomebrewReadResult(.failure(BatchOperationError.reconciliationUnavailable), includingOutdated: true)
             }
             let activityOutcome: ActivityEntry.Outcome
             let activityDetail: String
@@ -178,10 +184,15 @@ extension AppModel {
             homebrewOperationError = failureMessage(error)
             if let managers {
                 let refresh = Task { try await service.loadHomebrew(snapshot: managers) }
-                if let refreshedHomebrew = try? await refresh.value {
-                    homebrew = refreshedHomebrew
+                do {
+                    let refreshedHomebrew = try await refresh.value
+                    applyHomebrewReadResult(.success(refreshedHomebrew), includingOutdated: true)
                     refreshedAt = Date()
+                } catch {
+                    applyHomebrewReadResult(.failure(error), includingOutdated: true)
                 }
+            } else {
+                applyHomebrewReadResult(.failure(error), includingOutdated: true)
             }
             finishActivity(
                 activityID,
@@ -227,6 +238,18 @@ extension AppModel {
             let plan = try await operation()
             try Task.checkCancellation()
             return plan
+        }
+    }
+
+    private func homebrewActionIsAvailable(_ action: HomebrewAction) -> Bool {
+        switch action {
+        case .update: return true
+        case .addTap, .removeTap:
+            return !homebrewRefreshFailed && homebrew?.snapshot?.sectionErrors[.taps] == nil
+        case .upgrade:
+            return canMutatePackages(in: .homebrew(.formula)) && homebrew?.snapshot?.sectionErrors[.outdated] == nil
+        case .install, .uninstallFormula, .uninstallCask, .zapCask:
+            return canMutatePackages(in: .homebrew(.formula))
         }
     }
 

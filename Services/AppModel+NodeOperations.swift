@@ -43,6 +43,7 @@ extension AppModel {
 
     private func createNodePlan(_ request: NodeActionRequest) async throws -> (plan: NodeActionPlan, snapshot: SnapshotStatus) {
         guard !isBusy, let managers else { throw BatchOperationError.busy }
+        guard nodeActionIsAvailable(request) else { throw BatchOperationError.reconciliationUnavailable }
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
@@ -70,6 +71,10 @@ extension AppModel {
     @discardableResult
     private func executeNodeAction(_ plan: NodeActionPlan, snapshot managers: SnapshotStatus) async -> NodeActionResult? {
         guard !isBusy, plan.canExecute else { return nil }
+        guard nodeActionIsAvailable(plan.request) else {
+            nodeOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
+            return nil
+        }
         isNodeWorking = true
         nodeOperationError = nil
         nodeActionResult = nil
@@ -85,20 +90,20 @@ extension AppModel {
                 try await self.service.executeNode(plan, snapshot: managers,
                                                    preferredNodeVersion: self.preferredNodeVersion)
             }
-            updatePreferredNodeVersion(after: plan)
+            if operation.batchItemStatus == .succeeded { updatePreferredNodeVersion(after: plan) }
             let refreshedSnapshot: NodeSnapshot?
             let postflightError: String?
             do {
                 let refresh = Task { try await service.loadNode(snapshot: managers, preferredNodeVersion: preferredNodeVersion) }
-                refreshedSnapshot = try await refresh.value
+                let refreshed = try await refresh.value
+                applyNodeReadResult(.success(refreshed), includingOutdated: true)
+                refreshedAt = Date()
+                refreshedSnapshot = node
                 postflightError = nil
             } catch {
+                applyNodeReadResult(.failure(error), includingOutdated: true)
                 refreshedSnapshot = nil
                 postflightError = error.localizedDescription
-            }
-            if let refreshedSnapshot {
-                node = refreshedSnapshot
-                refreshedAt = Date()
             }
             let result = NodeActionResult(
                 plan: plan,
@@ -125,9 +130,12 @@ extension AppModel {
         } catch {
             nodeOperationError = failureMessage(error)
             let refresh = Task { try await service.loadNode(snapshot: managers, preferredNodeVersion: preferredNodeVersion) }
-            if let refreshedNode = try? await refresh.value {
-                node = refreshedNode
+            do {
+                let refreshedNode = try await refresh.value
+                applyNodeReadResult(.success(refreshedNode), includingOutdated: true)
                 refreshedAt = Date()
+            } catch {
+                applyNodeReadResult(.failure(error), includingOutdated: true)
             }
             finishActivity(
                 activityID,
@@ -148,6 +156,11 @@ extension AppModel {
     func dismissNodeFeedback() {
         nodeActionResult = nil
         nodeOperationError = nil
+    }
+
+    private func nodeActionIsAvailable(_ request: NodeActionRequest) -> Bool {
+        // Selecting an explicit runtime remains available to recover a failed session read.
+        !nodeRefreshFailed || [.installNode, .useNode].contains(request.action)
     }
 
     private func updatePreferredNodeVersion(after plan: NodeActionPlan) {

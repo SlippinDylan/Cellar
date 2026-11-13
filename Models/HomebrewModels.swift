@@ -114,9 +114,24 @@ struct HomebrewSnapshot: Sendable {
                     controlledPath: controlledPath, commandLineToolsAvailable: commandLineToolsAvailable)
     }
 
+    func retainingFailedSections(from previous: Self?) -> Self {
+        guard let previous, executablePath == previous.executablePath,
+              sectionErrors[.configuration] != nil || previous.configuration.prefix.isEmpty
+                || configuration.prefix == previous.configuration.prefix else { return self }
+        let merged = Self(executablePath: executablePath, version: version,
+                          configuration: sectionErrors[.configuration] == nil ? configuration : previous.configuration,
+                          packages: sectionErrors[.packages] == nil ? packages : previous.packages,
+                          outdatedPackages: outdatedPackages,
+                          taps: sectionErrors[.taps] == nil ? taps : previous.taps,
+                          sectionErrors: sectionErrors, controlledPath: controlledPath,
+                          commandLineToolsAvailable: commandLineToolsAvailable)
+        return merged.retainingKnownOutdated(from: previous)
+    }
+
     func retainingKnownOutdated(from previous: Self?) -> Self {
         guard sectionErrors[.outdated] != nil, let previous,
-              executablePath == previous.executablePath, configuration.prefix == previous.configuration.prefix else { return self }
+              executablePath == previous.executablePath,
+              previous.configuration.prefix.isEmpty || configuration.prefix == previous.configuration.prefix else { return self }
         let installed = Dictionary(uniqueKeysWithValues: packages.filter(\.isInstalled).map { ($0.identity, $0) })
         let retained = previous.outdatedPackages.compactMap { outdated -> HomebrewOutdatedPackage? in
             guard let package = installed[outdated.identity] else { return nil }

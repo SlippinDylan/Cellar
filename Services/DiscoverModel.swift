@@ -284,11 +284,11 @@ final class DiscoverInstallationModel: ObservableObject {
 extension AppModel {
     var discoverContext: DiscoverContext {
         let npm: DiscoverNPMContext?
-        if let node, !node.summary.nodePath.isEmpty, !node.summary.npmPath.isEmpty,
+        if !nodeRefreshFailed, let node, !node.summary.nodePath.isEmpty, !node.summary.npmPath.isEmpty,
            let registry = URL(string: node.summary.registry), let client = try? NPMRegistryClient(registryURL: registry) {
             npm = DiscoverNPMContext(environment: LibraryCatalog.context(node.summary), registryURL: client.registryURL)
         } else { npm = nil }
-        return DiscoverContext(homebrewAvailable: homebrew?.executablePath != nil && !homebrewRefreshFailed, npm: npm,
-                               nodeAvailable: node != nil && node?.summary.nodePath.isEmpty == false && node?.summary.npmPath.isEmpty == false)
+        return DiscoverContext(homebrewAvailable: homebrew?.executablePath != nil && canMutatePackages(in: .homebrew(.formula)), npm: npm,
+                               nodeAvailable: !nodeRefreshFailed && node != nil && node?.summary.nodePath.isEmpty == false && node?.summary.npmPath.isEmpty == false)
     }
 }

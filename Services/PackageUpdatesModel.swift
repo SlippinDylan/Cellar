@@ -76,7 +76,7 @@ final class PackageUpdatesModel: ObservableObject {
 
     private func valid(_ intent: BatchIntent) -> Bool {
         let contextMatches = switch intent.scope {
-        case .homebrew: !model.homebrewRefreshFailed && model.homebrewUpdateState == .available
+        case .homebrew: model.canMutatePackages(in: intent.scope) && model.homebrewUpdateState == .available
         case .npm(let environment): !model.nodeRefreshFailed && model.nodeUpdateState == .available && model.node.map { LibraryCatalog.context($0.summary) } == environment
         case .nodeRuntime: false
         }
@@ -88,7 +88,7 @@ final class PackageUpdatesModel: ObservableObject {
 extension AppModel {
     var updateCards: [CatalogCardState] {
         UpdatesCatalog.cards(homebrew: homebrew?.snapshot, node: node,
-                             homebrewUpdates: homebrewRefreshFailed ? .failed : homebrewUpdateState,
+                             homebrewUpdates: canMutatePackages(in: .homebrew(.formula)) ? homebrewUpdateState : .failed,
                              nodeUpdates: nodeRefreshFailed ? .failed : nodeUpdateState,
                              activeIntents: batchCoordinator.activeIntents, runningItem: batchCoordinator.runningItem,
                              stage: operationStore.currentOperation?.context.stage)
@@ -96,11 +96,13 @@ extension AppModel {
 
     func prepareUpdateBatch(_ intents: [BatchIntent]) async throws -> BatchUpdatePlan {
         guard !isBusy else { throw BatchOperationError.busy }
+        guard intents.allSatisfy({ canMutatePackages(in: $0.scope) }) else { throw BatchOperationError.reconciliationUnavailable }
         return try await batchCoordinator.prepareUpdates(intents)
     }
 
     func executeUpdateBatch(_ plan: BatchUpdatePlan) async throws -> BatchUpdateExecutionResult {
         guard !isBusy else { throw BatchOperationError.busy }
+        guard plan.groups.allSatisfy({ canMutatePackages(in: $0.intent.scope) }) else { throw BatchOperationError.reconciliationUnavailable }
         let result = try await batchCoordinator.executeUpdates(plan)
         var applied: Set<BatchScope> = []
         var appliedHomebrew = false

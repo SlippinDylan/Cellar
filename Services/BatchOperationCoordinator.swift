@@ -370,11 +370,12 @@ final class BatchOperationCoordinator: ObservableObject {
         switch intent.scope {
         case .homebrew:
             let status = try await provider.refreshHomebrew()
-            guard let snapshot = status.snapshot, snapshot.sectionErrors[.packages] == nil else {
+            guard let snapshot = status.snapshot else {
                 throw BatchOperationError.reconciliationUnavailable
             }
-            let refreshStatus: BatchRefreshStatus = intent.operation == .update && snapshot.sectionErrors[.outdated] != nil ? .failed : .succeeded
-            return (refreshStatus, .homebrew(status))
+            let failed = snapshot.sectionErrors[.packages] != nil
+                || (intent.operation == .update && snapshot.sectionErrors[.outdated] != nil)
+            return (failed ? .failed : .succeeded, .homebrew(status))
         case .npm(let environment):
             let snapshot = try await provider.refreshNPM(environment)
             let refreshStatus: BatchRefreshStatus = intent.operation == .update && snapshot.outdatedError != nil ? .failed : .succeeded

@@ -5,6 +5,7 @@ struct CatalogCardGrid: View {
     var minimumCardWidth: CGFloat = 260
     var updateTargets: [CatalogCardState] = []
     var isActionEnabled = true
+    var isItemActionEnabled: (CatalogCardState) -> Bool = { _ in true }
     let action: (CatalogCardState, CatalogCardAction) -> Void
 
     var body: some View {
@@ -12,7 +13,7 @@ struct CatalogCardGrid: View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumCardWidth), spacing: AppLayout.cardSpacing, alignment: .top)], alignment: .leading, spacing: AppLayout.cardSpacing) {
             ForEach(states) { state in
                 let target = targets[state.identity]
-                CatalogCardView(state: state, updateTarget: target, isActionEnabled: isActionEnabled) { selectedAction in
+                CatalogCardView(state: state, updateTarget: target, isActionEnabled: isActionEnabled && isItemActionEnabled(state)) { selectedAction in
                     if selectedAction == .update, state.primaryAction == .uninstall {
                         guard let target else { preconditionFailure("An enabled library update requires its canonical target") }
                         action(target, selectedAction)

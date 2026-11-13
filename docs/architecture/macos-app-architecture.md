@@ -97,6 +97,10 @@ npm 缓存校验状态由 `AppModel` 在当前会话中独立保留，包含执�
 
 Home 的本机读取跳过 Homebrew/npm outdated 查询，先发布版本、清单和配置。本机刷新结束后，视图生命周期通过 `OperationStore` 登记一个受控任务，并发持有两个 provider 的 outdated 查询和四个官方版本来源，各自独立发布结果、状态与检查时间；界面不提供手动停止，进程回收和子任务结束前继续拒绝退出。离开 Home 或新一轮刷新会在内部取消旧任务，旧结果不能覆盖新任务状态，失效的 loading 状态会明确结束。同一次已完成的本机刷新不重复检查，空闲时没有循环。本机 Homebrew/Node 读取失败时保留先前成功快照与其时间，并单独显示刷新失败；outdated 失败只改变相应更新状态，不清空核心数据。npm outdated 保留核心快照的精确 Node/npm 可执行路径，先验证入口仍可执行，再复验路径、版本与全局目录，不按版本或 nvm default 重新选择环境。既有完整快照 API 继续供操作前后校验使用。
 
+Homebrew 部分读取按 `sectionErrors` 保留失败分区的最近已知配置、清单与 Tap，成功分区独立更新；旧数据仍携带本次错误，不作为成功空集合或新鲜状态。只在可执行入口一致、且先后已知的 prefix 没有变化时合并；首次配置失败的未知 prefix 不视为安装身份变化；outdated 仍按安装清单过滤保留。`homebrewRefreshedAt` 只在本地核心分区均成功时推进，部分失败不推进该时间；整体读取失败另用 `homebrewRefreshFailed` 表达。软件包操作只依赖可信的清单，Tap 操作只依赖可信的 Tap 分区，更新另要求可信的 outdated；无关分区失败不禁用其他能力。
+
+Node 和 Homebrew 的单项操作、异常收尾及批量结果共用各自的读取状态更新入口。操作后完整回读同时更新 provider 的失败标记、成功时间、outdated 状态和检查时间；完整回读中的 outdated 局部失败保留核心状态。Node 切换只在操作成功后调整会话选择；回读失败保留旧快照与成功时间，但移除 Discover 的可用 npm 上下文，拒绝基于旧环境准备或执行写操作。显式选择或安装 Node 仍可用于恢复，后续成功读取才清除失败标记。Library 和 Discover 的卡片按 provider 禁用旧状态动作，AppModel 的单项及批量入口继续复验，不能仅依赖 UI 禁用。
+
 快速返回 Home 时，新请求只等待此前 Home owner 的内部取消与清理完成，随后复验自身生命周期、刷新时间和操作槽；不等待其他模块的任务，也不在其他任务结束后自动启动过期检查。同一轮健康的重叠请求共享已有 owner。owner 先释放操作槽再完成，确保有效的接管请求不会因旧槽仍忙而永久跳过。
 
 刷新与写操作不使用轮询。独立 IO 可以有界并发；批量 mutation 必须顺序执行。状态模型区分 not loaded、loading、available、partial failure 和 unavailable，不能用空集合替代失败。
@@ -166,7 +170,7 @@ Batch coordinator 只组合现有单项 typed operation：
 
 全局 mutation slot 覆盖 Homebrew、npm、Node、Registry、Shell 与 setup 写入，防止跨模块同时修改环境。只读刷新与 mutation 是否能并行由当前状态一致性契约决定；不能证明安全时拒绝刷新而非返回混合快照。
 
-当前 `BatchOperationCoordinator` 在确认前准备有序单项计划，整批计划只能消费一次。执行通过 `ProviderBatchOperations` 复用既有 Homebrew/npm client；npm 核对明确安装中的实际 Node/npm 入口与版本，计划、执行和复查复用验证后固定的 environment，PATH 只包含该安装的 bin 与系统工具路径，禁止其他 provider 提供 fallback。npm 复查合并时同步 App 内后续操作使用的 Node 会话版本。`OperationStore` 登记覆盖执行、内部取消后的进程回收及最终复查；受控 worker 与最终复查分开，父任务取消不打断复查。Homebrew 保留单项执行契约要求的安全复查，再执行一次整批最终复查；provider partial 单独保留为逐项部分完成，并计入整体部分完成。最终复查失败独立报告，既有逐项结果保持不变。现有单项 Homebrew、Node 与 Shell 写操作也使用相同的生命周期登记。
+当前 `BatchOperationCoordinator` 在确认前准备有序单项计划，整批计划只能消费一次。执行通过 `ProviderBatchOperations` 复用既有 Homebrew/npm client；npm 核对明确安装中的实际 Node/npm 入口与版本，计划、执行和复查复用验证后固定的 environment，PATH 只包含该安装的 bin 与系统工具路径，禁止其他 provider 提供 fallback。npm 复查合并时同步 App 内后续操作使用的 Node 会话版本。`OperationStore` 登记覆盖执行、内部取消后的进程回收及最终复查；受控 worker 与最终复查分开，父任务取消不打断复查。Homebrew 保留单项执行契约要求的安全复查，再执行一次整批最终复查；最终清单分区读取失败时仍发布独立成功的配置与 Tap，复查状态和单独警告保持失败，旧清单只用于展示；provider partial 单独保留为逐项部分完成，并计入整体部分完成。最终复查失败独立报告，既有逐项结果保持不变。现有单项 Homebrew、Node 与 Shell 写操作也使用相同的生命周期登记。
 
 安装批次把准备不可用或已经安装的目标保留为 typed unavailable/alreadyInstalled 条目，预览明确说明这些项目不会安装，其他 eligible 项仍按原顺序准备和执行。准备失败不保存原始错误；最终 outcome 包含全部原目标的有序结果，已知不可用项为 failed，父任务内部取消后尚未开始的可执行项为 cancelled。零可执行项禁用用户确认按钮；协调器即使收到该批次，也只生成失败摘要，不调用 provider execute 或复查。既有卸载与 Node 当前/default 保护仍在准备时拒绝危险批次。
 
@@ -175,8 +179,6 @@ Node runtime 卸载批次与 npm 包批次使用不同 identity 和 scope，但�
 npm 卸载的确认状态在当前会话中保存规范化的 Node/npm executable、globalPrefix 和 globalRoot。打开单次写入 gate 前重新读取同一环境的包计划及最终 summary，确认 package identity、installedVersion 和精确全局目标目录没有变化；变化后拒绝旧确认，不把同版本的其他 Node executable 当作已确认环境。原计划的有效期和 token 不因复验而延长。Manager 的 uninstall `warn`/零退出/`residue-detected` 表示移除成功但有残留，协调器保留为 partiallySucceeded；路径仅在当前会话 Library 结果中以可复制文字展示，不写入文件日志，也不由 App 删除。
 
 npm 安装保存会话内的原目标目录与每个 package spec 的有效 Registry；准备前后确认目的地没有变化，确认后在逐项执行前及打开 write gate 前复验原包名、已安装版本、解析目标版本、Node/npm 入口、目的地和 Registry，旧计划的有效期不延长。scope Registry 通过 Cellar-owned typed read 查询：只调用已验证安装中的绝对 npm，参数固定为 `config get <validated-scope>:registry`，采用与 Manager 相同的受控环境与工作目录、关闭 execute gate、20 秒 deadline 和有界输出；未配置 scope 才使用同次 summary 的默认 Registry，读取失败或无效来源均 fail closed。冻结 Manager 无法强制指定 Registry，因此来源变化必须拒绝执行，不重建已确认基线。Discover 的一个批次若包含不同有效 Registry，会要求用户分别提交；准备期间不同项目读到不同目的地也拒绝发布确认。安装完成但最终复查失败时保留原快照与逐项结果，标记对应 provider 状态未知，停止从该旧清单提供安装动作，直到显式刷新成功。
-
-Homebrew 整批最终复查遇到 packages 分区错误时视为 reconciliation failed，不发布空安装清单作为新快照。AppModel 保留先前成功的 Homebrew 快照与刷新时间，同时发布失败状态；Library 显示复查失败提示，逐项执行结果仍保留。
 
 npm 更新复用安装的会话 Registry 与 canonical destination 绑定，在准备前后及执行前复验；计划与最终复验的 installed/target 版本必须可靠比较为 behind，当前、ahead 与 unknown 均拒绝写入。确认中显示准备时的具体目标版本；实际写入通过冻结 Manager 已有的 install action 与精确 `name@version` spec 执行，不调用会再次解析 latest 的 update-latest write，App 的 typed intent、结果和日志仍为 update。冻结 install 的精确版本验证继续生效；Cellar 在同一 Node 入口与全局目的地读取安装版本，只有等于原目标才报告成功，读取不可用保留原退出状态并报告 unknown。Homebrew upgrade 的指纹绑定各自目标的类型、名称、已安装版本与可用版本，确认后目标版本变化会拒绝该项；其他项目的完成不会使无关目标的计划失效。`brew update` 仍只属于独立 metadata action。
 

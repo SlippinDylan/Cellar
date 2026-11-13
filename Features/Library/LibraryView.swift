@@ -72,7 +72,8 @@ struct LibraryView: View {
                     if let reason = uninstall.failureReason { Text(reason.message).foregroundStyle(.secondary) }
                     if let result = uninstall.result { LibraryResultView(result: result) }
                     if !cards.isEmpty {
-                        CatalogCardGrid(states: cards, minimumCardWidth: 360, updateTargets: updateTargets, isActionEnabled: canPerformAction) { card, action in
+                        CatalogCardGrid(states: cards, minimumCardWidth: 360, updateTargets: updateTargets, isActionEnabled: canPerformAction,
+                                        isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, action in
                             switch action {
                             case .update: Task { await updates.update(card) }
                             case .uninstall: Task { await uninstall.prepare(card.batchItem) }

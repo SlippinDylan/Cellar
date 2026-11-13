@@ -19,7 +19,7 @@ Cellar 是非沙盒的原生 macOS 前台应用，日常界面与状态由主进
 - Home/Library/Discover/环境/维护与底部 Settings/About 的原生任务导航；内部 tools 路由保留为环境，包含 Terminal/Brew Tap/npm Registry/Node.js；维护独立提供检查/清理，Settings 提供通用/环境信息；
 - Home 依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，每个统计项使用独立小卡片与品牌色圆角图标底，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、类型／待更新／搜索交集筛选、单项和批量更新、任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序组织，项目版本归入 Node.js，检查与受限清理迁入维护，Zsh 文件整理仍归终端；Homebrew Tap 与 npm 软件源分别接入 Tap 和 Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；任务进度与最近结果跨页面显示，排错记录写入本地文件，Settings > 通用 > 日志提供显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
 - 共享目录卡片与自适应网格已提供软件图标、类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
-- 全部可达页面的三语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
+- 全部可达页面的八语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条会话诊断；
 - typed batch prepare/execute、受控任务、会话内结构化结果与可配置的文件日志；
 - Homebrew 直接 Bridge、Node Manager schema v1、Shell schema v1 adapter；
@@ -274,7 +274,7 @@ Manager 从只读 Bundle 快照安装到版本化 Application Support：
 
 ## 本地化与可访问性
 
-所有用户可见静态字符串进入 String Catalog，支持 English、简体中文和繁体中文。Follow System 不覆盖系统首选语言；显式选择只影响 Cellar。会话结果保留语义数据，在显示时按当前语言渲染；文件日志使用稳定语义记录，便于排查问题。
+所有用户可见静态字符串进入 String Catalog，支持 English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español。Follow System 不覆盖系统首选语言；显式选择只影响 Cellar。会话结果保留语义数据，在显示时按当前语言渲染；文件日志使用稳定语义记录，便于排查问题。
 
 应用语言偏好写入 App 自有 UserDefaults：Follow System 删除 App 域内 `AppleLanguages`，显式选择写入单一受支持语言。确认后通过受控退出和 `applicationWillTerminate` 中的一次新实例请求重启，使 Bundle 与系统菜单在新进程中使用一致语言。有活动操作时不提交语言变更；退出复验拒绝时恢复 App 域内原语言偏好与精确的 `AppleLanguages` 前态（包含键不存在），清除待重启状态并向 Settings 发布恢复后的选择，允许任务结束后重试。测试注入独立 defaults suite/domain、终止与重开闭包，生产重开入口另有 hosted XCTest 保护。
 

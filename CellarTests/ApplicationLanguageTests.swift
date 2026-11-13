@@ -16,7 +16,7 @@ final class ApplicationLanguageTests: XCTestCase {
 
     func testDefaultsAndSupportedValues() throws {
         let (defaults, suiteName) = try makeDefaults()
-        XCTAssertEqual(ApplicationLanguage.allCases.map(\.rawValue), ["system", "en", "zh-Hans", "zh-Hant"])
+        XCTAssertEqual(ApplicationLanguage.allCases.map(\.rawValue), ["system", "en", "zh-Hans", "zh-Hant", "ja", "ko", "de", "fr", "es"])
         XCTAssertEqual(ApplicationLanguage.selected(in: defaults), .system)
         defaults.set("unsupported", forKey: ApplicationLanguage.preferenceKey)
         XCTAssertEqual(ApplicationLanguage.selected(in: defaults), .system)

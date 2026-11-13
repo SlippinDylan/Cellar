@@ -8,6 +8,10 @@ const entry = value => ({ localizations: Object.fromEntries(requiredLanguages.ma
 }])) });
 const catalog = () => ({ sourceLanguage: 'en', strings: { Home: entry('Home'), 'Version %@': entry('Version %@') } });
 
+test('coverage requires all eight supported App languages', () => {
+  assert.deepEqual(requiredLanguages, ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'de', 'fr', 'es']);
+});
+
 test('reachable Cellar presentation has complete catalog coverage', () => {
   assert.deepEqual(validateRepository(fileURLToPath(new URL('../../', import.meta.url))), []);
 });

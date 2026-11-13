@@ -57,7 +57,7 @@ export const presentationSources = [
   'Models/AppDestination.swift',
   'Models/ApplicationLanguage.swift',
 ];
-export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant'];
+export const requiredLanguages = ['en', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'de', 'fr', 'es'];
 
 const presentationLiteral = /\b(?:Text|Button|Label|Link|Tab|Picker|Toggle|DisclosureGroup|GroupBox|ProgressView|TextField|LabeledContent|ContentUnavailableView|CommandMenu|Menu|TableColumn|LocalizedStringResource|String\s*\(\s*localized:|help|alert|navigationTitle|navigationSubtitle|accessibilityLabel|accessibilityHint|localized|diagnosticSection)\s*\(?\s*"((?:\\.|[^"\\])*)"/g;
 const homePresentationLiteral = /\b(?:(?:countRow|inlineWarning|registryLayer|pathRow|pathList|receiptSection)\s*\(|(?:HomeOnlineVersionRow|HomeTimestampRow)\s*\(\s*title:)\s*"((?:\\.|[^"\\])*)"/g;

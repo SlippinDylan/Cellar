@@ -268,5 +268,9 @@ final class CatalogDomainModelsTests: XCTestCase {
         XCTAssertEqual(AppLanguage.simplifiedChinese.localeIdentifier, "zh-Hans")
         XCTAssertEqual(AppLanguage.traditionalChinese.localeIdentifier, "zh-Hant")
         XCTAssertEqual(AppLanguage.traditionalChinese.locale?.identifier, "zh-Hant")
+        XCTAssertEqual(AppLanguage.allCases.map(\.rawValue), ApplicationLanguage.allCases.map(\.rawValue))
+        for language in AppLanguage.allCases where language != .followSystem {
+            XCTAssertEqual(language.locale?.identifier, language.rawValue)
+        }
     }
 }

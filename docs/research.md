@@ -167,7 +167,7 @@ Command Line Tools 则直接采用 Apple 文档中的 `xcode-select --install` �
 - 官方 release metadata、npm Registry search 与 Node/nvm 线上版本在离线、超时和限流场景下的表现。
 - `npm outdated` 在离线、registry 超时、认证失败和代理环境下的表现。
 - App 退出后是否存在遗留的 bash、npm 或 brew 子进程。
-- English、简体中文和繁体中文 UI 在 1080 × 720 及更窄窗口中的截断、键盘与 VoiceOver 可用性。
+- English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español UI 在 1080 × 720 及更窄窗口中的截断、键盘与 VoiceOver 可用性。
 
 这些项目进入[人工验收清单](manual-smoke-checklist.md)。人工验证失败时修改实现或收缩产品承诺，不增加未经证明的 fallback。
 

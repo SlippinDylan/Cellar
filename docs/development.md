@@ -7,7 +7,7 @@
 - 产品需求是用户行为和安全边界的唯一来源。架构文档描述当前实现，不覆盖产品契约。
 - 任务导航统一发生在 Features/Services；Formula、Cask、npm 和 Node environment identity 必须保留到 Bridge，不引入通用命令执行器。
 - 用户界面可以隐藏内部 plan 术语，但强类型计划、状态指纹、全局 mutation slot 和 post-refresh 不能删除。
-- String Catalog 是用户可见静态字符串的来源；新增界面同步提供 English、简体中文和繁体中文，默认语言行为为 Follow System。
+- String Catalog 是用户可见静态字符串的来源；新增界面同步提供 English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español，默认语言行为为 Follow System。
 - 独立只读 IO 使用有界并发；批量 mutation 顺序执行。禁止轮询、高频装饰动画和未经测量的 cache/依赖；用户明确要求的 PermissionFlow 原版授权引导为定向例外，仅在引导期间保留上游窗口跟随，结束即回收。
 - 普通自动开发可以读取必要的项目文件，但不以真实 Homebrew、npm、nvm、Shell、Registry 或系统 Installer 作为验证夹具。
 
@@ -70,7 +70,7 @@ sips -s format png \
 - 文件日志测试注入临时日志目录、独立 UserDefaults 和时钟，验证等级过滤、设置持久化、UTC 跨日分卷、保留期限、单文件 10 MiB／总量 50 MiB 限制、去敏及 IO 失败重试；不写入用户日志目录。
 - Shell 插件测试使用假 clone 和独立 staging，验证发布时目的地并发出现、失败清理和符号链接不逃逸；配置夹具包含官方模板初始化及假 loader，直接断言 source 时看到的插件、主题和 compdump。
 - Node 配置特殊文件测试在独立 helper 进程内设置 deadline，验证无 writer FIFO、超限、替换及 descriptor 回收，不通过 sleep 判定正确性。
-- Localization 检查必须覆盖 String Catalog 中 English、简体中文和繁体中文的缺失项，并搜索新增的非本地化用户字符串。
+- Localization 检查必须覆盖 String Catalog 中 English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español 的缺失项，并搜索新增的非本地化用户字符串。
 - `node .github/scripts/validate-localizations.mjs` 无需启动 App，检查全部 catalog 翻译、格式占位与全部可达页面源码。新增用户可见来源时同步扩展脚本的 `presentationSources`；保留但不可达的旧 provider 页面不属于当前 UI。
 - 测试结束后不得留下 `~/Library/Application Support/Cellar/`、npm cache 变更或全局包变更。
 
@@ -175,7 +175,7 @@ build/DerivedData-Release/Build/Products/Release/Cellar.app
 6. Bundle 内快照与仓库 `Resources/Managers/` 一致。
 7. `Resources/Managers/` 不包含 `.runtime`、日志或临时文件。
 
-不要只检查主程序。当前 Sparkle Framework、Updater、Autoupdate 和 XPC，以及未来新增可执行文件，都应逐项运行 `file`/`lipo -archs` 与 `vtool -show-build`，确认仅 `arm64` 且 `minos` 为 `26.0`。同时确认 `en.lproj`、`zh-Hans.lproj` 和 `zh-Hant.lproj` 中的编译字符串资源存在。
+不要只检查主程序。当前 Sparkle Framework、Updater、Autoupdate 和 XPC，以及未来新增可执行文件，都应逐项运行 `file`/`lipo -archs` 与 `vtool -show-build`，确认仅 `arm64` 且 `minos` 为 `26.0`。同时确认 `en.lproj`、`zh-Hans.lproj`、`zh-Hant.lproj`、`ja.lproj`、`ko.lproj`、`de.lproj`、`fr.lproj`、`es.lproj` 中的编译字符串资源存在。
 
 ## Manager 快照检查
 

@@ -48,7 +48,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - 主导航固定为 Home、Library、Discover、环境（内部路由仍为 tools）、维护；软件更新与待更新筛选位于 Library；侧边栏左下方依次显示 Settings 和 About，不提供活动记录页面或菜单。环境按顺序包含 Terminal、Brew Tap、npm Registry、Node.js，操作页仅在短页面底部或长页面正文末尾以无卡片、居中紧凑的小号次要文字保留必要上下文；维护包含检查与清理，分别保留 Homebrew 检查／npm 缓存校验和既有受限清理；Zsh 文件整理仍在终端，Homebrew 目录更新仍在 Homebrew Tap 页。Settings 使用通用／环境信息分类，前者提供语言与日志偏好，后者集中展示 Cellar 识别和使用的完整环境信息，不冒充已打开终端的环境；About 是独立页面，显示放大的图标、名称、版本、检查更新和底部 Studio 版权署名。不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
 - 卡片本体不导航，只显示关键信息和系统浏览器网站链接。Library 卡片提供单项更新与卸载，Discover 卡片保留状态相关主动作。普通 UI 不显示原始命令或内部计划术语。
 - 安装、配置与维护等任务进度与最近完成结果在主窗口顶部跨页面显示，批量结果保留逐项状态；刷新进度只在工具栏显示。文件日志位于 `~/Library/Logs/Cellar/`，由 Settings 配置等级与保存期限；原始命令和 stdout/stderr 不进入文件日志，只在显式当前会话诊断或既有受控 Manager 日志中提供。旧 `activity.json` 不再读写、迁移或删除。运行中任务不提供用户手动停止；内部取消只用于任务所有者结束、超时和生命周期回收。
-- 用户可见字符串进入 String Catalog，支持 English、简体中文、繁体中文和默认 Follow System。
+- 用户可见字符串进入 String Catalog，支持 English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español，默认 Follow System。
 
 ### Node 环境
 

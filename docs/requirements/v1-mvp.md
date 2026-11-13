@@ -2,7 +2,7 @@
 
 状态：1.0 源码已实现，未公开发布；人工验收门槛保留
 
-更新日期：2026-11-12
+更新日期：2026-11-13
 
 文件名为兼容既有链接保留。本文只概括 1.0 的发布边界，不建立第二套产品定义；任何用户行为、确认规则或安全边界以[产品需求](product-requirements.md)为准。
 
@@ -22,7 +22,7 @@
 | About | 独立侧栏入口；128 点图标、名称、版本、检查更新与 Studio 版权署名 |
 | Operations | 全局写任务互斥、顺序批量、取消、部分完成、post-refresh 和退出保护 |
 | 任务反馈与日志 | 跨页面任务进度与可关闭的最近结果；本地去敏文件日志、等级与保存期限设置；原始输出只在显式会话诊断中展示 |
-| Localization | English、简体中文、繁体中文；默认 Follow System |
+| Localization | English、简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español；默认 Follow System |
 | Quality | 键盘、VoiceOver 和系统外观支持、响应式窗口、无空闲轮询；真实辅助功能、外观和性能仍需人工验收 |
 | Distribution | macOS 26+、仅 arm64、普通前台 App、现有 Sparkle 发布边界 |
 

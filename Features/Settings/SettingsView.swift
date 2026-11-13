@@ -71,6 +71,7 @@ struct SettingsView: View {
                 }
                 .frame(minHeight: AppLayout.minimumDescribedRowHeight)
             }
+            FullDiskAccessSettingsView()
             if let logStore = model.logStore { LoggingSettingsView(store: logStore, diagnostics: model.activityDiagnostics) }
         }
     }

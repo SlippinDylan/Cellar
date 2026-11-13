@@ -12,13 +12,17 @@ struct ProviderBatchOperations: BatchOperationProviding {
         case .uninstall:
             switch identity.kind {
             case .formula: try await service.planHomebrewFormulaUninstall(identity.name)
-            case .cask: try await service.planHomebrewCaskUninstall(identity.name, zap: false)
+            case .cask: try await service.planHomebrewCaskRemoval(identity.name)
             }
         }
     }
 
     func executeHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionResult {
         try await service.executeHomebrew(plan)
+    }
+
+    func executeHomebrew(_ plan: HomebrewActionPlan, caskRemovalProgress: CaskRemovalProgressHandler?) async throws -> HomebrewActionResult {
+        try await service.executeHomebrew(plan, caskRemovalProgress: caskRemovalProgress)
     }
 
     func refreshHomebrew() async throws -> HomebrewStatus {

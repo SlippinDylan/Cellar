@@ -45,7 +45,7 @@ actor SystemProbeService {
                 snapshot: nil
             )
         }
-        let client = HomebrewClient(brewURL: executable, runner: runner)
+        let client = HomebrewClient(brewURL: executable, runner: runner, caskRemovalAuthorizer: .init(runner: runner))
         homebrewClient = client
         let homebrewSnapshot = try await client.loadSnapshot(includingOutdated: includingOutdated)
         return HomebrewStatus(
@@ -104,8 +104,12 @@ actor SystemProbeService {
         try await requireHomebrewClient().planCaskUninstall(name, zap: zap)
     }
 
-    func executeHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionResult {
-        try await requireHomebrewClient().execute(plan)
+    func planHomebrewCaskRemoval(_ name: String) async throws -> HomebrewActionPlan {
+        try await requireHomebrewClient().planCaskRemoval(name)
+    }
+
+    func executeHomebrew(_ plan: HomebrewActionPlan, caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> HomebrewActionResult {
+        try await requireHomebrewClient().execute(plan, caskRemovalProgress: caskRemovalProgress)
     }
 
     func loadShell(snapshot: SnapshotStatus) async throws -> ShellStatus {

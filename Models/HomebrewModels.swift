@@ -30,6 +30,8 @@ struct HomebrewPackage: Identifiable, Sendable {
     let deprecated: Bool
     let disabled: Bool
     let artifacts: [HomebrewCaskArtifact]
+    var oldTokens: [String] = []
+    var installedCaskToken: String? = nil
 
     var id: HomebrewPackageIdentity { identity }
     var isInstalled: Bool { !installedVersions.isEmpty }
@@ -133,8 +135,15 @@ struct HomebrewCaskArtifact: Identifiable, Sendable {
     let kind: String
     let values: [String]
     let category: HomebrewCaskArtifactCategory
+    var application: HomebrewCaskApplicationArtifact? = nil
+    var uninstallDeletePaths: [String] = []
 
-    var id: String { "\(category.rawValue):\(kind):\(values.joined(separator: "|"))" }
+    var id: String { "\(category.rawValue):\(kind):\(values.joined(separator: "|")):\(application?.target ?? "")" }
+}
+
+struct HomebrewCaskApplicationArtifact: Sendable, Hashable {
+    let source: String
+    let target: String?
 }
 
 struct HomebrewResidualPath: Identifiable, Sendable {
@@ -168,6 +177,7 @@ struct HomebrewActionPlan: Identifiable, Sendable {
     let associatedPackages: [HomebrewPackageIdentity]
     let generatedAt: Date
     let stateFingerprint: String?
+    var caskRemoval: CaskRemovalPlan? = nil
 
     var canExecute: Bool {
         action != .removeTap || associatedPackages.isEmpty
@@ -189,6 +199,8 @@ struct HomebrewActionResult: Sendable {
     let snapshot: HomebrewSnapshot?
     let postflightError: String?
     let remainingResidualPaths: [HomebrewResidualPath]
+    var caskRemovalFailures: [CaskRemovalFailure] = []
+    var caskRemovalPathResults: [CaskRemovalPathResult] = []
 
     enum Outcome: Sendable, Equatable {
         case succeeded
@@ -205,6 +217,12 @@ struct HomebrewActionResult: Sendable {
         }
         let stateMatchesPlan = observedStateMatchesPlan(in: snapshot)
         if command.terminationStatus == 0, stateMatchesPlan {
+            if let removal = plan.caskRemoval {
+                let expected = Set(removal.entries.filter { $0.disposition != .protected }.map(\.path))
+                if !caskRemovalFailures.isEmpty || remainingResidualPaths.contains(where: { expected.contains($0.path) }) {
+                    return .partial
+                }
+            }
             return .succeeded
         }
         if stateMatchesPlan || observedPartialChange(in: snapshot) {

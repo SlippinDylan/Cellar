@@ -13,6 +13,8 @@ export const presentationSources = [
   'Features/WebsiteLink.swift',
   'Features/TaskFeedbackView.swift',
   'Features/Settings/LoggingSettingsView.swift',
+  'Features/Settings/FullDiskAccessSettingsView.swift',
+  'Features/Settings/FullDiskAccessGuide.swift',
   'Services/FileLogStore.swift',
   'Features/Activity/ActivityDiagnosticsView.swift',
   'Features/ShellPlaceholderView.swift',

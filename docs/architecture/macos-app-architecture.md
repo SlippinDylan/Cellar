@@ -8,7 +8,7 @@
 
 ## 系统定位
 
-Cellar 是单进程、非沙盒的原生 macOS 前台应用。SwiftUI 负责主窗口与页面；Foundation 负责网络、文件与进程边界；少量 AppKit 负责退出策略、系统打开行为和平台集成。App 没有后台守护进程、菜单栏入口或 Privileged Helper。
+Cellar 是非沙盒的原生 macOS 前台应用，日常界面与状态由主进程持有。SwiftUI 负责主窗口与页面；Foundation 负责网络、文件与进程边界；少量 AppKit 负责退出策略、系统打开行为和平台集成。App 没有后台守护进程或菜单栏入口；受限 Cask 残留清理可在系统授权后启动同一可执行文件的一次性清理模式，不安装常驻特权服务。
 
 1.0 使用任务导向的信息架构，但不会把 Homebrew Formula、Homebrew Cask、npm、Node/nvm 和 Shell 压缩成一个通用命令协议。统一发生在展示与编排层；身份、环境、计划和执行仍由 typed model 与 provider client 保留。
 
@@ -63,7 +63,7 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 `OperationStore` 是退出保护的事实来源；空闲退出前会等待文件日志队列完成，等待期间新登记任务仍会阻止退出：
 
 - 没有活动任务时，`Command-Q` 与关闭最后窗口可以退出；
-- 有活动任务时，`AppDelegate` 拒绝本次终止；
+- 有活动任务时，`AppRootView.windowDismissBehavior` 禁止 SwiftUI 主窗口关闭，`AppDelegate` 同时拒绝本次终止；任务结束后恢复系统关闭行为，不替换窗口原有 delegate；
 - 运行中界面只显示进度、不提供手动停止，任务结束后用户再次退出；
 - App 退出后不得留下由 Cellar 启动的子进程。
 
@@ -121,11 +121,28 @@ Library/Discover 共用 `CatalogCardView`，网格横向、纵向间距使用 `A
 
 Local library 从本机 provider 状态派生。Discover 通过官方 Homebrew 数据/受控 `brew` 查询和 npm Registry search 获取有界结果。Home 与 Library 把本机状态和异步线上结果合并，但保持不同错误来源。
 
-Library 移除系统 toolbar title，左侧沿用 `CatalogToolbarScopeTabs` 的原生 All/Brew/NPM 与展开的 All/Formula/Cask，并通过 `LibraryToolbarUpdateFilter` 提供独立单段 Pending Updates Tab，与类型组使用同一原生 `NSSegmentedControl` 组件。类型组与待更新均使用原生 `.automatic` 分段样式和 `.selectOne` 选择模式，保留系统工具栏背景；两组 item 和中间固定 spacer 均使用 `.automatic` placement，按普通工具栏项从左到右排列，避免导航区对项的特殊定位。不得隐藏两组背景或添加自绘材质。待更新点击时切换绑定的 `LibraryUpdateFilter`，同步原生选中状态，支持再次取消。Library 查询文本与搜索聚焦请求由 `AppRootView` 持有，`LibraryView` 接收 Binding，搜索项仅按当前页面是否为 Library 创建，不依赖可选 focused scene 搜索上下文。`onGeometryChange` 读取正文可用宽度及类型、待更新控件的实际宽度；右侧 HStack 工具栏项依次包含按需显示的 Update All、搜索框和圆形刷新，扣除左侧控件及系统间隔预算后分配宽度，搜索在 140～380 点之间承接剩余空间。刷新位于搜索框右侧，使用系统圆形 glass 外观并保留原位进度；整体分配空间，避免 Brew 展开时独立工具栏项被收入溢出菜单。类型筛选、弹性 spacer 与右侧容器均使用 `.automatic` placement，展开或收起 Brew 时保持右对齐。Library 与 Discover 的共享搜索字段均应用系统 `.glassEffect(.regular, in: Capsule())` 并隐藏外层共享背景，保证空输入、未聚焦时外观一致。`PackageUpdateActions.canUpdateAll` 同时要求待更新选中、当前目标非空及操作可用，菜单沿用相同资格。单个主 ScrollView 覆盖内容栏，内容 margins 不缩进滚动条；空状态居中，卡片从顶部排列。筛选只处理本机快照；类型、子类型、待更新和搜索按交集组合。每个 npm identity 继续绑定精确 Node executable 与版本。卸载仍只接受一个目标并进行任务专用确认，Cask 只提供 standard，artifact 不由 App 删除。
+Library 移除系统 toolbar title，左侧沿用 `CatalogToolbarScopeTabs` 的原生 All/Brew/NPM 与展开的 All/Formula/Cask，并通过 `LibraryToolbarUpdateFilter` 提供独立单段 Pending Updates Tab，与类型组使用同一原生 `NSSegmentedControl` 组件。类型组与待更新均使用原生 `.automatic` 分段样式和 `.selectOne` 选择模式，保留系统工具栏背景；两组 item 和中间固定 spacer 均使用 `.automatic` placement，按普通工具栏项从左到右排列，避免导航区对项的特殊定位。不得隐藏两组背景或添加自绘材质。待更新点击时切换绑定的 `LibraryUpdateFilter`，同步原生选中状态，支持再次取消。Library 查询文本与搜索聚焦请求由 `AppRootView` 持有，`LibraryView` 接收 Binding，搜索项仅按当前页面是否为 Library 创建，不依赖可选 focused scene 搜索上下文。`onGeometryChange` 读取正文可用宽度及类型、待更新控件的实际宽度；右侧 HStack 工具栏项依次包含按需显示的 Update All、搜索框和圆形刷新，扣除左侧控件及系统间隔预算后分配宽度，搜索在 140～380 点之间承接剩余空间。刷新位于搜索框右侧，使用系统圆形 glass 外观并保留原位进度；整体分配空间，避免 Brew 展开时独立工具栏项被收入溢出菜单。类型筛选、弹性 spacer 与右侧容器均使用 `.automatic` placement，展开或收起 Brew 时保持右对齐。Library 与 Discover 的共享搜索字段均应用系统 `.glassEffect(.regular, in: Capsule())` 并隐藏外层共享背景，保证空输入、未聚焦时外观一致。`PackageUpdateActions.canUpdateAll` 同时要求待更新选中、当前目标非空及操作可用，菜单沿用相同资格。单个主 ScrollView 覆盖内容栏，内容 margins 不缩进滚动条；空状态居中，卡片从顶部排列。筛选只处理本机快照；类型、子类型、待更新和搜索按交集组合。每个 npm identity 继续绑定精确 Node executable 与版本。卸载仍只接受一个目标并进行任务专用确认；Cask 增强卸载的弹窗与清理职责见下文。
 
 Discover 删除系统 toolbar 标题，左侧使用与批量安装弹窗共用的 `GlassCategoryPicker` 显示 All/Formula/Cask/NPM，默认 All；该组件使用 SwiftUI 按钮与系统胶囊形 Liquid Glass 材质，区别于 Library、环境、维护和 Settings 使用的原生 `NSSegmentedControl`。固定 360 点的共享 `CatalogToolbarSearchField` 使用 `.primaryAction` placement，与刷新、批量安装一起靠右，由弹性 spacer 与左侧范围分隔；查询、范围、聚焦和回车提交通过 focused scene context 交给根 toolbar。主内容使用铺满内容栏的 `ScrollView`，16 点内容边距不缩进滚动条；默认空状态按当前 viewport 高度居中，结果从顶部排列。内容区不显示 Registry/Node 摘要、结果数量提示或搜索按钮；批量确认继续保留来源和目的地。搜索由原生字段编辑 delegate 的 Return 命令发起。空输入不请求；每个来源默认最多 50 项，边界最多 100 项，Homebrew 仅为有界匹配逐项读取 typed 详情。All 通过最多三个子任务并发查询所有可用来源，以 Formula/Cask/NPM 顺序合并结果；来源缺失或查询失败保留其他成功结果，并提供对应来源提示。搜索范围由独立 `DiscoverSearchScope` 表达，不把 All 引入安装 provider/type；npm 结果继续绑定搜索时解析的有效 Registry 与 Node 环境。npm 搜索保留精确 Node context；普通查询使用有效默认 Registry，`@scope/name` 查询先读取该 scope 的有效 Registry，并将实际请求来源绑定到搜索结果。结果安装前准备的有效 Registry 必须与搜索结果绑定的来源相同，不能静默改用另一个 Registry。输入、范围或页面生命周期变化在内部取消旧搜索；替换查询等待旧任务清理后才登记新 owner，界面不提供手动停止。已安装卡片不提供重复安装，更新由 Library 负责。批量输入经本地规范化后，以受控只读操作准备全部 typed plan，再显示绑定的实际来源、Node/npm 入口、canonical globalPrefix/globalRoot、逐项可执行性和数量。最终一次确认仅执行原批次计划；执行或复查失败分别呈现，搜索结果保留。
 
 软件更新不再拥有独立 AppDestination 或页面。Library 持有 `PackageUpdatesModel`，原确认与结果视图保留在 `LibraryUpdatePresentation`。`LibraryCatalog.updateTargets` 将当前可见安装项与 `AppModel.updateCards` 按精确 identity 和已安装版本匹配，只保留可执行 behind 目标；待更新筛选、单项按钮与批量动作均使用同一目标契约。批量更新捕获类型、子类型、状态和搜索后的目标，不随后续筛选扩大范围。Library 自动检查沿用原视图生命周期 owner、失败保留和重试入口；进度使用全部 activeIntents，涵盖排队的后续 provider/type 与最终复查。单项更新直接准备并执行；Update All 捕获当时可见的 behind 目标，在确认前准备全部 Formula、Cask 和明确 npm 环境的 typed groups，确认只消费原组一次。所有组由一个受控任务顺序持有全局槽，逐项准备失败与执行失败保留且继续，界面不提供手动停止。完成后 Homebrew Formula/Cask 共用一次最终库存复查，每个 npm 环境独立复查。核心读取不可用时保留原快照；核心成功但 outdated 返回分区错误时，复查状态仍为 failed，同一 Homebrew 安装或 npm 全局目录内安全合并新核心数据与旧版本补充信息，卡片保持 unknown 且不可更新。逐项结果保持不变，刷新警告与任务结果分别记录。更新后的复查不会触发重复自动检查，用户仍可显式重试。
+
+### Cask 卸载与受限清理
+
+`LibraryUninstallModel` 及其 sheet 由稳定的 `AppRootView` 窗口层持有，切换导航不丢失运行进度与完成清单。`LibraryView` 只观察并触发当前目标。模型在异步准备前呈现目标，取消准备会丢弃迟到结果；`LibraryUninstallConfirmation` 从父窗口读取可用高度，将整个 sheet 限制在其 70% 内。布局先按实际宽度测量固定的摘要与按钮区，再将剩余高度分配给唯一的明细滚动区域，不通过明细高度状态反复驱动 sheet 尺寸。根布局的理想高度独立于宿主尺寸计算，再通过仅作用于附属 sheet 的 AppKit 桥接同步真实窗口大小，避免分析完成后仍保留准备态窗口尺寸而裁切内容。左侧图标与名称作为整体在上方内容区垂直居中；右侧摘要标签和容量分别按列左对齐。两侧摘要与底部按钮不进入滚动容器，取消与卸载沿用原生 Liquid Glass 胶囊按钮，卸载使用红色。大小统计独立于删除资格，保留项同样尝试统计；权限不足、预算上限和其他读取失败分别表达，未知不计为零；确认内容说明应用数据删除不可回滚。明细滚动视口向右延伸至弹窗边缘，内容单独保留右内边距，避免滚动条遮挡容量和状态槽。路径通过注入的 NSWorkspace 访达定位动作打开，只接受当前确认清单内尚未移除的项目。增强卸载执行期间保留清单和呈现尺寸，禁止关闭或重复执行；Bridge 的逐路径进度经 Provider、Coordinator 与 AppModel 回传，只有确认消失才显示对号，未确认或中断项目保留为未移除。完成后在原弹窗显示逐项结果与“好的”；共享或归属不明项提示先核实影响，卸载前因应用运行失败时提示退出后重新分析，Homebrew 已确认移除后的保留项按逐项原因提供访达处理步骤，普通未移除项提示在访达手动处理，非 Cask 卸载保持既有交互。呈现时先使用已安装快照中的名称及精确 app artifact，在后台独立读取本机图标，不等待关联文件扫描；快照缺少定位信息时使用准备结果中的应用路径。图标读取不阻塞主线程或清单准备，过期结果不更新新的卸载目标。
+
+`HomebrewClient.planCaskRemoval` 生成带文件身份、安装副本保护信息和精确路径的 `CaskRemovalPlan`。`CaskRemovalScanner` 以 Cask 的本机 App 和有效 Bundle ID 为依据，只发现受限 Library 路径及目标下载缓存；共享身份、无法完整检查的安装信息和 App Group 保留。通过不等待挂载更新的 `getmntinfo(MNT_NOWAIT)` 读取挂载信息；本地挂载卷仅在目录描述符与挂载身份复验一致后，以共享预算检查卷顶层应用与 Applications 中的应用元数据，不进入其他顶层目录，不统计卷内容占用，不跨子挂载。挂载本身不代表归属未知；非本地卷、身份变化、读取失败或预算耗尽仍保留关联数据。该发现范围不代表磁盘任意位置均已检查。应用目录中的符号链接仅在目标直接位于已批准应用根或系统应用根时读取目标元数据，并复验链接身份；系统 Cryptex 应用根单独规范化，避免 Safari 的系统入口令整个清单永久变为未知。其他链接、无效目标和元数据读取失败仍保持未知；此只读识别不赋予删除符号链接目标的权限。`CaskApplicationFileIdentity` 以父目录的设备、inode、创建时间及应用文件名识别 firmlink 等路径别名，避免将同一物理应用误判为共享副本；大小写敏感卷上的不同应用名称仍须区分。缓存归属使用单次、有界的映射，不为每个候选重复遍历缓存。归属发现与大小统计分阶段执行；全部条目（包括保留项）的大小统计共用独立 2 秒及有界条目预算，不因单个大目录消耗预算而丢弃已发现路径或改变删除资格；到达限制时明确保留未知大小或不完整扫描状态，循环检查取消。扫描借鉴 Mole 的归属及副本保护思路，以 Swift 独立实现，不驱动其交互脚本。
+
+增强卸载的 Cask artifact 只来自本机安装记录，当前 `brew info` 目录定义不提供删除授权。`CaskInstalledMetadata` 有界读取安装收据、已保存配置及 Homebrew 选中的安装快照。精简 JSON 的显式 artifacts（包括空清单）优先，缺失时使用收据；旧完整 API JSON 和 Ruby 快照只使用收据中已解析的清单，不采用原始平台变体或路径占位符，不解析或执行 Ruby。当前 token 与明确声明的 old_tokens 用于唯一定位安装目录，物理安装 token 用于读取配置，Homebrew 操作目标仍保持当前 provider 身份。目标与其他已安装 Cask 使用同一来源；记录缺失、冲突或无法读取时标记分析不完整并保留关联数据。安装记录的内容及文件身份进入确认指纹。正常退出等待及进度回调结束后、启动 brew 前再次复验安装状态、记录与应用文件身份；退出写回的关联数据仍在逐项清理时复验，不因正常写回整体拒绝卸载。
+
+Cask artifact 保留来源、安装目标与 uninstall.delete 的业务结构；优先使用安装记录中的绝对 target，缺失时读取 `brew --caskroom` 下已保存的 `.metadata/config.json` 来解析 appdir。pkg 只从明确的受限应用路径建立身份，无法定位保持不完整；安装收据省略 pkg 标记时仍接受精确的应用删除声明。精确 zap 残留路径与授权路径共用允许范围，拒绝通配符，跨 Cask 声明的相同或相交路径保留；不将父级厂商目录当作产品独占数据。先基于完整候选集合传播子路径对祖先的保护，再执行可中断的指纹和大小统计；祖先与别名统一使用大小写折叠和 Unicode 规范化，预算耗尽不能丢掉保护关系。`VerificationSession` 在一次清理任务内复用身份未变的应用元数据，每轮仍检查新应用与文件身份，各轮使用独立有界预算，避免每条残留重复解析全部 Info.plist 后耗尽共享额度。
+
+`CaskApplicationLifecycle` 复用上述只读位置身份匹配运行应用，保留 Bundle ID 核对；在确认计划复验后、brew 写入前请求精确运行实例正常退出，通过 KVO 等待实际终止，合计等待有界。拒绝、超时、取消、身份不一致或新实例均显式失败。每条删除及发起管理员授权前再次核对运行状态；逐条检查位于进度回调的异步让出点之后。整段普通权限清理也由 `withApplicationsStopped` 观察运行状态；目标重启时取消执行递归删除的任务，由逐文件取消点停止后续删除，保留已完成事实并报告部分完成。会话内可变扫描缓存仍由 HomebrewClient actor 独占。测试注入明确的假运行时，生产不隐式跳过检查；不执行按名称查杀或强杀。退出产生文件变化时，原删除身份校验保留变化项，不重建扩大确认范围的计划。
+
+
+执行前复验软件状态、清单与文件身份；Homebrew 仍以当前用户执行 `uninstall --cask`，并禁止自动更新、autoremove、install cleanup 及自身 sudo。只有成功卸载且快照确认不再安装，才交给 `CaskRemovalFileSystem` 清理已确认路径。删除使用目录描述符、拒绝符号链接祖先并复验身份，不手动修改 Homebrew 安装记录，也不运行全局 cleanup。清理失败独立保留路径、技术详情和结构化恢复原因，影响整体部分完成状态；结构化原因通过普通及管理员清理的 JSON 结果传到原弹窗对应路径，应用运行、授权未完成、权限不足及状态变化分别呈现本地化恢复建议，不由整项通用失败覆盖。技术详情继续用于现有结果诊断。`HomebrewClient.execute` 在整个执行及收尾期间持有 mutation slot，局部执行状态在清理中断后仍保留已读取快照确认的安装移除事实。`CaskRemovalPostflight.observe` 在始终被等待的独立只读任务中复查确认清单中的路径，不继承删除任务的取消标记；路径核查共用 2 秒预算，超限项记为未验证，不继续删除。结果描述该次核查时的状态，并覆盖历史进度：重新出现的路径保留并恢复访达操作；授权中断后已确认消失的路径，在安装移除已确认时仍记为已移除，先前失败只留给未解决路径。安装移除未知或路径复查失败记为未验证，不能标绿；删除的 no-follow 与文件身份边界不变。
+
+`CaskRemovalAuthorizer` 仅在允许路径的权限失败后请求 AppleScript 系统管理员授权，以参数传递一次性清理请求；密码不经过 Cellar。先以 Security 的动态校验绑定当前运行代码的精确 CDHash；授权后将完整 App 复制到 root 专属临时目录，深度验证签名及固定 CDHash 后才运行，结束时移除副本。签名无效、App 被替换或无法验证时拒绝提权执行。`CellarEntryPoint` 在创建 SwiftUI App 前识别一次性模式，请求验证真实用户 UID／主目录、允许目录、精确文件身份、有效期、主进程及可撤销租约。授权等待及执行期间由主进程观察运行应用的 KVO 事件；目标重启或任务取消时先撤销租约，再取消命令，清理子进程每次文件操作前复查租约，避免授权等待期间重新启动的应用仍被清理。没有常驻 daemon 或通用特权命令入口。Homebrew 卸载钩子自己的 sudo 尚未接入此授权机制；这类失败必须保留，不能声明所有需要管理员权限的 Cask 均可卸载。
 
 ## Operation 与 batch coordinator
 
@@ -187,7 +204,7 @@ Homebrew 的 Tap 与元数据任务使用明确的 provider scope 和有限操�
 - 搜索和详情结果有界；空查询不抓取完整目录。
 - `brew update` 是独立 metadata operation。
 - 卸载设置 `HOMEBREW_NO_AUTO_UPDATE` 与 `HOMEBREW_NO_AUTOREMOVE`。
-- Cask standard/zap 是不同 typed intent；App 不删除 artifact。
+- Cask standard/zap 是不同 typed intent；Library 增强卸载沿用 standard，并以独立的强类型清单约束额外清理，不执行整个 zap stanza。
 - Tap 移除在执行前复验关联安装项，存在阻塞项时拒绝。
 - 非零退出也可能部分改变状态，因此命令结果与 post-refresh 都保留。
 
@@ -199,7 +216,7 @@ Setup service 把职责拆开且可注入：Homebrew 官方 latest stable Releas
 
 Homebrew 安装动作重新检测 CLT 与目标占用情况；setup service 的可注入 eligibility guard 在开始时和下载、digest、signature、Gatekeeper 全部通过后、紧邻系统 opener 之前再次执行。目录/文件占用、断开符号链接、访问失败或无法确定的目标均 fail closed，并返回结构化原因和官方链接，不使用首屏缓存状态作为交接授权。
 
-通过系统 Installer 打开包不等于 Cellar 获得提权能力。Cellar 只请求系统打开已验证 package；系统随后实际显示的许可、认证或权限提示不属于 Cellar 契约。Cellar 不运行 `sudo`、不收集密码、不实现安装步骤。已检测到异常 Homebrew 时只提供诊断和官方恢复入口，不覆盖或删除现有目录。
+系统 Installer 的打开流程本身不授予 Cellar 提权能力。Cellar 只请求系统打开已验证 package；系统随后实际显示的许可、认证或权限提示不属于安装引导契约。该流程不运行 `sudo`、不收集密码、不实现安装步骤。已检测到异常 Homebrew 时只提供诊断和官方恢复入口，不覆盖或删除现有目录。
 
 Command Line Tools service 只检测状态并执行 Apple 文档规定的 `xcode-select --install`，由系统显示安装对话框；自动测试替换该边界，不弹系统 UI。nvm setup 只提供官方指引，不执行远端脚本。
 
@@ -273,7 +290,11 @@ Manager 从只读 Bundle 快照安装到版本化 Application Support：
 - provider identity 和 Node environment 不在统一 UI 中丢失；
 - 写任务全局互斥，批量顺序执行，失败不伪装成回滚；
 - 只有产品契约允许的动作可以修改环境；
-- 不执行 Homebrew cleanup、autoremove、App 自行 Cask 删除、`sudo` 或 `chsh`；
+- 不执行 Homebrew cleanup、autoremove、确认范围外的 Cask 删除、整条 brew 提权或 `chsh`；
 - 不修改冻结 `scripts/`，App-owned adapter 与快照来源分开；
 - 不向 Bundle Resources 写入，不让自动测试触碰真实用户状态；
 - 发布产物最低 macOS 26.0 且所有 Mach-O 只有 arm64。
+
+### 完全磁盘访问权限引导
+
+Settings 的通用页由 `FullDiskAccessSettingsView` 提供完全磁盘访问权限入口及失败提示。`FullDiskAccessGuide` 持有原版 `PermissionFlowController`，使用 `Vendor/PermissionFlow` 本地 Swift Package；上游来源固定为 `65434c9ae04dba97cf52c1dffbe3e4e62b547c82`，来源摘要与维护差异见包内 README 和 UPSTREAM.json。保留原版面板、拖拽及跟随几何，拖拽提示使用 10 点常规字重，方向箭头在系统开启“减少动态效果”时静止、关闭后恢复原版动画；controller 扩展单次导航结果并在导航前记录原前台应用，宿主不再额外打开设置。tracker 以明确状态区分冷启动与已出现后丢失窗口，丢失或等待超时后结束引导，清空状态、回收 Timer 与观察，已排队的回调不能复活跟随。恢复后由用户重新点击授权入口。原版 30 Hz 跟随仅在引导有效期间运行；不额外请求辅助功能或屏幕录制，不调用上游完整磁盘状态 provider。MIT 来源和许可随 App 打包。`ProtectedFileAccessVerification` 在设置页出现和 App 重新激活时，通过共享 FD 路径边界在后台验证当前用户 Cookies 目录的只读访问，只读取一个目录项，不递归、不读取文件内容；成功仅显示绿色“访问已验证”，不宣称完整磁盘授权状态。拒绝与无法验证分开表达，取消与迟到结果不更新已离开或被后续验证替代的页面。Hosted tests 的默认检测关闭，自动测试注入临时目录或假检测。仍拒绝时由用户自行退出重开，读取失败仍按实际结果报告。

@@ -1,6 +1,986 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+  "Administrator cleanup did not finish. Check authorization and file permissions.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Administrator cleanup did not finish. Check authorization and file permissions."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "管理员清理未完成。请检查授权和文件权限。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "管理員清理未完成。請檢查授權和檔案權限。"
+        }
+      }
+    }
+  },
+  "The application is still running. Quit it before continuing.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "The application is still running. Quit it before continuing."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "应用仍在运行。请先退出应用，再继续处理。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "應用程式仍在執行。請先結束應用程式，再繼續處理。"
+        }
+      }
+    }
+  },
+  "Homebrew removed the package. Quit its remaining processes, then handle this path manually in Finder.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew removed the package. Quit its remaining processes, then handle this path manually in Finder."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此软件包。请先退出其仍在运行的进程，再到访达手动处理此路径。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此套件。請先結束其仍在執行的程序，再到 Finder 手動處理此路徑。"
+        }
+      }
+    }
+  },
+  "Homebrew removed the package. Check authorization and file permissions, then handle this path manually in Finder.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew removed the package. Check authorization and file permissions, then handle this path manually in Finder."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此软件包。请检查授权和文件权限，再到访达手动处理此路径。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此套件。請檢查授權和檔案權限，再到 Finder 手動處理此路徑。"
+        }
+      }
+    }
+  },
+  "Homebrew removed the package. Confirm this path’s ownership and current state before handling it manually in Finder.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew removed the package. Confirm this path’s ownership and current state before handling it manually in Finder."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此软件包。请先确认此路径的归属和当前状态，再到访达手动处理。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此套件。請先確認此路徑的歸屬和目前狀態，再到 Finder 手動處理。"
+        }
+      }
+    }
+  },
+  "Homebrew removed the package, but this path remains. Review it before handling it manually in Finder.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew removed the package, but this path remains. Review it before handling it manually in Finder."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此软件包，但此路径仍然存在。请先检查，再到访达手动处理。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Homebrew 已移除此套件，但此路徑仍然存在。請先檢查，再到 Finder 手動處理。"
+        }
+      }
+    }
+  },
+
+  "This data may be shared or its ownership is unclear. Check the impact before removing it manually.": {
+  "localizations": {
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "This data may be shared or its ownership is unclear. Check the impact before removing it manually."
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "此数据可能共享，或无法确认归属。手动移除前请先确认影响。"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "此資料可能共用，或無法確認歸屬。手動移除前請先確認影響。"
+      }
+    }
+  }
+},
+  "File ownership could not be fully verified. These files were kept.": {
+  "localizations": {
+    "en": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "File ownership could not be fully verified. These files were kept."
+      }
+    },
+    "zh-Hans": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "未能完整验证文件归属，已保留这些文件。"
+      }
+    },
+    "zh-Hant": {
+      "stringUnit": {
+        "state": "translated",
+        "value": "未能完整驗證檔案歸屬，已保留這些檔案。"
+      }
+    }
+  }
+},
+  "The application is still running. Quit it, then review the uninstallation again.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "The application is still running. Quit it, then review the uninstallation again."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "应用仍在运行，请先退出应用，再重新检查卸载清单。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "App 仍在執行，請先結束 App，再重新檢查解除安裝清單。"
+        }
+      }
+    }
+  },
+  "Inspect protected application data during uninstallation.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Inspect protected application data during uninstallation."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "用于卸载时分析受保护的应用数据。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "用於解除安裝時分析受保護的 App 資料。"
+        }
+      }
+    }
+  },
+  "Access is blocked. Check Full Disk Access in System Settings.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Access is blocked. Check Full Disk Access in System Settings."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "访问受限，请在系统设置中检查完全磁盘访问权限。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "存取受限，請在系統設定中檢查完整磁碟存取權限。"
+        }
+      }
+    }
+  },
+
+  "Drag Cellar into the Full Disk Access list in System Settings, then turn on its switch.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Drag Cellar into the Full Disk Access list in System Settings, then turn on its switch."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "将 Cellar 拖入系统设置的“完全磁盘访问权限”列表，再打开开关。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "將 Cellar 拖入系統設定的「完整磁碟存取權限」列表，再開啟開關。"
+        }
+      }
+    }
+  },
+  "Drag to Settings": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Drag to Settings"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "拖入设置"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "拖入設定"
+        }
+      }
+    }
+  },
+
+  "Access Verified": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Access Verified"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "访问已验证"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "存取已驗證"
+        }
+      }
+    }
+  },
+
+  "Protected directory access could not be verified. Check Full Disk Access in System Settings.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Protected directory access could not be verified. Check Full Disk Access in System Settings."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "无法验证受保护目录的访问。请检查系统设置中的完全磁盘访问权限。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "無法驗證受保護目錄的存取。請檢查系統設定中的完整磁碟存取權。"
+        }
+      }
+    }
+  },
+
+
+  "Full Disk Access": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Full Disk Access"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "完全磁盘访问权限"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "完整磁碟存取權"
+        }
+      }
+    }
+  },
+
+  "Open System Settings": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Open System Settings"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "打开系统设置"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "開啟系統設定"
+        }
+      }
+    }
+  },
+
+  "System Settings could not be opened. Open Privacy & Security > Full Disk Access manually.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "System Settings could not be opened. Open Privacy & Security > Full Disk Access manually."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "无法打开系统设置。请手动前往“隐私与安全性 → 完全磁盘访问权限”。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "無法開啟系統設定。請手動前往「隱私權與安全性 → 完整磁碟存取權」。"
+        }
+      }
+    }
+  },
+
+  "Permission Required to Read Size": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Permission Required to Read Size"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "无权读取大小"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "無權讀取大小"
+        }
+      }
+    }
+  },
+  "Size Scan Limit Reached": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Size Scan Limit Reached"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "统计达到上限"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "統計達到上限"
+        }
+      }
+    }
+  },
+  "Size Scan Restricted": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Size Scan Restricted"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "路径受限"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "路徑受限"
+        }
+      }
+    }
+  },
+  "File Changed During Scan": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "File Changed During Scan"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "文件已变化"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "檔案已變更"
+        }
+      }
+    }
+  },
+  "File No Longer Exists": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "File No Longer Exists"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "文件已不存在"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "檔案已不存在"
+        }
+      }
+    }
+  },
+  "Unable to Read Size": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Unable to Read Size"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "大小读取失败"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "無法讀取大小"
+        }
+      }
+    }
+  },
+  "macOS or file permissions prevent reading this path. Check permissions and, if needed, Full Disk Access for Cellar in System Settings.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "macOS or file permissions prevent reading this path. Check permissions and, if needed, Full Disk Access for Cellar in System Settings."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "macOS 隐私保护或文件权限阻止了读取。请检查文件权限；如有需要，在系统设置中授予 Cellar 完全磁盘访问权限。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "macOS 隱私保護或檔案權限阻止了讀取。請檢查檔案權限；如有需要，請在系統設定中授予 Cellar 完整磁碟存取權。"
+        }
+      }
+    }
+  },
+
+  "Copy Path": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Copy Path"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "复制路径"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "複製路徑"
+        }
+      }
+    }
+  },
+
+  "Uninstalling…": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Uninstalling…"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "正在卸载…"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "正在解除安裝…"
+        }
+      }
+    }
+  },
+  "Not removed. Please remove manually in Finder.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Not removed. Please remove manually in Finder."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "未移除，请在访达中手动处理。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "未移除，請在 Finder 中手動處理。"
+        }
+      }
+    }
+  },
+  "Removed": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Removed"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "已移除"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "已移除"
+        }
+      }
+    }
+  },
+  "Show in Finder": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Show in Finder"
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "在访达中显示"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "在 Finder 中顯示"
+        }
+      }
+    }
+  },
+
+    "Application Size": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Application Size"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用大小"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "應用程式大小"
+          }
+        }
+      }
+    },
+    "Estimated Removal": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimated Removal"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次预计移除"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次預計移除"
+          }
+        }
+      }
+    },
+    "Scanning Related Files…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scanning Related Files…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在扫描关联文件…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在掃描關聯檔案…"
+          }
+        }
+      }
+    },
+    "Shared or Protected Files Will Be Kept": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shared or Protected Files Will Be Kept"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留共享或受保护的文件"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留共享或受保護的檔案"
+          }
+        }
+      }
+    },
+    "Application data will be permanently removed, except files marked as kept. This cannot be rolled back.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Application data will be permanently removed, except files marked as kept. This cannot be rolled back."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "除标记为保留的文件外，应用数据将被永久删除，此操作无法撤销。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "除標記為保留的檔案外，應用程式資料將被永久刪除，此操作無法復原。"
+          }
+        }
+      }
+    },
+    "Calculating…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Calculating…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在计算…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在計算…"
+          }
+        }
+      }
+    },
+    "Size Unavailable": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Size Unavailable"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取大小"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法讀取大小"
+          }
+        }
+      }
+    },
+    "Application": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Application"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用程序"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "應用程式"
+          }
+        }
+      }
+    },
+    "Caches": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Caches"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "缓存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "快取"
+          }
+        }
+      }
+    },
+    "Settings and Application Data": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Settings and Application Data"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置与应用数据"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定與應用程式資料"
+          }
+        }
+      }
+    },
+    "Homebrew Download Cache": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Homebrew Download Cache"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Homebrew 下载缓存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Homebrew 下載快取"
+          }
+        }
+      }
+    },
+    "Other installed applications may share this data. Shared files will be kept.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Other installed applications may share this data. Shared files will be kept."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他已安装的应用可能共用这些数据，共享文件将被保留。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其他已安裝的應用程式可能共用這些資料，共享檔案將被保留。"
+          }
+        }
+      }
+    },
+    "Some locations could not be fully inspected. Additional files may remain.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some locations could not be fully inspected. Additional files may remain."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分位置无法完整检查，可能仍有其他文件残留。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分位置無法完整檢查，可能仍有其他檔案殘留。"
+          }
+        }
+      }
+    },
+    "Homebrew’s uninstaller may require separate administrator authorization.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Homebrew’s uninstaller may require separate administrator authorization."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Homebrew 的卸载程序可能需要另外取得管理员授权。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Homebrew 的解除安裝程式可能需要另外取得管理員授權。"
+          }
+        }
+      }
+    },
     "npm Version": {
       "localizations": {
         "en": {

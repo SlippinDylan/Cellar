@@ -17,7 +17,7 @@ Cellar 是面向 macOS 26+、仅支持 Apple Silicon 的原生开发环境管理
 | 环境 | Node.js 版本与项目版本、终端主题和插件、软件源及 Zsh 文件整理 |
 | 维护 | Homebrew 检查、npm 缓存校验和已有受限清理 |
 
-主窗口侧边栏左下方依次显示 Settings 和 About，不再提供活动记录页面或菜单。Settings 使用“通用／环境信息”分类：通用保留语言与日志偏好，环境信息集中展示 Cellar 识别和使用的开发工具版本、状态与路径；软件源和终端配置归入环境；About 是独立页面，显示放大的图标、名称、版本、检查更新按钮和底部 Studio 版权署名。App 菜单或 Command-Comma 会前置或重建主窗口并选择 Settings，不打开独立设置窗口；菜单“关于 Cellar”打开 About。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
+主窗口侧边栏左下方依次显示 Settings 和 About，不再提供活动记录页面或菜单。Settings 使用“通用／环境信息”分类：通用提供语言、完全磁盘访问权限与日志偏好，环境信息集中展示 Cellar 识别和使用的开发工具版本、状态与路径；软件源和终端配置归入环境；About 是独立页面，显示放大的图标、名称、版本、检查更新按钮和底部 Studio 版权署名。App 菜单或 Command-Comma 会前置或重建主窗口并选择 Settings，不打开独立设置窗口；菜单“关于 Cellar”打开 About。界面支持 English、简体中文和繁体中文，默认跟随系统语言。
 
 环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序组织。Node.js 区分 Cellar 当前使用的 Node 与 nvm 管理的已安装版本，版本安装在用户主动打开后读取官方版本；项目版本只读取或写入明确选择项目的 `.nvmrc`，不自动安装或切换终端。操作页面仅在短页面底部或长页面正文末尾以无卡片、居中紧凑的小号次要文字保留必要上下文，完整环境信息位于 Settings > 环境信息，不代表所有已打开终端的运行环境。维护独立分为检查与清理：检查保留 Homebrew 状态检查和 npm 缓存校验，清理保留 npm／构建缓存、失效 npm 链接、未使用 Node 版本与旧 Manager 日志处理；Zsh 文件整理和 Homebrew 目录数据更新仍分别位于终端和 Homebrew Tap 页。检查保留实际结果，清理保留精确范围、一次确认与实际完成结果。CLT/Homebrew 的状态与必要安装动作保留在首页，nvm 安装指引位于 Node.js。
 
@@ -33,10 +33,12 @@ Homebrew Tap 页右上角刷新同时更新 Homebrew/Tap 目录元数据与本�
 - 单项安装/更新从卡片开始；批量安装/更新、单项卸载、zap、清理和配置修改使用任务专用确认。
 - 批量任务一次只处理一个 provider/type，逐项顺序执行；某项失败后继续。已开始的任务不提供手动停止，运行至完成。
 - 写操作不是事务，不承诺回滚。Cellar 会保留成功、失败、内部中断和 post-refresh 后的真实状态。
-- Formula/Cask 卸载禁止 Homebrew 自动更新和 autoremove。Cellar 不执行 Homebrew cleanup，不自行删除 Cask artifact 或孤儿依赖。
-- Cellar 不运行自己的 `sudo` 或 Privileged Helper，不收集管理员密码，不修改 `.zprofile`，不运行 `chsh`。
+- Formula/Cask 卸载禁止 Homebrew 自动更新和 autoremove，不执行 Homebrew cleanup。Cask 卸载前列出应用本体、可确认归属的缓存与应用数据，以及目标对应的 Homebrew 下载缓存；确认后先请求目标应用正常退出，再由 Homebrew 卸载及清理已确认的关联路径；拒绝退出、重新运行或文件身份变化时保留相应结果和数据。共享或无法确认归属的数据保留，不处理其他安装来源的软件或孤儿依赖。
+- 受限 Cask 残留清理遇到权限不足时，可以请求 macOS 管理员授权；密码由系统处理，Cellar 不收集或保存密码，也不安装常驻特权服务。Homebrew 卸载钩子自身需要 sudo 的情况仍可能失败，不能保证所有受保护文件都可删除。Cellar 不修改 `.zprofile`，不运行 `chsh`。
 
 缺少 Command Line Tools 时，Cellar 只通过 `xcode-select --install` 请求 macOS 系统安装对话框。缺少 Homebrew 时，只接受官方 latest stable Release 的 `Homebrew.pkg` 和该精确资产的有效 SHA-256；digest、package signature 与 Gatekeeper assessment 全部通过后才交给系统 Installer。任何验证缺失或失败都会阻止打开并提供原因和 Homebrew 官方链接。Cellar 不重写安装器、不执行远端安装脚本，也不处理系统许可或认证。nvm 提供官方安装指引，不在 App 内运行远端脚本。
+
+Cask 卸载弹窗立即打开并显示扫描状态，高度不超过当前主窗口可用高度的 70%。本机图标与名称、应用大小与本次预计移除摘要及底部操作区固定，只有分类路径和各项占用明细滚动，路径可在访达中定位。确认后在原弹窗按路径显示移除进度与结果，完成后点击“好的”关闭；未移除项按原因提示手动处理或先核实共享数据的影响。可在 Settings > 通用 > 完全磁盘访问权限打开系统的完全磁盘访问权限设置，通过悬浮引导窗把当前 App 拖入权限列表并手动开启开关；返回 App 后会验证受保护 Cookies 目录的读取，通过后显示绿色“访问已验证”；这不代表所有路径均可读。如果仍拒绝访问，请退出重开后再扫描。保留项同样尝试统计大小；无法统计时区分权限不足、达到统计上限及读取失败，不计为零；不承诺无残留或自动回滚。
 
 ## 数据与网络
 

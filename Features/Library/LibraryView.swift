@@ -4,7 +4,7 @@ struct LibraryView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var coordinator: BatchOperationCoordinator
     @ObservedObject private var operationStore: OperationStore
-    @StateObject private var uninstall: LibraryUninstallModel
+    @ObservedObject private var uninstall: LibraryUninstallModel
     @StateObject private var updates: PackageUpdatesModel
     @State private var selectedTab = CatalogScopeTab.all
     @State private var lastBrewTab = CatalogScopeTab.brewAll
@@ -12,13 +12,13 @@ struct LibraryView: View {
     @Binding private var query: String
     @Binding private var searchFocusRequest: UUID?
 
-    init(model: AppModel, query: Binding<String>, searchFocusRequest: Binding<UUID?>) {
+    init(model: AppModel, uninstall: LibraryUninstallModel, query: Binding<String>, searchFocusRequest: Binding<UUID?>) {
         self.model = model
         _query = query
         _searchFocusRequest = searchFocusRequest
         coordinator = model.batchCoordinator
         operationStore = model.operationStore
-        _uninstall = StateObject(wrappedValue: LibraryUninstallModel(model: model))
+        self.uninstall = uninstall
         _updates = StateObject(wrappedValue: PackageUpdatesModel(model: model))
     }
 
@@ -47,11 +47,6 @@ struct LibraryView: View {
                 selectedTab = lastBrewTab
             } else if tab.isBrew {
                 lastBrewTab = tab
-            }
-        }
-        .sheet(item: confirmationBinding) { plan in
-            LibraryUninstallConfirmation(plan: plan, cancel: uninstall.dismissConfirmation) {
-                Task { await uninstall.confirmUninstall() }
             }
         }
         .sheet(item: Binding(get: { updates.confirmation }, set: { if $0 == nil { updates.dismissConfirmation() } })) { confirmation in
@@ -97,7 +92,7 @@ struct LibraryView: View {
     }
 
     private var canPerformAction: Bool {
-        !model.isBusy && !updates.isSubmitting && updates.confirmation == nil && uninstall.confirmation == nil
+        !model.isBusy && !updates.isSubmitting && updates.confirmation == nil && uninstall.presentedItem == nil
     }
 
     private var updateStates: [HomePackageUpdateState] {
@@ -169,10 +164,6 @@ struct LibraryView: View {
         case .noMatches: ContentUnavailableView("No Matching Software", systemImage: "magnifyingglass", description: Text("Try another search or choose a different scope."))
         case .available: EmptyView()
         }
-    }
-
-    private var confirmationBinding: Binding<BatchPlan?> {
-        Binding(get: { uninstall.confirmation }, set: { if $0 == nil { uninstall.dismissConfirmation() } })
     }
 
 }

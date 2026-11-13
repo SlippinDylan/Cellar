@@ -8,7 +8,7 @@
 - 任务导航统一发生在 Features/Services；Formula、Cask、npm 和 Node environment identity 必须保留到 Bridge，不引入通用命令执行器。
 - 用户界面可以隐藏内部 plan 术语，但强类型计划、状态指纹、全局 mutation slot 和 post-refresh 不能删除。
 - String Catalog 是用户可见静态字符串的来源；新增界面同步提供 English、简体中文和繁体中文，默认语言行为为 Follow System。
-- 独立只读 IO 使用有界并发；批量 mutation 顺序执行。禁止轮询、高频装饰动画和未经测量的 cache/依赖。
+- 独立只读 IO 使用有界并发；批量 mutation 顺序执行。禁止轮询、高频装饰动画和未经测量的 cache/依赖；用户明确要求的 PermissionFlow 原版授权引导为定向例外，仅在引导期间保留上游窗口跟随，结束即回收。
 - 普通自动开发可以读取必要的项目文件，但不以真实 Homebrew、npm、nvm、Shell、Registry 或系统 Installer 作为验证夹具。
 
 ## 环境与工程
@@ -22,7 +22,7 @@
 - Bundle identifier：`com.dylanwang.Cellar`。
 - App Sandbox：关闭。
 
-App 使用固定的 Sparkle 2.10.0 Swift Package。仓库没有 Makefile、SwiftLint 或 SwiftFormat。Homebrew、Node.js 和 npm 是运行时读取或管理的用户工具，不是构建 Cellar 的依赖。
+App 使用固定的 Sparkle 2.10.0 Swift Package。完全磁盘访问的拖拽引导通过 `Vendor/PermissionFlow` 本地 Swift Package 维护 PermissionFlow（MIT）原版组件，来源固定为 `65434c9ae04dba97cf52c1dffbe3e4e62b547c82`；保留原版面板、拖拽与单屏跟随几何，多屏时按系统设置窗口与屏幕的最大相交面积选屏；拖拽提示改为 10 点常规字重，方向箭头响应系统“减少动态效果”。无障碍、单次导航与窗口生命周期的维护差异和来源摘要记录在包内；来源与许可通过 `Resources/PermissionFlow-LICENSE.txt` 随 App 打包。仓库没有 Makefile、SwiftLint 或 SwiftFormat。Homebrew、Node.js 和 npm 是运行时读取或管理的用户工具，不是构建 Cellar 的依赖。
 
 Apple 平台构建和测试优先使用 XcodeBuildMCP。每个会话首次调用前先读取 session defaults，再设置工程、scheme、平台、架构和仓库内 DerivedData 路径。
 
@@ -54,11 +54,13 @@ sips -s format png \
 
 - 不运行用户安装的 brew、node、npm、nvm 或 Zsh Manager。
 - Homebrew Bridge 测试注入假 brew executable，覆盖查询 JSON、搜索文本、计划、精确参数、环境、退出码、部分完成和 post-refresh；测试不得访问网络、Homebrew cache 或真实安装目录。
-- Homebrew mutation 测试必须断言需要确认的动作在确认前不启动进程，Formula/Cask 卸载禁止自动更新和 autoremove，Cask artifact 不触发 App 文件删除，Tap 有关联安装项时不能执行移除。
+- Homebrew mutation 测试必须断言确认前不启动写进程，Formula/Cask 卸载禁止自动更新和 autoremove；standard/zap 原有计划不能隐式触发额外删除，增强 Cask 卸载只能删除已确认并复验的目标路径，Tap 有关联安装项时不能执行移除。
+- Cask 清理测试注入临时 HOME、应用根目录、下载缓存和假 brew，覆盖共享身份与同名包保护、符号链接、文件替换、读取失败、Homebrew 失败后不补删及逐项部分完成。授权请求与签名替换检查使用临时夹具；允许对临时 App 做本地临时签名，自动测试不得请求真实管理员认证或以 root 删除文件。
+- Cask 位置身份与完成复查测试覆盖同一物理应用的路径别名、大小写敏感卷上的真实副本、路径重新出现、授权中断后已消失路径及安装或路径未知时不标绿；删除安全测试继续独立约束 no-follow。主窗口关闭测试使用真实 SwiftUI Scene 验证活动任务拒绝关闭、空闲恢复且不影响独立面板；不启动生产 App。PermissionFlow 几何测试覆盖最大相交面积选屏，并保留原版单屏布局。
 - Node Bridge 测试在临时目录创建假 `main.sh`，只验证参数、JSON、错误和部分失败。
 - Node mutation 测试必须使用临时 HOME 和假 Manager，断言查询关闭 execute、确认执行才打开单次 write gate、项目写入使用独立 gate，且不访问真实 npm registry、cache、`~/.nvm` 或用户项目。
 - Manager 安装测试注入临时 Application Support 根目录。
-- 进程测试只执行测试自己创建的临时脚本。
+- 进程测试只执行测试自己创建的临时脚本。失败启动的文件描述符回收检查在独立 helper 中编译真实 `ProcessRunner`，逐次核对预期的 `ENOENT` 及完整描述符编号／类型；不得用异步测试前后整个 App 宿主的资源总数归因泄漏。异常结果须保留新增与消失的描述符信息。
 - Hosted tests 通过 `XCTestConfigurationFilePath` 识别测试进程，禁止根视图自动刷新。
 - Shell adapter 测试复制 Bundle Manager 到临时目录并注入临时 HOME，只允许修改测试 `.zshrc`、Oh My Zsh fixture 和 adapter runtime；不得访问用户真实 Shell 配置或网络。
 - Catalog、线上版本和 npm Registry search 测试注入本地 fake transport，覆盖有界结果、ETag/cache、取消、超时、无效响应和独立部分失败；不得访问真实 endpoint。
@@ -189,7 +191,7 @@ Node 快照遵循 `scripts/node-manager/app-bundle-manifest.txt`。Homebrew 快�
 
 ## CI 与发布现状
 
-CI 先在 Ubuntu 校验 release manifest、版本同步、DMG/Sparkle 脚本和 Node 自动化测试；非纯文档改动、手动运行或开启发布时，再在 `macos-26` 上执行完整 XCTest 与无签名 arm64 Release 构建。
+CI 先在 Ubuntu 校验 release manifest、版本同步、DMG/Sparkle 脚本和 Node 自动化测试；非纯文档改动、手动运行或开启发布时，再在 `macos-26` 上先运行 PermissionFlow 的隔离 Package 测试（`swift test --package-path Vendor/PermissionFlow --scratch-path build/PermissionFlow-Package-Tests`），随后执行完整 XCTest 与无签名 arm64 Release 构建。
 
 发布由成功的 main CI 触发，只有 `Config/Release/manifest.json` 的 `release` 为 `true` 且版本、CHANGELOG 和历史顺序合法时才构建。流水线使用 Apple Development 证书签名但不公证，并在构建前确认 Sparkle 公私钥属于同一 Ed25519 keypair。DMG 先上传到 draft GitHub Release，之后的重跑把该 asset 视为不可变输入，不重新打包或覆盖；签名 appcast 和 Homebrew Cask 成功提交到 `SlippinDylan/homebrew-tap`、Cask SHA-256 与 draft DMG 一致、GitHub Pages 已能读到对应版本后，流水线才公开 GitHub Release。元数据或 Pages 验证失败时 Release 保持 draft，不会对外发布指向缺失 feed 的 App。
 

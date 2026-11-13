@@ -426,6 +426,9 @@ enum ActivityItemReason: String, Codable, CaseIterable, Sendable {
     case preparationFailed
     case alreadyInstalled
     case residueDetected
+    case applicationRunning
+    case authorizationFailed
+    case scanIncomplete
 }
 
 struct ActivityItemSummary: Equatable, Codable, Sendable {

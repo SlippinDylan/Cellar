@@ -111,6 +111,7 @@ struct BrewCaskPayload: Decodable {
     let installed: FlexibleStringList?
     let outdated: Bool
     let artifacts: [DynamicObject]
+    private let oldTokens: [String]?
 
     enum CodingKeys: String, CodingKey {
         case token
@@ -123,6 +124,7 @@ struct BrewCaskPayload: Decodable {
         case installed
         case outdated
         case artifacts
+        case oldTokens = "old_tokens"
     }
 
     var model: HomebrewPackage {
@@ -139,7 +141,8 @@ struct BrewCaskPayload: Decodable {
             pinned: false,
             deprecated: false,
             disabled: false,
-            artifacts: artifacts.flatMap(\.artifacts)
+            artifacts: artifacts.flatMap(\.artifacts),
+            oldTokens: oldTokens ?? []
         )
     }
 
@@ -210,6 +213,33 @@ struct DynamicObject: Decodable {
 
     var artifacts: [HomebrewCaskArtifact] {
         values.flatMap { key, value -> [HomebrewCaskArtifact] in
+            if key == "target", values["app"] != nil { return [] }
+            if key == "app" {
+                let unresolved = HomebrewCaskArtifact(kind: key, values: value.strings, category: .installed)
+                guard case .array(let arguments) = value, (1...2).contains(arguments.count),
+                      case .string(let source)? = arguments.first else { return [unresolved] }
+                let target: String?
+                if let rawTarget = values["target"] {
+                    guard case .string(let resolved) = rawTarget else { return [unresolved] }
+                    target = resolved
+                } else if arguments.count == 2 {
+                    guard case .object(let options) = arguments[1], options.keys.allSatisfy({ $0 == "target" }) else { return [unresolved] }
+                    if let rawTarget = options["target"] {
+                        guard case .string(let specified) = rawTarget else { return [unresolved] }
+                        target = specified
+                    } else { target = nil }
+                } else { target = nil }
+                return [HomebrewCaskArtifact(kind: key, values: value.strings, category: .installed,
+                    application: .init(source: source, target: target))]
+            }
+            if key == "uninstall", case .array(let entries) = value {
+                let deletes = entries.flatMap { entry -> [String] in
+                    guard case .object(let object) = entry else { return [] }
+                    return object["delete"]?.strings ?? []
+                }
+                return [HomebrewCaskArtifact(kind: key, values: value.strings, category: .installed,
+                    uninstallDeletePaths: deletes)]
+            }
             if key == "zap", case .array(let entries) = value {
                 return entries.flatMap { entry -> [HomebrewCaskArtifact] in
                     guard case .object(let object) = entry else { return [] }

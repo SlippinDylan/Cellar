@@ -3,6 +3,36 @@ import XCTest
 
 @MainActor
 final class ActivityPresentationTests: XCTestCase {
+    func testCleanupErrorsKeepTheirRecoveryReasonThroughTheAuthorizationWireFormat() throws {
+        let identity = CaskApplicationIdentity(bundleURL: URL(filePath: "/fixture/Sample.app"), bundleIdentifier: "com.fixture.sample")
+        let cases: [(Error, ActivityItemReason)] = [
+            (CaskApplicationLifecycleError.applicationStillRunning(identity), .applicationRunning),
+            (CaskApplicationLifecycleError.identityMismatch(identity), .stateChanged),
+            (CaskRemovalAuthorizationError.failed(status: 1, detail: "Authorization did not complete"), .authorizationFailed),
+            (CaskRemovalAuthorizationError.timedOut(detail: "Authorization timed out"), .authorizationFailed),
+            (POSIXError(.EACCES), .permission),
+            (HomebrewClientError.scanIncomplete, .scanIncomplete)
+        ]
+        for (error, reason) in cases {
+            let original = CaskRemovalFailure(path: "/fixture/data", error: error)
+            let decoded = try JSONDecoder().decode(CaskRemovalFailure.self, from: JSONEncoder().encode(original))
+            XCTAssertEqual(decoded.recoveryReason, reason)
+            XCTAssertEqual(decoded.path, original.path)
+            XCTAssertEqual(decoded.reason, error.localizedDescription)
+        }
+    }
+
+    func testIncompleteOwnershipVerificationHasItsOwnReason() {
+        XCTAssertEqual(ActivityItemReason(error: HomebrewClientError.scanIncomplete), .scanIncomplete)
+    }
+    func testApplicationExitFailuresExplainHowToResumeUninstallation() {
+        let identity = CaskApplicationIdentity(bundleURL: URL(filePath: "/fixture/Sample.app"), bundleIdentifier: "com.fixture.sample")
+        for error in [CaskApplicationLifecycleError.terminationRefused(identity), .terminationTimedOut(identity), .applicationStillRunning(identity)] {
+            XCTAssertEqual(ActivityItemReason(error: error), .applicationRunning)
+        }
+        XCTAssertEqual(ActivityItemReason(error: CaskApplicationLifecycleError.identityMismatch(identity)), .stateChanged)
+    }
+
     func testCopyUsesLocalizedSemanticDataAndEveryItemOutcome() {
         let record = summary(scope: .npm(environment), status: .partiallySucceeded, names: ["git", "editor"], outcomes: [
             .init(displayName: "git", status: .succeeded, reason: nil),

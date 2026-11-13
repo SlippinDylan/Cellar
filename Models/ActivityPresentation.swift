@@ -156,6 +156,12 @@ extension ActivityItemReason {
 
     init(error: Error, preparing: Bool = false) {
         if error is CancellationError { self = .cancelledByUser; return }
+        if error is CaskRemovalAuthorizationError { self = .authorizationFailed; return }
+        if let error = error as? CaskApplicationLifecycleError {
+            if case .identityMismatch = error { self = .stateChanged }
+            else { self = .applicationRunning }
+            return
+        }
         if let error = error as? URLError { self = error.code == .cancelled ? .cancelledByUser : .network; return }
         if let error = error as? HomebrewSetupError {
             self = switch error.failure {
@@ -192,6 +198,7 @@ extension ActivityItemReason {
         if let error = error as? HomebrewClientError {
             switch error {
             case .stateChanged: self = .stateChanged
+            case .scanIncomplete: self = .scanIncomplete
             case .executableNotFound: self = .unavailable
             case .alreadyInstalled: self = .alreadyInstalled
             case .invalidJSON, .outputTruncated: self = .stateUnavailable
@@ -226,6 +233,9 @@ extension ActivityItemReason {
         case .stateUnavailable: LocalizedStringResource("The result could not be verified. Refresh to check the current state before trying again.")
         case .alreadyInstalled: LocalizedStringResource("The package is already installed. Refresh Library to check its current version.")
         case .residueDetected: LocalizedStringResource("The package was removed, but some files remain. Review the uninstall results.")
+        case .applicationRunning: LocalizedStringResource("The application is still running. Quit it before continuing.")
+        case .authorizationFailed: LocalizedStringResource("Administrator cleanup did not finish. Check authorization and file permissions.")
+        case .scanIncomplete: LocalizedStringResource("File ownership could not be fully verified. These files were kept.")
         }
     }
 }

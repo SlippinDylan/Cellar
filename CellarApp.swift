@@ -2,6 +2,15 @@ import AppKit
 import SwiftUI
 
 @main
+enum CellarEntryPoint {
+    @MainActor static func main() {
+        if let status = CaskRemovalPrivilegedMode.run(arguments: CommandLine.arguments) {
+            exit(status)
+        }
+        CellarApp.main()
+    }
+}
+
 struct CellarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel.live()

@@ -395,6 +395,7 @@ actor FakeBatchProvider: BatchOperationProviding {
     let npmWarningNames: Set<String>
     let homebrewPackagesRefreshFails: Bool
     let homebrewRefreshSnapshot: HomebrewSnapshot?
+    let caskRemoval: CaskRemovalPlan?
     let npmRefreshSnapshot: NodeSnapshot?
     let pauseRefresh: Bool
     let onRefresh: @Sendable () -> Void
@@ -413,7 +414,8 @@ actor FakeBatchProvider: BatchOperationProviding {
          npmWarningNames: Set<String> = [], homebrewPackagesRefreshFails: Bool = false, planFailureNames: Set<String> = [],
          alreadyInstalledNames: Set<String> = [], registries: [String: URL] = [:], changeDestinationAfterName: String? = nil,
          pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}, changeDestinationAfterPlanName: String? = nil,
-         homebrewRefreshSnapshot: HomebrewSnapshot? = nil, npmRefreshSnapshot: NodeSnapshot? = nil, failureCode: String? = nil) {
+         homebrewRefreshSnapshot: HomebrewSnapshot? = nil, npmRefreshSnapshot: NodeSnapshot? = nil, failureCode: String? = nil,
+         caskRemoval: CaskRemovalPlan? = nil) {
         self.failingNames = failingNames
         self.failureCode = failureCode
         self.refreshFails = refreshFails
@@ -433,17 +435,23 @@ actor FakeBatchProvider: BatchOperationProviding {
         self.npmWarningNames = npmWarningNames
         self.homebrewPackagesRefreshFails = homebrewPackagesRefreshFails
         self.homebrewRefreshSnapshot = homebrewRefreshSnapshot
+        self.caskRemoval = caskRemoval
         self.npmRefreshSnapshot = npmRefreshSnapshot
         self.pauseRefresh = pauseRefresh
         self.onRefresh = onRefresh
     }
 
-    func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) throws -> HomebrewActionPlan {
+    func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan {
+        if identity.name == pausedPlanName {
+            let stream = AsyncStream<Void> { _ in onPlan() }
+            for await _ in stream {}
+            try Task.checkCancellation()
+        }
         if planFails || planFailureNames.contains(identity.name) { throw Failure.plan }
         if operation == .install, alreadyInstalledNames.contains(identity.name) { throw HomebrewClientError.alreadyInstalled(identity) }
         return HomebrewActionPlan(id: UUID(), action: operation.homebrewAction(for: identity.kind), targets: [identity],
                                   tapName: nil, dependencies: [], dependents: [], artifacts: [], residualPaths: [],
-                                  associatedPackages: [], generatedAt: Date(), stateFingerprint: "fake-fingerprint")
+                                  associatedPackages: [], generatedAt: Date(), stateFingerprint: "fake-fingerprint", caskRemoval: caskRemoval)
     }
 
     func executeHomebrew(_ plan: HomebrewActionPlan) throws -> HomebrewActionResult {

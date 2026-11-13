@@ -6,6 +6,8 @@ struct AppRootView: View {
     @FocusedValue(\.libraryTabs) private var libraryTabs
     @FocusedValue(\.libraryUpdateFilter) private var libraryUpdateFilter
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
+    @StateObject private var uninstall: LibraryUninstallModel
+    @State private var parentWindowHeight: CGFloat?
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
     private let updateController: ApplicationUpdateController
@@ -17,7 +19,12 @@ struct AppRootView: View {
     @State private var libraryFilterWidth: CGFloat = 0
 
     init(model: AppModel, updateController: ApplicationUpdateController) {
+        self.init(model: model, updateController: updateController, uninstall: LibraryUninstallModel(model: model))
+    }
+
+    init(model: AppModel, updateController: ApplicationUpdateController, uninstall: LibraryUninstallModel) {
         self.model = model
+        _uninstall = StateObject(wrappedValue: uninstall)
         self.updateController = updateController
         operationStore = model.operationStore
     }
@@ -159,6 +166,15 @@ struct AppRootView: View {
                 .toolbar(removing: .title)
         }
         .navigationSplitViewStyle(.prominentDetail)
+        .windowDismissBehavior(operationStore.hasActiveOperations ? .disabled : .automatic)
+        .background(LibraryWindowHeightReader { height in
+            if parentWindowHeight != height { parentWindowHeight = height }
+        })
+        .sheet(isPresented: Binding(get: { uninstall.presentedItem != nil && parentWindowHeight != nil }, set: { if !$0 { uninstall.dismissConfirmation() } })) {
+            if let parentWindowHeight {
+                LibraryUninstallConfirmation(uninstall: uninstall, maximumHeight: parentWindowHeight * 0.7)
+            }
+        }
         .onChange(of: model.selectedDestination) { previous, current in
             if previous == .library && current != .library {
                 libraryQuery = ""
@@ -213,7 +229,7 @@ struct AppRootView: View {
     @ViewBuilder private var destinationContent: some View {
         if model.selectedDestination == .home { HomeView(model: model) }
         else if model.selectedDestination == .library {
-            LibraryView(model: model, query: $libraryQuery, searchFocusRequest: $librarySearchFocusRequest)
+            LibraryView(model: model, uninstall: uninstall, query: $libraryQuery, searchFocusRequest: $librarySearchFocusRequest)
         }
         else if model.selectedDestination == .discover { DiscoverView(model: model) }
         else if model.selectedDestination == .tools { ToolsView(model: model) }

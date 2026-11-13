@@ -293,11 +293,11 @@ final class AppModel: ObservableObject {
         return try await batchCoordinator.prepare(intent)
     }
 
-    func executeBatch(_ plan: BatchPlan) async throws -> BatchExecutionResult {
+    func executeBatch(_ plan: BatchPlan, caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> BatchExecutionResult {
         guard !isBusy else { throw BatchOperationError.busy }
         setBatchWorking(plan.intent.scope, true)
         defer { setBatchWorking(plan.intent.scope, false) }
-        let result = try await batchCoordinator.execute(plan)
+        let result = try await batchCoordinator.execute(plan, caskRemovalProgress: caskRemovalProgress)
         applyBatchResult(result)
         return result
     }

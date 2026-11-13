@@ -4,12 +4,19 @@ import Foundation
 protocol BatchOperationProviding: Sendable {
     func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan
     func executeHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionResult
+    func executeHomebrew(_ plan: HomebrewActionPlan, caskRemovalProgress: CaskRemovalProgressHandler?) async throws -> HomebrewActionResult
     func refreshHomebrew() async throws -> HomebrewStatus
     func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan
     func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult
     func refreshNPM(_ environment: NodeEnvironmentContext) async throws -> NodeSnapshot
     func planNodeUninstall(_ identity: NodeRuntimeIdentity) async throws -> NodeActionPlan
     func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult
+}
+
+extension BatchOperationProviding {
+    func executeHomebrew(_ plan: HomebrewActionPlan, caskRemovalProgress: CaskRemovalProgressHandler?) async throws -> HomebrewActionResult {
+        try await executeHomebrew(plan)
+    }
 }
 
 enum BatchOperationError: Error, Equatable {
@@ -217,12 +224,12 @@ final class BatchOperationCoordinator: ObservableObject {
         return BatchPlan(id: UUID(), intent: intent, plans: plans)
     }
 
-    func execute(_ plan: BatchPlan) async throws -> BatchExecutionResult {
+    func execute(_ plan: BatchPlan, caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> BatchExecutionResult {
         guard !operationStore.hasActiveOperations else { throw BatchOperationError.busy }
         guard preparedPlan?.id == plan.id else { throw BatchOperationError.planUnavailable }
         preparedPlan = nil
         result = nil
-        let results = try await executePlans([plan])
+        let results = try await executePlans([plan], caskRemovalProgress: caskRemovalProgress)
         self.result = results[0]
         return results[0]
     }
@@ -235,7 +242,7 @@ final class BatchOperationCoordinator: ObservableObject {
         return BatchUpdateExecutionResult(groups: try await executePlans(plan.groups))
     }
 
-    private func executePlans(_ plans: [BatchPlan]) async throws -> [BatchExecutionResult] {
+    private func executePlans(_ plans: [BatchPlan], caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> [BatchExecutionResult] {
         activeIntents = plans.map(\.intent)
         let operationID = operationStore.begin(context: plans[0].intent.activityContext(stage: .executing))
         let total = plans.reduce(0) { $0 + $1.intent.items.count }
@@ -251,7 +258,7 @@ final class BatchOperationCoordinator: ObservableObject {
             for plan in plans {
                 self.activeIntent = plan.intent
                 self.operationStore.updateContext(plan.intent.activityContext(stage: .executing))
-                executions.append(await self.executeItems(plan))
+                executions.append(await self.executeItems(plan, caskRemovalProgress: caskRemovalProgress))
             }
             return executions
         }
@@ -289,7 +296,7 @@ final class BatchOperationCoordinator: ObservableObject {
         return results
     }
 
-    private func executeItems(_ plan: BatchPlan) async -> ([BatchItemOutcome], [BatchProviderResult?], Bool) {
+    private func executeItems(_ plan: BatchPlan, caskRemovalProgress: CaskRemovalProgressHandler?) async -> ([BatchItemOutcome], [BatchProviderResult?], Bool) {
         var outcomes: [BatchItemOutcome] = []
         var results: [BatchProviderResult?] = []
         var started = false
@@ -317,7 +324,7 @@ final class BatchOperationCoordinator: ObservableObject {
                 let reason: ActivityItemReason?
                 switch prepared {
                 case .homebrew(let providerPlan):
-                    let result = try await self.provider.executeHomebrew(providerPlan)
+                    let result = try await self.provider.executeHomebrew(providerPlan, caskRemovalProgress: caskRemovalProgress)
                     results.append(.homebrew(result))
                     status = switch result.outcome {
                     case .succeeded: .succeeded
@@ -325,9 +332,12 @@ final class BatchOperationCoordinator: ObservableObject {
                     case .partial: .partiallySucceeded
                     case .stateUnknown: .unknown
                     }
-                    reason = status == .succeeded ? nil : status == .unknown ? .stateUnavailable : .providerFailure
+                    reason = status == .succeeded ? nil : status == .unknown ? .stateUnavailable
+                        : result.caskRemovalFailures.first?.recoveryReason ?? .providerFailure
                     diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope,
-                                            detail: result.postflightError ?? "", command: result.command)
+                                            detail: ([result.postflightError].compactMap { $0 }
+                                                + result.caskRemovalFailures.map { "\($0.path): \($0.reason)" }).joined(separator: "\n"),
+                                            command: result.command)
                 case .npm(let providerPlan, let environment):
                     let result = try await self.provider.executeNPM(providerPlan, environment: environment)
                     results.append(.npm(result))

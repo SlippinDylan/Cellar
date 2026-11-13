@@ -13,6 +13,7 @@ cleanup_plan_fingerprint_material() {
     local version=""
     local version_dir=""
     local package_summary=""
+    local seen_cache_paths="|"
 
     case "$target" in
         npm-cache-clean)
@@ -26,23 +27,32 @@ cleanup_plan_fingerprint_material() {
             while IFS='|' read -r candidate_path _; do
                 [ -d "$candidate_path" ] || continue
                 candidate_path="$(resolve_safe_user_cache_delete_path "$candidate_path" 2>/dev/null)" || return 1
+                case "$candidate_path" in *'|'*|*$'\n'*|*$'\r'*) return 1 ;; esac
+                case "$seen_cache_paths" in *"|$candidate_path|"*) continue ;; esac
+                seen_cache_paths="$seen_cache_paths$candidate_path|"
                 candidate_snapshot="$(capture_directory_snapshot "$candidate_path" "$(dirname "$candidate_path")" 2>/dev/null)" || return 1
                 printf 'node-gyp|%s\n' "$candidate_snapshot"
             done <<< "$(detect_node_gyp_cache_dirs)"
             ;;
         orphan-bins)
-            global_bin="$(get_global_bin_dir 2>/dev/null)" || return 1
-            [ -n "$global_bin" ] || return 1
-            printf 'global-bin|%s\n' "$global_bin"
-            if [ -d "$global_bin" ]; then
-                [ -r "$global_bin" ] && [ -x "$global_bin" ] || return 1
-                while IFS= read -r candidate_path; do
-                    [ -n "$candidate_path" ] || continue
-                    [ ! -e "$candidate_path" ] || continue
-                    candidate_snapshot="$(capture_orphan_symlink_snapshot "$candidate_path" 2>/dev/null)" || return 1
-                    printf 'orphan|%s\n' "$candidate_snapshot"
-                done < <(find "$global_bin" -maxdepth 1 -type l 2>/dev/null)
-            fi
+            local destination="" global_root="" candidates=""
+            destination="$(npm_cleanup_destination_identity)" || return 1
+            global_root="$(printf '%s\n' "$destination" | sed -n 's/^global-root|\([^|]*\)|.*$/\1/p')"
+            global_bin="$(printf '%s\n' "$destination" | sed -n 's/^global-bin|\([^|]*\)|.*$/\1/p')"
+            printf '%s\n' "$destination"
+            if printf '%s\n' "$destination" | grep -q '|missing$'; then return 0; fi
+            [ -r "$global_bin" ] && [ -x "$global_bin" ] || return 1
+            candidates="$(find "$global_bin" -maxdepth 1 -type l 2>/dev/null)" || return 1
+            # The confirmation token is set-based; execution and evidence need a stable order too.
+            candidates="$(printf '%s\n' "$candidates" | LC_ALL=C sort)" || return 1
+            while IFS= read -r candidate_path; do
+                [ -n "$candidate_path" ] || continue
+                local ownership_exit=0
+                npm_orphan_link_is_attributable "$candidate_path" "$global_root" "$global_bin" || ownership_exit=$?
+                case "$ownership_exit" in 0) ;; 1) continue ;; *) return 1 ;; esac
+                candidate_snapshot="$(capture_orphan_symlink_snapshot "$candidate_path" 2>/dev/null)" || return 1
+                printf 'orphan|%s\n' "$candidate_snapshot"
+            done <<< "$candidates"
             ;;
         nvm-old-versions)
             node_path="$(command -v node 2>/dev/null || true)"
@@ -69,6 +79,15 @@ cleanup_plan_fingerprint_material() {
             return 1
             ;;
     esac
+}
+
+cleanup_plan_material_is_bounded() {
+    local target="$1" material="$2" path="" count=0
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        count=$((count + 1))
+        [ "$count" -le 1000 ] && [ "${#path}" -le 4096 ] || return 1
+    done <<< "$(cleanup_plan_paths_from_material "$target" "$material")"
 }
 
 cleanup_plan_token_from_material() {
@@ -212,6 +231,10 @@ render_non_package_action_plan_json() {
             case "$subject" in
                 npm-cache-clean|node-gyp-cache|orphan-bins|nvm-old-versions)
                     cleanup_plan_material="$(cleanup_plan_fingerprint_material "$subject" 2>/dev/null)" || {
+                        printf '{"code":"cleanup-plan-unavailable","action":"cleanup","target":"%s"}\n' "$(json_escape "$subject")"
+                        return 1
+                    }
+                    cleanup_plan_material_is_bounded "$subject" "$cleanup_plan_material" || {
                         printf '{"code":"cleanup-plan-unavailable","action":"cleanup","target":"%s"}\n' "$(json_escape "$subject")"
                         return 1
                     }

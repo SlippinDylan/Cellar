@@ -351,38 +351,58 @@ execute_node_install_json_action() {
     return 1
 }
 
+append_cleanup_item_json() {
+    local path="$1" status="$2" reason="$3"
+    local item=""
+    item="$(printf '{"path":"%s","status":"%s","reason":"%s"}' "$(json_escape "$path")" "$status" "$reason")"
+    if [ "$cleanup_items_json" = '[]' ]; then
+        cleanup_items_json="[$item]"
+    else
+        cleanup_items_json="${cleanup_items_json%]} ,$item]"
+    fi
+    case "$status" in removed|partial) cleanup_has_change=yes ;; unknown) cleanup_has_unknown=yes ;; esac
+}
+
+render_cleanup_result_json() {
+    local target="$1" log_file="$2" exit_code="$3"
+    local status=ok
+    if [ "$exit_code" -ne 0 ]; then
+        status=failed
+        if [ "$cleanup_has_change" = yes ]; then status=partial
+        elif [ "$cleanup_has_unknown" = yes ]; then status=unknown; fi
+    fi
+    printf '{'
+    [ "$exit_code" -eq 0 ] || printf '"code":"cleanup-incomplete",'
+    printf '"operationId":"%s","action":"cleanup","subject":"%s","exitCode":%s,"status":"%s","logFile":"%s","cleanupItems":%s}\n' \
+        "$(json_escape "$(create_operation_id "cleanup-$target")")" "$(json_escape "$target")" "$exit_code" "$status" "$(json_escape "$log_file")" "$cleanup_items_json"
+}
+
 execute_cleanup_json_action() {
-    local target="$1"
-    local log_file="$2"
-    local expected_plan_token="${3:-}"
-    local lock_name=""
-    local plan_material=""
-    local current_plan_token=""
-    local record=""
-    local snapshot=""
-    local path=""
-    local removed=0
+    local target="$1" log_file="$2" expected_plan_token="${3:-}"
+    local lock_name="" plan_material="" current_plan_token=""
+    local record="" snapshot="" path="" paths="" ver=""
+    local destination="" global_root="" global_bin="" current_destination=""
     local action_exit=0
+    cleanup_items_json='[]'
+    cleanup_has_change=no
+    cleanup_has_unknown=no
 
     validate_cleanup_target "$target" || return 2
     case "$target" in
-        npm-cache-verify)
-            npm cache verify >> "$log_file" 2>&1
-            return $?
-            ;;
-        logs)
-            cleanup_runtime_logs_keep_recent 100 >> "$log_file" 2>&1
-            return $?
-            ;;
+        npm-cache-verify) npm cache verify >> "$log_file" 2>&1; return $? ;;
+        logs) cleanup_runtime_logs_keep_recent 100 >> "$log_file" 2>&1; return $? ;;
         npm-cache-clean|node-gyp-cache|orphan-bins) lock_name="npm-mutation" ;;
         nvm-old-versions)
             load_nvm_into_current_shell >/dev/null 2>&1 || return 4
             lock_name="nvm-mutation"
             ;;
     esac
-
-    acquire_runtime_lock "$lock_name" || return 1
+    acquire_runtime_lock "$lock_name" || return 5
     plan_material="$(cleanup_plan_fingerprint_material "$target" 2>/dev/null)" || {
+        release_runtime_lock "$lock_name"
+        return 4
+    }
+    cleanup_plan_material_is_bounded "$target" "$plan_material" || {
         release_runtime_lock "$lock_name"
         return 4
     }
@@ -396,80 +416,82 @@ execute_cleanup_json_action() {
             return 3
         fi
     fi
-
-    case "$target" in
-        npm-cache-clean)
-            run_logged_command "$log_file" npm cache clean --force || action_exit=$?
-            if [ "$action_exit" -eq 0 ]; then
-                npm cache verify >> "$log_file" 2>&1 || action_exit=$?
-            fi
-            ;;
-        node-gyp-cache)
-            while IFS= read -r record; do
-                case "$record" in
-                    node-gyp\|*) ;;
-                    *) continue ;;
-                esac
-                snapshot="${record#node-gyp|}"
-                path="${snapshot%%|*}"
-                if ! verify_directory_snapshot_current "$snapshot" || \
-                    ! rm -rf "$path" >> "$log_file" 2>&1 || [ -d "$path" ]; then
-                    action_exit=1
-                    break
-                fi
-                removed=$((removed + 1))
-            done <<< "$plan_material"
-            ;;
-        orphan-bins)
-            while IFS= read -r record; do
-                case "$record" in
-                    orphan\|*) ;;
-                    *) continue ;;
-                esac
-                snapshot="${record#orphan|}"
-                if ! remove_orphan_symlink_snapshot "$snapshot" >> "$log_file" 2>&1; then
-                    action_exit=1
-                    break
-                fi
-                removed=$((removed + 1))
-            done <<< "$plan_material"
-            ;;
-        nvm-old-versions)
-            run_nvm_old_versions_cleanup_json "$log_file" "$plan_material" || action_exit=$?
-            ;;
-    esac
-
-    release_runtime_lock "$lock_name"
-    if [ "$target" != "npm-cache-clean" ] && [ "$target" != "nvm-old-versions" ]; then
-        printf 'removed=%s\n' "$removed" >> "$log_file" 2>&1
-    fi
-    return "$action_exit"
-}
-
-run_nvm_old_versions_cleanup_json() {
-    local log_file="$1"
-    local plan_material="$2"
-    local planned_paths=""
-    local path=""
-    local ver=""
-    local vdir=""
-    local removed=0
-
-    planned_paths="$(cleanup_plan_paths_from_material nvm-old-versions "$plan_material")" || return 1
-    while IFS= read -r path; do
-        [ -n "$path" ] || continue
-        ver="${path##*/}"
-        vdir="$(nvm_version_dir "$ver")"
-        [ "$vdir" = "$path" ] || return 1
-        nvm_version_is_safe_cleanup_candidate "$ver" || continue
-        nvm uninstall "$ver" >> "$log_file" 2>&1
-        local uninstall_exit=$?
-        if [ "$uninstall_exit" -ne 0 ] || [ -d "$vdir" ]; then
-            return 1
+    if [ "$target" = npm-cache-clean ]; then
+        path="${plan_material#cache|}"
+        if ! run_logged_command "$log_file" npm cache clean --force; then
+            append_cleanup_item_json "$path" unknown cleanup-failed
+            action_exit=1
+        elif ! npm cache verify >> "$log_file" 2>&1; then
+            append_cleanup_item_json "$path" partial cache-cleaned-verification-failed
+            action_exit=1
+        else
+            append_cleanup_item_json "$path" removed cache-cleaned
         fi
-        removed=$((removed + 1))
-    done <<< "$planned_paths"
-    printf 'removed=%s\n' "$removed" >> "$log_file" 2>&1
+    else
+        if [ "$target" = orphan-bins ]; then
+            destination="$(printf '%s\n' "$plan_material" | sed -n '/^global-root|/p; /^global-bin|/p')"
+            global_root="$(printf '%s\n' "$destination" | sed -n 's/^global-root|\([^|]*\)|.*$/\1/p')"
+            global_bin="$(printf '%s\n' "$destination" | sed -n 's/^global-bin|\([^|]*\)|.*$/\1/p')"
+        fi
+        paths="$(cleanup_plan_paths_from_material "$target" "$plan_material")" || {
+            release_runtime_lock "$lock_name"
+            return 4
+        }
+        while IFS= read -r path; do
+            [ -n "$path" ] || continue
+            if [ "$action_exit" -ne 0 ]; then
+                append_cleanup_item_json "$path" notAttempted previous-failure
+                continue
+            fi
+            case "$target" in
+                node-gyp-cache)
+                    snapshot=""
+                    while IFS= read -r record; do
+                        case "$record" in node-gyp\|"$path"\|*) snapshot="${record#node-gyp|}"; break ;; esac
+                    done <<< "$plan_material"
+                    if ! verify_directory_snapshot_current "$snapshot"; then
+                        append_cleanup_item_json "$path" retained state-changed
+                        action_exit=1
+                    elif ! rm -rf "$path" >> "$log_file" 2>&1 || [ -e "$path" ] || [ -L "$path" ]; then
+                        append_cleanup_item_json "$path" unknown deletion-incomplete
+                        action_exit=1
+                    else
+                        append_cleanup_item_json "$path" removed removed
+                    fi
+                    ;;
+                orphan-bins)
+                    snapshot=""
+                    while IFS= read -r record; do
+                        case "$record" in orphan\|"$path"\|*) snapshot="${record#orphan|}"; break ;; esac
+                    done <<< "$plan_material"
+                    current_destination="$(npm_cleanup_destination_identity)" || current_destination=""
+                    if [ "$current_destination" != "$destination" ] || ! npm_orphan_link_is_attributable "$path" "$global_root" "$global_bin" || ! verify_orphan_symlink_snapshot_current "$snapshot"; then
+                        append_cleanup_item_json "$path" retained state-changed
+                        action_exit=1
+                    elif ! remove_orphan_symlink_snapshot "$snapshot" >> "$log_file" 2>&1; then
+                        append_cleanup_item_json "$path" failed deletion-failed
+                        action_exit=1
+                    else
+                        append_cleanup_item_json "$path" removed removed
+                    fi
+                    ;;
+                nvm-old-versions)
+                    ver="${path##*/}"
+                    if [ "$(nvm_version_dir "$ver")" != "$path" ] || ! nvm_version_is_safe_cleanup_candidate "$ver"; then
+                        append_cleanup_item_json "$path" retained state-changed
+                        action_exit=1
+                    elif ! nvm uninstall "$ver" >> "$log_file" 2>&1 || [ -e "$path" ] || [ -L "$path" ]; then
+                        append_cleanup_item_json "$path" unknown deletion-incomplete
+                        action_exit=1
+                    else
+                        append_cleanup_item_json "$path" removed removed
+                    fi
+                    ;;
+            esac
+        done <<< "$paths"
+    fi
+    release_runtime_lock "$lock_name"
+    return "$action_exit"
 }
 
 write_project_nvmrc_json_action() {
@@ -761,13 +783,21 @@ render_execute_json() {
                         return 1
                     }
                     execute_cleanup_json_action "$subject" "$log_file" "$extra" || exit_code=$?
-                    if [ "$exit_code" -eq 3 ] || [ "$exit_code" -eq 4 ]; then
+                    if [ "$exit_code" -eq 3 ] || [ "$exit_code" -eq 4 ] || [ "$exit_code" -eq 5 ]; then
                         local cleanup_error_code="plan-stale"
                         [ "$exit_code" -eq 4 ] && cleanup_error_code="cleanup-plan-unavailable"
+                        [ "$exit_code" -eq 5 ] && cleanup_error_code="mutation-locked"
                         action_output="$(printf '{"code":"%s","action":"cleanup","target":"%s"}' "$cleanup_error_code" "$(json_escape "$subject")")"
                         json_print_business_error_with_operation "$action_output" "$action" "$normalized_subject" "$log_file" 1
                         return 1
                     fi
+                    case "$subject" in
+                        npm-cache-clean|node-gyp-cache|orphan-bins|nvm-old-versions)
+                            render_cleanup_result_json "$subject" "$log_file" "$exit_code"
+                            [ "$exit_code" -eq 0 ]
+                            return $?
+                            ;;
+                    esac
                     ;;
                 project-nvmrc)
                     action_output="$(write_project_nvmrc_json_action "$subject" "$extra" 2>>"$log_file")" || exit_code=$?

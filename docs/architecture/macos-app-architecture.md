@@ -196,7 +196,7 @@ Homebrew 的 Tap 与元数据任务使用明确的 provider scope 和有限操�
 
 Node Manager 源码的受限清理契约使用可选 `cleanupItems` 保留逐项 path、有限 status 和 reason；旧成功响应仍可没有该字段。失败保留 schema v1 的 `ok:false`、非零退出和 `cleanup-incomplete`，只有 cleanup execute 的 action、subject、确认路径及完整事实匹配时才恢复为操作结果；其他业务错误继续失败。递归删除或 nvm 卸载失败记为 unknown，已有明确完成项时整体 partial；缓存清理完成但校验失败明确标记 partial。会话反馈显示路径和恢复建议，文件日志仅记录逐项序号、状态与原因，不持久化清理路径。断链归属按当前 npm root/bin 的真实目录及身份绑定，逐项复验目标和 inode；包目标的已存在祖先经过真实路径解析，拒绝跨根、同名前缀和软链逃逸。候选按 C locale 固定排序，计划与执行不依赖 find 枚举顺序。目标祖先已断裂或不是目录时保留该非归属链接；真实访问和 IO 失败仍使扫描不可用，链接自身及 root/bin 的读取错误不作为非归属吞掉。扫描 IO 失败与非归属候选分开处理，配置的 root/bin 尚不存在时只读返回空清单，后续创建会使确认失效。单次最多 1000 个候选，每路径最多 4096 字节，超过时拒绝计划或写入。
 
-本次分阶段修复的 Phase A 只更新源 Manager、Swift 边界和测试，当前打包快照仍是旧来源；bundled runtime 修复需在源提交经审查后按生产白名单逐字节同步、记录真实来源 commit 并更新 runtime 版本，不能将 Phase A 声明为已修复已打包 Manager。
+生产快照按白名单从已审查的真实源提交逐字节同步；各 provider 的当前来源与 runtime 版本以[快照来源记录](../../Resources/Managers/SNAPSHOT.md)为准。Node 来源可以独立更新，其他冻结 Manager 继续保留各自来源，Cellar-owned Zsh adapter 的维护历史单独记录。快照更新使用新的独立运行目录，不复用、迁移或删除旧版本目录。
 
 共享任务反馈按当前语言渲染 operation、scope、状态、原因与步骤，完成结果可展开逐项检查并关闭。整个反馈区域按内容高度占用空间，空反馈不预留高度；内容较多时限制总高度并整体滚动，为下方主页面保留可用空间，不按每张结果卡片分别嵌套滚动。安装、配置与维护等任务进度跨页面可见，搜索只在页面结果区显示加载状态，refresh 只在工具栏显示进度，均不提供停止入口。Activity 页面、历史搜索、筛选和复制菜单已移除。
 

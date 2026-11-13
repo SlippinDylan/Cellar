@@ -115,7 +115,8 @@ run_json_preflight() {
                     case "${3:-}" in
                         logs) required_commands="sed mktemp" ;;
                         npm-cache-verify) required_commands="npm sed mktemp" ;;
-                        npm-cache-clean|node-gyp-cache|orphan-bins) required_commands="shasum npm sed mktemp" ;;
+                        npm-cache-clean|node-gyp-cache) required_commands="shasum npm sed mktemp" ;;
+                        orphan-bins) required_commands="shasum ruby npm sed mktemp" ;;
                         nvm-old-versions) required_commands="shasum ruby sed mktemp" ;;
                         *) required_commands="sed mktemp" ;;
                     esac
@@ -149,7 +150,8 @@ run_json_preflight() {
                 cleanup)
                     case "${3:-}" in
                         logs) required_commands="sed mktemp" ;;
-                        npm-cache-verify|npm-cache-clean|node-gyp-cache|orphan-bins) required_commands="npm sed mktemp" ;;
+                        npm-cache-verify|npm-cache-clean|node-gyp-cache) required_commands="npm sed mktemp" ;;
+                        orphan-bins) required_commands="ruby npm sed mktemp" ;;
                         nvm-old-versions) required_commands="ruby sed mktemp" ;;
                         *) required_commands="sed mktemp" ;;
                     esac

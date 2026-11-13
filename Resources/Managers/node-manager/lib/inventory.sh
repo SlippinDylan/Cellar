@@ -354,6 +354,100 @@ remove_snapshot_symlink_residue() {
     [ ! -e "$symlink_path" ] && [ ! -L "$symlink_path" ]
 }
 
+# Resolve each existing ancestor before accepting a missing npm package target.
+# Lexical prefix matching alone would accept symlink escapes and sibling roots.
+npm_orphan_link_is_attributable() {
+    ruby -e '
+      begin
+      link, root, bin = ARGV
+      exit 2 if ARGV.any? { |path| path.match?(/[|\n\r]/) }
+      exit 1 unless File.lstat(link).symlink?
+      begin
+        File.stat(link)
+        exit 1
+      rescue Errno::ENOENT
+        # Missing package targets may still be attributable.
+      rescue Errno::ENOTDIR
+        exit 1
+      end
+      root = File.realpath(root)
+      bin = File.realpath(bin)
+      exit 1 unless File.realpath(File.dirname(link)) == bin
+      raw = File.readlink(link)
+      exit 2 if raw.match?(/[|\n\r]/)
+      target = raw.start_with?("/") ? raw : File.join(bin, raw)
+      resolved = "/"
+      target.split("/").each do |part|
+        next if part.empty? || part == "."
+        if part == ".."
+          resolved = File.dirname(resolved)
+        else
+          resolved = File.join(resolved, part)
+          entry = begin
+            File.lstat(resolved)
+          rescue Errno::ENOENT
+            nil # Missing package components are expected for an orphan link.
+          rescue Errno::ENOTDIR
+            exit 1
+          end
+          if entry
+            begin
+              resolved = File.realpath(resolved)
+            rescue Errno::ENOENT, Errno::ENOTDIR
+              # A dangling or non-traversable target ancestor proves no npm ownership.
+              exit 1
+            end
+          end
+        end
+      end
+      exit 1 unless resolved.start_with?(root + "/")
+      parts = resolved.delete_prefix(root + "/").split("/")
+      name = /\A[a-zA-Z0-9_~][a-zA-Z0-9._~-]*\z/
+      if parts.first&.start_with?("@")
+        exit 1 unless parts.length >= 3 && parts[0].delete_prefix("@").match?(name) && parts[1].match?(name)
+      else
+        exit 1 unless parts.length >= 2 && parts[0].match?(name)
+      end
+      rescue SystemCallError, IOError, ArgumentError
+        exit 2
+      end
+    ' "$1" "$2" "$3" 2>/dev/null
+}
+
+npm_cleanup_destination_identity() {
+    local root="" bin=""
+    root="$(npm root -g 2>/dev/null)" || return 1
+    bin="$(get_global_bin_dir 2>/dev/null)" || return 1
+    ruby -e '
+      ARGV.each_slice(2) do |kind, path|
+        abort unless path.start_with?("/") && !path.match?(/[|\n\r]/)
+        begin
+          path = File.realpath(path)
+          stat = File.stat(path)
+          abort unless stat.directory?
+          puts "#{kind}|#{path}|#{stat.dev}|#{stat.ino}"
+        rescue Errno::ENOENT
+          # A configured empty prefix need not have global package/bin directories yet.
+          missing = []
+          ancestor = File.expand_path(path)
+          loop do
+            begin
+              File.lstat(ancestor)
+              break
+            rescue Errno::ENOENT
+              missing.unshift(File.basename(ancestor))
+              ancestor = File.dirname(ancestor)
+            end
+          end
+          ancestor = File.realpath(ancestor)
+          abort unless File.directory?(ancestor)
+          resolved = File.join(ancestor, *missing)
+          puts "#{kind}|#{resolved}|missing"
+        end
+      end
+    ' global-root "$root" global-bin "$bin" 2>/dev/null
+}
+
 capture_orphan_symlink_snapshot() {
     local symlink_path="$1"
     local raw_target=""

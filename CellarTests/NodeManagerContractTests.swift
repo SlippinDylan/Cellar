@@ -78,7 +78,7 @@ private final class SourceNodeManagerFixture {
     let globalRoot: URL
     let client: NodeManagerClient
 
-    init() throws {
+    init(managerSource: URL? = nil) throws {
         let temporary = URL(filePath: "/private/tmp/CellarSourceCleanup-\(UUID())")
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         root = temporary
@@ -94,7 +94,7 @@ private final class SourceNodeManagerFixture {
         for path in manifest.split(separator: "\n").map(String.init) where !path.hasPrefix("#") && !path.isEmpty {
             let destination = manager.appending(path: path)
             try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try FileManager.default.copyItem(at: source.appending(path: path), to: destination)
+            try FileManager.default.copyItem(at: (managerSource ?? source).appending(path: path), to: destination)
         }
         try Data("v24.0.0\n".utf8).write(to: root.appending(path: ".nvm/alias/default"))
         try tool("node", "#!/bin/sh\nprintf 'v24.0.0\\n'\n")
@@ -155,6 +155,61 @@ private final class SourceNodeManagerFixture {
 }
 
 extension NodeManagerContractTests {
+    func testBundledAdapterPreservesOwnedCleanupPartialResultsAndForeignLinks() async throws {
+        let bundled = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Managers/node-manager")
+        let fixture = try SourceNodeManagerFixture(managerSource: bundled)
+        for name in ["a", "b", "c"] { _ = try fixture.link(name, target: "../lib/node_modules/missing/\(name).js") }
+        let foreign = fixture.root.appending(path: "foreign")
+        try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: foreign.appending(path: "current"), withDestinationURL: foreign.appending(path: "missing"))
+        let unrelated = try fixture.link("unrelated", target: foreign.appending(path: "current/bin/tool").path)
+        let sibling = try fixture.link("sibling", target: fixture.globalRoot.path + "-other/pkg/bin.js")
+        try fixture.tool("find", #"""
+        #!/bin/bash
+        if [ "$1" = "$HOME/prefix/bin" ]; then
+          if [ -f "$HOME/reverse-find" ]; then
+            /usr/bin/find "$@" | LC_ALL=C /usr/bin/sort -r
+          else
+            /usr/bin/find "$@" | LC_ALL=C /usr/bin/sort
+          fi
+        else
+          exec /usr/bin/find "$@"
+        fi
+        """#)
+        let plan = try await fixture.plan("orphan-bins")
+        let paths = try XCTUnwrap(plan.payload.paths)
+        XCTAssertEqual(paths, ["a", "b", "c"].map { fixture.root.appending(path: "prefix/bin/\($0)").path })
+        try Data().write(to: fixture.root.appending(path: "reverse-find"))
+        try Data(paths[1].utf8).write(to: fixture.root.appending(path: "fail-path"))
+        let operation = try await fixture.client.execute(plan, managerDirectory: fixture.manager)
+        XCTAssertEqual(operation.cleanupItems?.map(\.path), paths)
+        XCTAssertEqual(operation.cleanupItems?.map(\.status), [.removed, .failed, .notAttempted])
+        XCTAssertEqual(operation.status, "partial")
+        XCTAssertEqual(operation.exitCode, 1)
+        XCTAssertEqual(operation.batchItemStatus, .partiallySucceeded)
+        for path in [paths[1], paths[2], unrelated.path, sibling.path] {
+            XCTAssertNoThrow(try FileManager.default.destinationOfSymbolicLink(atPath: path))
+        }
+        XCTAssertThrowsError(try FileManager.default.destinationOfSymbolicLink(atPath: paths[0]))
+    }
+
+    func testBundledAdapterRetainsActualPartialDirectoryDeletionAsUnknown() async throws {
+        let bundled = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Managers/node-manager")
+        let fixture = try SourceNodeManagerFixture(managerSource: bundled)
+        let cache = fixture.root.appending(path: ".node-gyp")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        for name in ["one", "two"] { try Data(name.utf8).write(to: cache.appending(path: name)) }
+        let plan = try await fixture.plan("node-gyp-cache")
+        XCTAssertEqual(plan.payload.paths, [cache.path])
+        try Data(cache.path.utf8).write(to: fixture.root.appending(path: "fail-path"))
+        let operation = try await fixture.client.execute(plan, managerDirectory: fixture.manager)
+        XCTAssertEqual(operation.cleanupItems?.map(\.status), [.unknown])
+        XCTAssertEqual(operation.batchItemStatus, .unknown)
+        XCTAssertEqual(operation.exitCode, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.appending(path: "one").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cache.appending(path: "two").path))
+    }
+
     func testActualSourceOrphanEnumerationOrderIsStableAcrossConfirmation() async throws {
         for failSecond in [false, true] {
             let fixture = try SourceNodeManagerFixture()

@@ -4638,6 +4638,54 @@ test_script_syntax() {
 # Main test runner
 # ──────────────────────────────────────────────
 
+test_json_orphan_cleanup_requires_current_npm_ownership() {
+    local prefix="$TEST_SAFE_HOME/npm-ownership-prefix"
+    local root="$prefix/lib/node_modules"
+    local output=""
+    mkdir -p "$prefix/bin" "$root" "$prefix/foreign"
+    ln -s ../lib/node_modules/gone/bin.js "$prefix/bin/npm-owned"
+    ln -s ../lib/node_modules/@scope/gone/bin.js "$prefix/bin/npm-scoped"
+    ln -s ../foreign/gone "$prefix/bin/other-tool"
+    ln -s ../lib/node_modules-other/gone/bin.js "$prefix/bin/sibling-root"
+    ln -s "$prefix/foreign" "$root/escape"
+    ln -s ../lib/node_modules/escape/gone/bin.js "$prefix/bin/escaped"
+    ln -s "$prefix/foreign/removed-version" "$prefix/foreign/current"
+    printf regular > "$prefix/foreign/not-directory"
+    ln -s "$prefix/foreign/current/bin/tool" "$prefix/bin/foreign-dangling"
+    ln -s "$prefix/foreign/not-directory/bin/tool" "$prefix/bin/foreign-file"
+    output="$(MOCK_NPM_PREFIX="$prefix" MOCK_NPM_ROOT="$root" run_in_subshell 'run_json_command plan cleanup orphan-bins')"
+    assert_contains "orphan plan includes npm package target" "$prefix/bin/npm-owned" "$output"
+    assert_contains "orphan plan includes npm scoped package target" "$prefix/bin/npm-scoped" "$output"
+    assert_not_contains "orphan plan excludes unrelated broken link" "$prefix/bin/other-tool" "$output"
+    assert_not_contains "orphan plan excludes sibling npm root" "$prefix/bin/sibling-root" "$output"
+    assert_not_contains "orphan plan excludes escaped target ancestor" "$prefix/bin/escaped" "$output"
+    assert_not_contains "orphan plan excludes dangling foreign ancestor" "$prefix/bin/foreign-dangling" "$output"
+    assert_not_contains "orphan plan excludes non-directory foreign ancestor" "$prefix/bin/foreign-file" "$output"
+    output="$(MOCK_NPM_PREFIX="$prefix" MOCK_NPM_ROOT="$root" NODE_MANAGER_ALLOW_JSON_EXECUTE=1 run_in_subshell 'run_json_command execute cleanup orphan-bins')"
+    assert_contains "orphan cleanup records exact removals" '"status":"removed","reason":"removed"' "$output"
+    if [ -L "$prefix/bin/other-tool" ] && [ -L "$prefix/bin/escaped" ] && [ -L "$prefix/bin/foreign-dangling" ] && [ -L "$prefix/bin/foreign-file" ]; then
+        assert_pass "orphan cleanup preserves foreign and escaped links"
+    else
+        assert_fail "orphan cleanup preserves foreign and escaped links"
+    fi
+    assert_valid_json_document "orphan cleanup result is parseable" "$output"
+}
+
+test_json_cleanup_and_shared_failure_results_are_truthful() {
+    local output=""
+    output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=1 run_in_subshell 'set_registry_value() { return 7; }; run_json_command execute registry-set https://registry.npmjs.org/' || true)"
+    assert_contains "shared execution failure remains false envelope" '"ok":false' "$output"
+    assert_contains "shared execution failure has a stable code" '"code":"operation-failed"' "$output"
+    assert_contains "shared execution failure keeps its action" '"action":"registry-set"' "$output"
+    assert_valid_json_document "shared execution failure is parseable" "$output"
+
+    output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=1 run_in_subshell 'npm() { if [ "$1" = config ]; then printf "%s\\n" "$HOME/.npm"; return 0; fi; [ "$2" = clean ]; }; run_json_command execute cleanup npm-cache-clean' || true)"
+    assert_contains "cache verify failure keeps cleanup code" '"code":"cleanup-incomplete"' "$output"
+    assert_contains "cache verify failure reports partial phase" '"status":"partial"' "$output"
+    assert_contains "cache verify failure keeps clean completion" '"reason":"cache-cleaned-verification-failed"' "$output"
+    assert_valid_json_document "cache cleanup partial result is parseable" "$output"
+}
+
 main() {
     printf "========================================\n"
     printf "  npm-global-manager test suite\n"
@@ -4961,6 +5009,8 @@ main() {
     test_json_non_package_action_contracts_are_documented
     test_app_packaging_boundary_is_documented
     test_require_capabilities_reports_missing_ruby
+    test_json_orphan_cleanup_requires_current_npm_ownership
+    test_json_cleanup_and_shared_failure_results_are_truthful
     test_json_cleanup_plan_node_gyp_cache_handles_zero_candidates
     test_json_cleanup_rejects_stale_plan_token_without_deleting
     test_json_cleanup_plan_nvm_old_versions_handles_zero_candidates

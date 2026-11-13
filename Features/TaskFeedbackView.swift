@@ -114,6 +114,11 @@ private struct TaskResultCard: View {
                             let target = renderer.target(summary)
                             if !target.isEmpty { Text(target) }
                             if let reason = summary.reason { Text(reason.message).foregroundStyle(.secondary) }
+                            if let items = summary.cleanupItems {
+                                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                                    NodeCleanupItemView(item: item)
+                                }
+                            }
                             if !summary.itemOutcomes.isEmpty {
                                 Text(renderer.counts(summary)).fontWeight(.medium)
                                 ForEach(Array(summary.itemOutcomes.enumerated()), id: \.offset) { _, item in

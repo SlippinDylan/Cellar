@@ -459,6 +459,7 @@ struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {
     let date: Date
     let status: ActivityStatus
     let itemOutcomes: [ActivityItemSummary]
+    var cleanupItems: [NodeCleanupItem]? = nil
     var reason: ActivityItemReason? = nil
 }
 

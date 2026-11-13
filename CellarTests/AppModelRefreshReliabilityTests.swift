@@ -3,6 +3,41 @@ import XCTest
 
 @MainActor
 final class AppModelRefreshReliabilityTests: XCTestCase {
+    func testRecoveredCleanupFactsSurviveFailedPostflightAndBlockStaleNodeWrites() async throws {
+        let fixture = try NodeRefreshFixture()
+        defer { fixture.remove() }
+        let store = ActivityStore()
+        let model = makeModel(root: fixture.root, managers: fixture.managers, activityStore: store)
+        let initial = try await model.service.loadNode(snapshot: fixture.managers)
+        model.applyNodeReadResult(.success(initial))
+        let readTime = model.nodeRefreshedAt
+        try Data().write(to: fixture.root.appending(path: "fail-after-execute"))
+        let items: [NodeCleanupItem] = [.init(path: "/fixture/removed", status: .removed, reason: .removed),
+                                        .init(path: "/fixture/failed", status: .failed, reason: .deletionFailed),
+                                        .init(path: "/fixture/unattempted", status: .notAttempted, reason: .previousFailure)]
+        let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(#"{"action":"cleanup","executeSupported":true,"executable":true,"paths":["/fixture/removed","/fixture/failed","/fixture/unattempted"]}"#.utf8))
+        model.nodePlan = .init(id: UUID(), request: NodeMaintenanceAction.orphanBins.request, payload: payload, generatedAt: Date())
+        await model.executeNodePlan()
+        let result = try XCTUnwrap(model.nodeActionResult)
+        XCTAssertEqual(result.operation.cleanupItems, items)
+        XCTAssertEqual(result.operation.batchItemStatus, .partiallySucceeded)
+        XCTAssertNotNil(result.postflightError)
+        XCTAssertNil(result.snapshot)
+        XCTAssertEqual(store.latestResult?.cleanupItems, items)
+        XCTAssertEqual(store.latestResult?.status, .partiallySucceeded)
+        XCTAssertTrue(model.nodeRefreshFailed)
+        XCTAssertEqual(model.nodeUpdateState, .failed)
+        XCTAssertEqual(model.node?.summary.nodeVersion, initial.summary.nodeVersion)
+        XCTAssertEqual(model.nodeRefreshedAt, readTime)
+        XCTAssertFalse(model.isBusy)
+        await model.prepareNodeAction(NodeMaintenanceAction.orphanBins.request)
+        XCTAssertNil(model.nodePlan)
+        XCTAssertEqual(model.nodeActionResult?.operation.cleanupItems, items)
+        XCTAssertEqual(store.latestResult?.cleanupItems, items)
+        let calls = try String(contentsOf: fixture.root.appending(path: "calls"), encoding: .utf8)
+        XCTAssertEqual(calls.split(separator: "\n").filter { $0 == "execute" }.count, 1)
+    }
+
     func testFailedHomebrewSectionsRetainPriorValuesAndBlockMutationUntilRecovery() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
@@ -273,13 +308,13 @@ final class AppModelRefreshReliabilityTests: XCTestCase {
         model.applyHomebrewReadResult(.success(.init(executablePath: snapshot.executablePath, version: snapshot.version, managerAvailable: true, snapshot: snapshot)), includingOutdated: includingOutdated)
     }
 
-    private func makeModel(root: URL, homebrew: HomebrewClient? = nil, managers: SnapshotStatus? = nil, batchProvider: (any BatchOperationProviding)? = nil) -> AppModel {
+    private func makeModel(root: URL, homebrew: HomebrewClient? = nil, managers: SnapshotStatus? = nil, batchProvider: (any BatchOperationProviding)? = nil, activityStore: ActivityStore? = nil) -> AppModel {
         let runner = ProcessRunner()
         let resolver = NodeEnvironmentResolver(homeDirectory: root)
         let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root),
                                          nodeClient: NodeManagerClient(runner: runner, environmentResolver: resolver),
                                          shellClient: ShellManagerClient(runner: runner), environmentResolver: resolver, homebrewClient: homebrew)
-        return AppModel(service: service, operationStore: OperationStore(), batchProvider: batchProvider, managerSnapshot: managers)
+        return AppModel(service: service, operationStore: OperationStore(), activityStore: activityStore, batchProvider: batchProvider, managerSnapshot: managers)
     }
 }
 
@@ -309,6 +344,10 @@ private struct NodeRefreshFixture {
         printf '%s\n' "$2" >> "$HOME/calls"
         if [ "$2" = execute ]; then
           touch "$HOME/executed"
+          if [ "$3" = cleanup ]; then
+            printf '%s\n' '{"ok":false,"schemaVersion":1,"command":"execute","error":{"code":"cleanup-incomplete","operationId":"fixture-cleanup","action":"cleanup","subject":"orphan-bins","exitCode":1,"status":"partial","logFile":"","cleanupItems":[{"path":"/fixture/removed","status":"removed","reason":"removed"},{"path":"/fixture/failed","status":"failed","reason":"deletion-failed"},{"path":"/fixture/unattempted","status":"notAttempted","reason":"previous-failure"}]}}'
+            exit 1
+          fi
           if [ -f "$HOME/execute-fails" ]; then
             printf '%s\n' '{"ok":false,"schemaVersion":1,"command":"execute","error":{"code":"fixture-execute-failed"}}'
             exit 1

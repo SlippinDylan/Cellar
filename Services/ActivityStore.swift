@@ -53,6 +53,10 @@ final class ActivityStore: ObservableObject {
         logStore?.record(level: Self.logLevel(sanitized.status), category: "tasks",
                          message: "Completed \(context) status=\(sanitized.status.rawValue) targets=\(sanitized.targetDisplayNames.joined(separator: ",")) reason=\(sanitized.reason?.rawValue ?? "none")",
                          taskID: taskID)
+        for (index, item) in (sanitized.cleanupItems ?? []).enumerated() {
+            logStore?.record(level: Self.logLevel(item.batchItemStatus.activityStatus), category: "tasks",
+                             message: "Cleanup item \(context) index=\(index + 1) status=\(item.status.rawValue) reason=\(item.reason.rawValue)", taskID: taskID)
+        }
         for item in sanitized.itemOutcomes {
             logStore?.record(level: Self.logLevel(item.status.activityStatus), category: "tasks",
                              message: "Item \(context) target=\(item.shellStep?.rawValue ?? item.displayName) status=\(item.status.rawValue) reason=\(item.reason?.rawValue ?? "none")",
@@ -91,6 +95,10 @@ final class ActivityStore: ObservableObject {
 enum ActivitySummarySanitizer {
     static func sanitize(_ summary: ActivitySummary) throws(ActivityStoreError) -> ActivitySummary {
         guard summary.status != .running, summary.targetDisplayNames.count <= 100, summary.itemOutcomes.count <= 100 else { throw .invalidSummary }
+        if let items = summary.cleanupItems {
+            guard summary.operation == .maintenance, items.count <= 1000, items.allSatisfy(\.hasValidEvidence),
+                  Set(items.map(\.path)).count == items.count else { throw .invalidSummary }
+        }
         if summary.scope == .shell {
             guard summary.date.timeIntervalSince1970.isFinite, summary.targetDisplayNames.isEmpty,
                   summary.itemOutcomes.allSatisfy({ $0.displayName.isEmpty && $0.shellStep != nil }),
@@ -118,7 +126,7 @@ enum ActivitySummarySanitizer {
         }
         return ActivitySummary(id: summary.id, operation: summary.operation, scope: scope,
                                targetDisplayNames: summary.targetDisplayNames, date: summary.date,
-                               status: summary.status, itemOutcomes: summary.itemOutcomes, reason: summary.reason)
+                               status: summary.status, itemOutcomes: summary.itemOutcomes, cleanupItems: summary.cleanupItems, reason: summary.reason)
     }
 
     private static func validVersion(_ version: String) -> Bool {

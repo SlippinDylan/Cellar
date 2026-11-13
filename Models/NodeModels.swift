@@ -12,6 +12,7 @@ struct ManagerErrorPayload: Decodable, Error, Sendable {
     let status: String?
     let logFile: String?
     let causeCode: String?
+    let cleanupOperation: NodeOperationResult?
 
     private enum CodingKeys: String, CodingKey {
         case code, message, dependencies, stderr, operationId, action, subject, exitCode, status, logFile, causeCode, detail
@@ -38,6 +39,7 @@ struct ManagerErrorPayload: Decodable, Error, Sendable {
         subject = try values.decodeIfPresent(String.self, forKey: .subject)
         logFile = try values.decodeIfPresent(String.self, forKey: .logFile)
         causeCode = try values.decodeIfPresent(String.self, forKey: .causeCode)
+        cleanupOperation = code == "cleanup-incomplete" ? try NodeOperationResult(from: decoder) : nil
     }
 }
 
@@ -245,6 +247,54 @@ struct NodePackageDestination: Equatable, Sendable {
     let globalRoot: String
 }
 
+struct NodeCleanupItem: Codable, Equatable, Sendable {
+    enum Status: String, Codable, Sendable {
+        case removed, retained, failed, notAttempted, unknown, partial
+    }
+    enum Reason: String, Codable, Sendable {
+        case removed
+        case stateChanged = "state-changed"
+        case deletionFailed = "deletion-failed"
+        case deletionIncomplete = "deletion-incomplete"
+        case previousFailure = "previous-failure"
+        case cleanupFailed = "cleanup-failed"
+        case cacheCleaned = "cache-cleaned"
+        case cacheCleanedVerificationFailed = "cache-cleaned-verification-failed"
+    }
+    let path: String
+    let status: Status
+    let reason: Reason
+
+    var hasValidEvidence: Bool {
+        guard path.hasPrefix("/"), path.utf8.count <= 4096, !path.contains("\0") else { return false }
+        return switch (status, reason) {
+        case (.removed, .removed), (.removed, .cacheCleaned), (.retained, .stateChanged),
+             (.failed, .deletionFailed), (.notAttempted, .previousFailure),
+             (.unknown, .deletionIncomplete), (.unknown, .cleanupFailed),
+             (.partial, .cacheCleanedVerificationFailed): true
+        default: false
+        }
+    }
+
+    var batchItemStatus: BatchItemStatus {
+        switch status {
+        case .removed: .succeeded
+        case .retained, .failed, .notAttempted: .failed
+        case .unknown: .unknown
+        case .partial: .partiallySucceeded
+        }
+    }
+
+    var activityReason: ActivityItemReason? {
+        switch reason {
+        case .removed, .cacheCleaned: nil
+        case .stateChanged: .stateChanged
+        case .deletionFailed, .cleanupFailed: .providerFailure
+        case .deletionIncomplete, .previousFailure, .cacheCleanedVerificationFailed: .stateUnavailable
+        }
+    }
+}
+
 struct NodeOperationResult: Decodable, Sendable {
     struct Residues: Decodable, Sendable {
         let directories: [String]
@@ -259,8 +309,17 @@ struct NodeOperationResult: Decodable, Sendable {
     let logFile: String
     let detail: String?
     let residues: Residues?
+    var cleanupItems: [NodeCleanupItem]? = nil
 
     var batchItemStatus: BatchItemStatus {
+        if action == NodeAction.cleanup.rawValue, let cleanupItems {
+            if cleanupItems.contains(where: { $0.status == .partial }) { return .partiallySucceeded }
+            let removed = cleanupItems.contains { $0.status == .removed }
+            let incomplete = cleanupItems.contains { $0.status != .removed }
+            if removed && incomplete { return .partiallySucceeded }
+            if cleanupItems.contains(where: { $0.status == .unknown }) { return .unknown }
+            return exitCode == 0 && status == "ok" && !incomplete ? .succeeded : .failed
+        }
         if let detail, let verification = ActivityItemReason.verificationStatus(code: detail) {
             return verification == .partiallySucceeded && exitCode != 0 ? .failed : verification
         }

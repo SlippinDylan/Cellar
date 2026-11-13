@@ -120,12 +120,13 @@ extension AppModel {
             finishActivity(
                 activityID,
                 title: plan.activityTitle,
-                outcome: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded,
+                outcome: operation.batchItemStatus == .succeeded && postflightError == nil ? .succeeded
+                    : operation.batchItemStatus == .failed ? .failed : .partiallySucceeded,
                 detail: result.activityDetail
             )
             let itemStatus = operation.batchItemStatus.activityStatus
             let status = itemStatus == .succeeded && postflightError != nil ? ActivityStatus.partiallySucceeded : itemStatus
-            recordNodeSummary(plan, id: activityID, status: status, reason: postflightError != nil ? .stateUnavailable : operation.activityReason)
+            recordNodeSummary(plan, id: activityID, status: status, reason: postflightError != nil ? .stateUnavailable : operation.activityReason, cleanupItems: operation.cleanupItems)
             return result
         } catch {
             nodeOperationError = failureMessage(error)
@@ -197,7 +198,7 @@ extension AppModel {
         return .init(operation: operation, scope: scope, targets: names, stage: .executing)
     }
 
-    private func recordNodeSummary(_ plan: NodeActionPlan, id: UUID, status: ActivityStatus, reason: ActivityItemReason? = nil) {
+    private func recordNodeSummary(_ plan: NodeActionPlan, id: UUID, status: ActivityStatus, reason: ActivityItemReason? = nil, cleanupItems: [NodeCleanupItem]? = nil) {
         guard let current = operationStore.currentOperation else { preconditionFailure("Node execution owns a registered operation") }
         let context = current.context
         let scope: ActivityScope?
@@ -209,7 +210,7 @@ extension AppModel {
         activityStore?.append(ActivitySummary(id: id, operation: context.operation, scope: scope,
                                              targetDisplayNames: names, date: Date(), status: status,
                                              itemOutcomes: names.map { .init(displayName: $0, status: status.itemStatus, reason: reason ?? status.itemReason) },
-                                             reason: reason ?? status.itemReason))
+                                             cleanupItems: cleanupItems, reason: reason ?? status.itemReason))
     }
 }
 

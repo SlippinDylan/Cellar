@@ -1,6 +1,422 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+  "The item changed. Review it again before retrying." : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "The item changed. Review it again before retrying."
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "项目已变化，请重新检查后再试。"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "項目已變更，請重新檢查後再試。"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "項目が変更されました。確認してから再試行してください。"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "항목이 변경되었습니다. 다시 확인한 후 재시도하세요."
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Das Objekt wurde geändert. Prüfe es vor einem erneuten Versuch."
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "L’élément a changé. Vérifiez-le avant de réessayer."
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "El elemento cambió. Revísalo antes de reintentar."
+        }
+      }
+    }
+  },
+  "Some contents may have been removed. Review the remaining files before retrying." : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Some contents may have been removed. Review the remaining files before retrying."
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "部分内容可能已移除，请检查剩余文件后再试。"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "部分內容可能已移除，請檢查剩餘檔案後再試。"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "一部の内容が削除された可能性があります。残りのファイルを確認してから再試行してください。"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "일부 내용이 제거되었을 수 있습니다. 남은 파일을 확인한 후 재시도하세요."
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Einige Inhalte wurden möglicherweise entfernt. Prüfe die übrigen Dateien vor einem erneuten Versuch."
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Certains contenus ont peut-être été supprimés. Vérifiez les fichiers restants avant de réessayer."
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Puede haberse eliminado parte del contenido. Revisa los archivos restantes antes de reintentar."
+        }
+      }
+    }
+  },
+  "Retained" : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Retained"
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "已保留"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "已保留"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "保持"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "유지됨"
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Beibehalten"
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Conservé"
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Conservado"
+        }
+      }
+    }
+  },
+  "Removal failed. Check access and review the item before retrying." : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Removal failed. Check access and review the item before retrying."
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "移除失败，请检查访问权限和项目后再试。"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "移除失敗，請檢查存取權限和項目後再試。"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "削除に失敗しました。アクセス権と項目を確認してから再試行してください。"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "제거에 실패했습니다. 접근 권한과 항목을 확인한 후 재시도하세요."
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Entfernen fehlgeschlagen. Prüfe Zugriff und Objekt vor einem erneuten Versuch."
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "La suppression a échoué. Vérifiez l’accès et l’élément avant de réessayer."
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Falló la eliminación. Comprueba el acceso y el elemento antes de reintentar."
+        }
+      }
+    }
+  },
+  "Removal Unverified" : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Removal Unverified"
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "移除结果未确认"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "移除結果未確認"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "削除を確認できません"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "제거 확인 안 됨"
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Entfernung unbestätigt"
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Suppression non vérifiée"
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Eliminación sin verificar"
+        }
+      }
+    }
+  },
+  "Not Started" : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Not Started"
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "未开始"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "未開始"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "未開始"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "시작되지 않음"
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Nicht gestartet"
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Non commencé"
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Sin iniciar"
+        }
+      }
+    }
+  },
+  "Cache cleared, but verification failed." : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Cache cleared, but verification failed."
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "缓存已清理，但校验失败。"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "快取已清理，但驗證失敗。"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "キャッシュを消去しましたが、検証に失敗しました。"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "캐시를 비웠지만 검증에 실패했습니다."
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Cache geleert, aber Überprüfung fehlgeschlagen."
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Le cache a été vidé, mais la vérification a échoué."
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Se vació la caché, pero falló la verificación."
+        }
+      }
+    }
+  },
+  "An earlier item failed. Review the remaining items before retrying." : {
+    "localizations" : {
+      "en" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "An earlier item failed. Review the remaining items before retrying."
+        }
+      },
+      "zh-Hans" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "前一项目处理失败，请检查剩余项目后再试。"
+        }
+      },
+      "zh-Hant" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "前一項目處理失敗，請檢查剩餘項目後再試。"
+        }
+      },
+      "ja" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "前の項目で失敗しました。残りの項目を確認してから再試行してください。"
+        }
+      },
+      "ko" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "이전 항목이 실패했습니다. 남은 항목을 확인한 후 재시도하세요."
+        }
+      },
+      "de" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Ein vorheriges Objekt ist fehlgeschlagen. Prüfe die übrigen Objekte vor einem erneuten Versuch."
+        }
+      },
+      "fr" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Un élément précédent a échoué. Vérifiez les éléments restants avant de réessayer."
+        }
+      },
+      "es" : {
+        "stringUnit" : {
+          "state" : "translated",
+          "value" : "Falló un elemento anterior. Revisa los elementos restantes antes de reintentar."
+        }
+      }
+    }
+  },
     "日本語": {
       "localizations": {
         "en": {

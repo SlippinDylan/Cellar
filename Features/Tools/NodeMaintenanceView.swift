@@ -87,6 +87,11 @@ struct NodeMaintenanceView: View {
                     Image(systemName: status.systemImage)
                 }
             }
+            if let items = result.operation.cleanupItems {
+                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                    NodeCleanupItemView(item: item)
+                }
+            }
             if let snapshot = result.snapshot {
                 LabeledContent("Node Version", value: snapshot.summary.nodeVersion)
             }
@@ -98,5 +103,44 @@ struct NodeMaintenanceView: View {
         }
         .font(.callout)
         .foregroundStyle(.secondary)
+    }
+}
+
+struct NodeCleanupItemView: View {
+    let item: NodeCleanupItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(verbatim: item.path)
+                Spacer()
+                Text(title)
+            }
+            if let recovery { Text(recovery).foregroundStyle(.secondary) }
+        }
+        .textSelection(.enabled)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var title: LocalizedStringResource {
+        switch item.status {
+        case .removed: LocalizedStringResource("Removed")
+        case .retained: LocalizedStringResource("Retained")
+        case .failed: LocalizedStringResource("Failed")
+        case .notAttempted: LocalizedStringResource("Not Started")
+        case .unknown: LocalizedStringResource("Removal Unverified")
+        case .partial: LocalizedStringResource("Partially Completed")
+        }
+    }
+
+    private var recovery: LocalizedStringResource? {
+        switch item.reason {
+        case .removed, .cacheCleaned: nil
+        case .stateChanged: LocalizedStringResource("The item changed. Review it again before retrying.")
+        case .deletionIncomplete, .cleanupFailed: LocalizedStringResource("Some contents may have been removed. Review the remaining files before retrying.")
+        case .cacheCleanedVerificationFailed: LocalizedStringResource("Cache cleared, but verification failed.")
+        case .previousFailure: LocalizedStringResource("An earlier item failed. Review the remaining items before retrying.")
+        case .deletionFailed: LocalizedStringResource("Removal failed. Check access and review the item before retrying.")
+        }
     }
 }

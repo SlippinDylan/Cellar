@@ -331,6 +331,22 @@ actor NodeManagerClient {
         if plan.request.action == .writeProjectNVMRC {
             environment["NODE_MANAGER_ALLOW_PROJECT_WRITE"] = "1"
         }
+        if plan.request.action == .cleanup, ["npm-cache-clean", "node-gyp-cache", "orphan-bins", "nvm-old-versions"].contains(plan.request.subject) {
+            let result = try await runManager("execute", arguments: try executeArguments(for: plan),
+                                              managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
+            let envelope: ManagerEnvelope<NodeOperationResult> = try decodeEnvelope(result)
+            guard envelope.command == "execute", envelope.ok || envelope.data == nil else {
+                throw BridgeError.invalidOutput("Cleanup response has an invalid envelope")
+            }
+            if !envelope.ok, result.terminationStatus != 0,
+               let error = envelope.error, error.code == "cleanup-incomplete", let operation = error.cleanupOperation {
+                try validateCleanupEvidence(operation, plan: plan, failed: true)
+                return operation
+            }
+            let operation: NodeOperationResult = try requireSuccess(envelope, result: result)
+            if operation.cleanupItems != nil { try validateCleanupEvidence(operation, plan: plan, failed: false) }
+            return operation
+        }
         return try await request(
             "execute",
             arguments: try executeArguments(for: plan),
@@ -592,36 +608,72 @@ actor NodeManagerClient {
         environment: [String: String],
         timeout: Duration? = .seconds(300)
     ) async throws -> Payload {
+        let result = try await runManager(command, arguments: arguments, managerDirectory: managerDirectory,
+                                          environment: environment, timeout: timeout)
+        return try requireSuccess(decodeEnvelope(result), result: result)
+    }
+
+    private func runManager(_ command: String, arguments: [String], managerDirectory: URL,
+                            environment: [String: String], timeout: Duration?) async throws -> ProcessResult {
         let mainScript = managerDirectory.appending(path: "main.sh")
         guard FileManager.default.isReadableFile(atPath: mainScript.path) else {
             throw BridgeError.executableNotFound(mainScript.path)
         }
 
-        let result = try await runner.run(ProcessRequest(
+        return try await runner.run(ProcessRequest(
             executableURL: URL(filePath: "/bin/bash"),
             arguments: [mainScript.path, "--json", command] + arguments,
             environment: environment,
             currentDirectoryURL: managerDirectory,
             timeout: timeout
         ))
-        let decoder = JSONDecoder()
+    }
+
+    private func decodeEnvelope<Payload>(_ result: ProcessResult) throws -> ManagerEnvelope<Payload> {
+        guard !result.standardOutputWasTruncated, !result.standardErrorWasTruncated else {
+            throw BridgeError.invalidOutput("Node Manager output was truncated")
+        }
         let envelope: ManagerEnvelope<Payload>
-        do {
-            envelope = try decoder.decode(ManagerEnvelope<Payload>.self, from: result.standardOutput)
-        } catch {
+        do { envelope = try JSONDecoder().decode(ManagerEnvelope<Payload>.self, from: result.standardOutput) }
+        catch {
             let diagnostic = result.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
             throw BridgeError.invalidOutput(diagnostic.isEmpty ? error.localizedDescription : diagnostic)
         }
+        guard envelope.schemaVersion == 1 else { throw BridgeError.unsupportedSchema(envelope.schemaVersion) }
+        return envelope
+    }
 
-        guard envelope.schemaVersion == 1 else {
-            throw BridgeError.unsupportedSchema(envelope.schemaVersion)
-        }
+    private func requireSuccess<Payload>(_ envelope: ManagerEnvelope<Payload>, result: ProcessResult) throws -> Payload {
         guard result.terminationStatus == 0, envelope.ok, let payload = envelope.data else {
             let managerError = envelope.error
             let detail = managerError?.message ?? managerError?.stderr ?? result.errorText.nilIfBlank
             throw BridgeError.managerFailure(code: managerError?.code ?? "exit-\(result.terminationStatus)", detail: detail)
         }
         return payload
+    }
+
+    private func validateCleanupEvidence(_ operation: NodeOperationResult, plan: NodeActionPlan, failed: Bool) throws {
+        guard operation.action == NodeAction.cleanup.rawValue, operation.subject == plan.request.subject,
+              !operation.operationId.isEmpty, operation.exitCode >= 0,
+              let items = operation.cleanupItems, items.count <= 1000, items.allSatisfy(\.hasValidEvidence),
+              Set(items.map(\.path)).count == items.count,
+              items.map(\.path) == plan.payload.paths,
+              failed ? operation.exitCode != 0 && !items.isEmpty && items.contains(where: { $0.status != .removed })
+                     : operation.exitCode == 0 && operation.status == "ok" && items.allSatisfy({ $0.status == .removed })
+        else { throw BridgeError.invalidOutput("Cleanup result does not match the confirmed operation") }
+        var stopped = false
+        for item in items {
+            guard stopped ? item.status == .notAttempted : item.status != .notAttempted else {
+                throw BridgeError.invalidOutput("Cleanup result has inconsistent attempt order")
+            }
+            if item.status != .removed { stopped = true }
+        }
+        let expected: String
+        if !failed { expected = "ok" }
+        else if items.contains(where: { $0.status == .removed || $0.status == .partial }) { expected = "partial" }
+        else if items.contains(where: { $0.status == .unknown }) { expected = "unknown" }
+        else { expected = "failed" }
+        guard operation.status == expected else { throw BridgeError.invalidOutput("Cleanup result has inconsistent completion evidence") }
     }
 
     private func planArguments(for request: NodeActionRequest) -> [String] {

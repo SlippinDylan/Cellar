@@ -218,6 +218,9 @@ render_operation_result_json() {
     fi
 
     printf '{'
+    if [ "$status" = "failed" ]; then
+        printf '"code":"operation-failed",'
+    fi
     printf '"operationId":"%s",' "$(json_escape "$operation_id")"
     printf '"action":"%s",' "$(json_escape "$action")"
     printf '"subject":"%s",' "$(json_escape "$subject")"

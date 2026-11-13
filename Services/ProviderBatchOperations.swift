@@ -25,6 +25,15 @@ struct ProviderBatchOperations: BatchOperationProviding {
         try await service.executeHomebrew(plan, caskRemovalProgress: caskRemovalProgress)
     }
 
+    func renewHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionPlan? {
+        try await service.renewHomebrewBatchPlan(plan)
+    }
+
+    func renewNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeActionPlan? {
+        let managers = try await service.installManagers()
+        return try await service.renewNPMBatchPlan(plan, environment: environment, snapshot: managers)
+    }
+
     func refreshHomebrew() async throws -> HomebrewStatus {
         let managers = try await service.installManagers()
         return try await service.loadHomebrew(snapshot: managers)

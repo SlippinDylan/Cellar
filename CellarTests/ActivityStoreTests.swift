@@ -3,6 +3,29 @@ import XCTest
 
 @MainActor
 final class ActivityStoreTests: XCTestCase {
+    func testSkippedStatusReachesSessionFeedbackAndInfoFileLog() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let suite = "CellarSkippedLog-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let logger = FileLogStore(directory: root, defaults: defaults)
+        let store = ActivityStore(logStore: logger)
+        let result = ActivitySummary(id: UUID(), operation: .install, scope: .homebrew(.formula), targetDisplayNames: ["one"],
+            date: Date(), status: .succeeded, itemOutcomes: [.init(displayName: "one", status: .skipped, reason: .alreadySatisfied)])
+        try store.record(result)
+        await logger.flush()
+        XCTAssertEqual(store.latestResult?.itemOutcomes.first?.status, .skipped)
+        let files = try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil).filter { $0.pathExtension == "log" }
+        let text = try files.map { try String(contentsOf: $0, encoding: .utf8) }.joined()
+        XCTAssertTrue(text.contains("target=one status=skipped reason=alreadySatisfied"))
+        XCTAssertTrue(text.contains("INFO"))
+        let english = ActivityRenderer(locale: Locale(identifier: "en")).detail(result)
+        let chinese = ActivityRenderer(locale: Locale(identifier: "zh-Hans")).detail(result)
+        XCTAssertTrue(english.contains("Skipped"))
+        XCTAssertNotEqual(english, chinese)
+    }
+
     func testResultsAreSessionOnlyAndLegacyHistoryRemainsUntouched() throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }

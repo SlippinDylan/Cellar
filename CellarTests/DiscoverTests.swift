@@ -229,13 +229,15 @@ final class DiscoverTests: XCTestCase {
         let plannedBefore = await provider.preparedNames()
         XCTAssertEqual(plannedBefore, ["one", "two"])
         XCTAssertNotNil(model.batchCoordinator.preparedPlan)
+        XCTAssertEqual(installation.preview?.plan.npmBindings.map(\.targetVersion), ["2.0.0", "2.0.0"])
         await provider.changeDestination()
         await installation.confirmInstall()
         let plannedAfter = await provider.preparedNames()
         let executed = await provider.executedNames()
-        XCTAssertEqual(plannedAfter, ["one", "two"])
+        XCTAssertEqual(plannedAfter, ["one", "two", "one", "two"])
         XCTAssertTrue(executed.isEmpty)
         XCTAssertEqual(installation.result?.outcome.itemOutcomes.map(\.status), [.failed, .failed])
+        XCTAssertEqual(installation.result?.outcome.itemOutcomes.map(\.reason), [.stateChanged, .stateChanged])
     }
 
     func testLaterItemCannotAdoptDestinationChangedByEarlierItemAfterConfirmation() async {
@@ -244,12 +246,16 @@ final class DiscoverTests: XCTestCase {
         let installation = DiscoverInstallationModel(model: model)
         await installation.preview("one\ntwo", scope: .npm)
         XCTAssertEqual(installation.preview?.plan.npmBindings.map(\.destination.globalRoot), ["/fake", "/fake"])
+        XCTAssertEqual(installation.preview?.plan.npmBindings.map(\.targetVersion), ["2.0.0", "2.0.0"])
         await installation.confirmInstall()
         XCTAssertEqual(installation.result?.outcome.itemOutcomes.map(\.status), [.succeeded, .failed])
         let planned = await provider.preparedNames()
         let executed = await provider.executedNames()
-        XCTAssertEqual(planned, ["one", "two"])
+        XCTAssertEqual(planned, ["one", "two", "one", "two"])
         XCTAssertEqual(executed, ["one"])
+        let specs = await provider.executedSpecs()
+        XCTAssertEqual(specs, ["one@2.0.0"])
+        XCTAssertEqual(installation.result?.outcome.itemOutcomes.last?.reason, .stateChanged)
     }
 
     func testPreviewShowsScopedRegistryAndKnownUnavailableItemsAndRejectsMixedSources() async {
@@ -348,7 +354,9 @@ final class DiscoverTests: XCTestCase {
             XCTAssertNil(installation.error, "A duplicate must not publish an error for the active attempt")
             XCTAssertNil(installation.result)
             let names = await provider.preparedNames()
-            XCTAssertEqual(names, ["one"])
+            XCTAssertEqual(names, pauseDuringPreparation ? ["one"] : ["one", "one"])
+            let specs = await provider.executedSpecs()
+            XCTAssertEqual(specs, pauseDuringPreparation ? [] : ["one@2.0.0"])
             attempt.cancel()
             await attempt.value
             XCTAssertFalse(model.isBusy)

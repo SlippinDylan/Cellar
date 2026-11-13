@@ -2,6 +2,107 @@ import XCTest
 @testable import Cellar
 
 final class NodePackageEnvironmentTests: XCTestCase {
+    @MainActor
+    func testActualProviderRunsNPMSelfLastAndReconcilesChangedNPMVersion() async throws {
+        for selfSpec in ["npm", "npm@11.0.0"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let coordinator = BatchOperationCoordinator(provider: try fixture.batchProvider(), operationStore: OperationStore())
+            let operation: BatchOperation = selfSpec == "npm" ? .update : .install
+            let intent = try XCTUnwrap(BatchIntent(operation: operation, items: [selfSpec, "one", "two"].map { .npm(.init(name: $0, environment: fixture.context)) }))
+            let confirmed = try await coordinator.prepare(intent)
+            XCTAssertEqual(confirmed.intent.items.map(\.displayIdentifier), ["one", "two", selfSpec])
+            let result = try await coordinator.execute(confirmed)
+            XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .succeeded, .succeeded])
+            XCTAssertEqual(result.outcome.itemOutcomes.map(\.item), confirmed.intent.items)
+            XCTAssertEqual(result.refreshStatus, .succeeded)
+            guard case .npm(let snapshot) = result.refreshedState else { return XCTFail("Expected final npm snapshot") }
+            XCTAssertEqual(snapshot.summary.npmVersion, "11.0.0")
+            let calls = try String(contentsOf: fixture.log, encoding: .utf8).split(separator: "\n")
+            let selfPlans = calls.filter { $0.hasPrefix("plan|") && $0.contains(" npm") }
+            XCTAssertEqual(selfPlans.count, 3)
+            XCTAssertTrue(selfPlans.allSatisfy { $0.hasSuffix("\(operation.nodeAction.rawValue) \(selfSpec)") })
+            let writes = calls.filter { $0.hasPrefix("execute|") }
+            XCTAssertEqual(writes.count, 3)
+            XCTAssertTrue(writes[0].hasSuffix("install one@3.0.0"))
+            XCTAssertTrue(writes[1].hasSuffix("install two@3.0.0"))
+            XCTAssertTrue(writes[2].hasSuffix("install npm@11.0.0"))
+        }
+    }
+
+    @MainActor
+    func testNPMSelfFailureKeepsEarlierWritesAndFinalReconciliation() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        try Data().write(to: fixture.root.appending(path: "npm-self-fails"))
+        let coordinator = BatchOperationCoordinator(provider: try fixture.batchProvider(), operationStore: OperationStore())
+        let intent = try XCTUnwrap(BatchIntent(operation: .update, items: ["npm", "one"].map { .npm(.init(name: $0, environment: fixture.context)) }))
+        let result = try await coordinator.execute(coordinator.prepare(intent))
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .failed])
+        XCTAssertEqual(result.outcome.status, .partiallySucceeded)
+        XCTAssertEqual(result.refreshStatus, .succeeded)
+    }
+
+    func testProviderRenewsAgedInstallAndUpdateWithExactBindings() async throws {
+        for operation: BatchOperation in [.install, .update] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let provider = try fixture.batchProvider()
+            let original = try await provider.planNPM(.init(name: "example", environment: fixture.context), operation: operation)
+            let aged = NodeActionPlan(id: original.id, request: original.request, payload: original.payload,
+                generatedAt: Date().addingTimeInterval(-601), confirmedPackageDestination: original.confirmedPackageDestination,
+                confirmedInstallRegistry: original.confirmedInstallRegistry)
+            let renewed = try await provider.renewNPM(aged, environment: fixture.context)
+            let fresh = try XCTUnwrap(renewed)
+            XCTAssertLessThan(Date().timeIntervalSince(fresh.generatedAt), 300)
+            XCTAssertEqual(fresh.confirmedPackageDestination, aged.confirmedPackageDestination)
+            let result = try await provider.executeNPM(fresh, environment: fixture.context)
+            XCTAssertEqual(result.batchItemStatus, .succeeded)
+            XCTAssertTrue(try String(contentsOf: fixture.log, encoding: .utf8).contains("install example@3.0.0"))
+        }
+    }
+
+    func testBatchRenewalRefusesChangedTargetRegistryDestinationAndEnvironment() async throws {
+        for marker in ["target-version-changed", "scope-registry-changed", "global-prefix-changed", "global-root-changed", "npm-changed", "other-npm-entry", "package-version-changed"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let provider = try fixture.batchProvider()
+            let confirmed = try await provider.planNPM(.init(name: "@scope/example", environment: fixture.context), operation: .update)
+            try Data().write(to: fixture.root.appending(path: marker))
+            do { _ = try await provider.renewNPM(confirmed, environment: fixture.context); XCTFail("Changed binding: \(marker)") }
+            catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
+            XCTAssertFalse(try String(contentsOf: fixture.log, encoding: .utf8).contains("execute|"))
+        }
+    }
+
+    func testBatchRenewalRefusesUnknownConfirmedIdentityOrVersion() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let original = try await fixture.client.planPackage(.init(name: "example", environment: fixture.context), action: .installPackage, managerDirectory: fixture.root)
+        for payloadJSON in [
+            #"{"action":"install","packageName":"other","installedVersion":"3.0.0","targetVersion":"3.0.0"}"#,
+            #"{"action":"install","packageName":"example","installedVersion":"git","targetVersion":"git"}"#
+        ] {
+            let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(payloadJSON.utf8))
+            let invalid = NodeActionPlan(id: UUID(), request: original.request, payload: payload, generatedAt: original.generatedAt,
+                confirmedPackageDestination: original.confirmedPackageDestination, confirmedInstallRegistry: original.confirmedInstallRegistry)
+            do { _ = try await fixture.client.renewBatchPackagePlan(invalid, environment: fixture.context, managerDirectory: fixture.root); XCTFail("Unknown confirmation must not skip or write") }
+            catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
+        }
+        XCTAssertFalse(try String(contentsOf: fixture.log, encoding: .utf8).contains("execute|"))
+    }
+
+    func testBatchRenewalSkipsOnlyExactInstalledTarget() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let provider = try fixture.batchProvider()
+        let confirmed = try await provider.planNPM(.init(name: "example", environment: fixture.context), operation: .update)
+        try Data().write(to: fixture.root.appending(path: "target-already-installed"))
+        let renewed = try await provider.renewNPM(confirmed, environment: fixture.context)
+        XCTAssertNil(renewed)
+        XCTAssertFalse(try String(contentsOf: fixture.log, encoding: .utf8).contains("execute|"))
+    }
+
     func testOrdinaryInstallPinsConfirmedVersionWhenLatestOrCustomTagMoves() async throws {
         for name in ["example", "example@next", "@scope/example", "@scope/example@next"] {
             let fixture = try PackageManagerFixture()
@@ -525,6 +626,7 @@ private struct PackageManagerFixture {
         if [ "$2" = summary ]; then
           npm_version=10.0.0
           [ ! -e '\#(root.path)/npm-changed' ] || npm_version=11.0.0
+          [ ! -e '\#(root.path)/npm-self-updated' ] || npm_version=11.0.0
           npm_path='\#(selectedBin.path)/npm'
           if [ ! -e "$npm_path" ] || [ -e '\#(root.path)/other-npm-entry' ]; then
             npm_path='\#(root.path)/.nvm/versions/node/v20.0.0/bin/npm'
@@ -553,15 +655,24 @@ private struct PackageManagerFixture {
           fi
           installed_version=1.0.0
           [ ! -e '\#(root.path)/package-version-changed' ] || installed_version=2.0.0
+          [ ! -e '\#(root.path)/target-already-installed' ] || installed_version=3.0.0
           target_version=3.0.0
           [ ! -e '\#(root.path)/target-version-changed' ] || target_version=4.0.0
           [ ! -e '\#(root.path)/target-ahead' ] || target_version=0.5.0
           [ ! -e '\#(root.path)/target-current' ] || target_version=1.0.0
           [ ! -e '\#(root.path)/target-unknown' ] || target_version=git
           package_name="$4"
-          case "$4" in *@next|*@latest) package_name="${4%@*}" ;; esac
+          case "$4" in *@next|*@latest|*@[0-9]*) package_name="${4%@*}" ;; esac
+          if [ "$package_name" = npm ]; then target_version=11.0.0; installed_version=10.0.0; fi
           printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","targetVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$package_name" "$installed_version" "$target_version"
         elif [ "$2" = execute ]; then
+          if [ "$4" = npm@11.0.0 ]; then
+            if [ -e '\#(root.path)/npm-self-fails' ]; then
+              printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fake","action":"install","subject":"npm","exitCode":1,"status":"failed","logFile":"/fake/log"}}'
+              exit 0
+            fi
+            /usr/bin/touch '\#(root.path)/npm-self-updated'
+          fi
           if [ "$4" = one ] || [ "$4" = one@3.0.0 ]; then
             [ ! -e '\#(root.path)/change-root-after-first' ] || /usr/bin/touch '\#(root.path)/global-root-changed'
           fi
@@ -583,6 +694,10 @@ private struct PackageManagerFixture {
           package_name=$(/bin/cat '\#(root.path)/written-name')
           written_version=$(/bin/cat '\#(root.path)/written-version')
           printf '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{"%s":{"version":"%s"}}}}\n' "$package_name" "$written_version"
+        elif [ "$2" = config ]; then
+          printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"config","data":{"registry":"https://registry.npmjs.org","cache":"/fake/cache","prefix":"/fake","userRegistry":"","projectRegistry":"","globalRegistry":""}}'
+        elif [ "$2" = outdated ]; then
+          printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"outdated","data":{}}'
         else
           exit 2
         fi
@@ -615,6 +730,10 @@ private struct PackageManagerFixture {
 private struct NodeFixtureBatchProvider: BatchOperationProviding {
     enum Unsupported: Error { case operation }
     let fixture: PackageManagerFixture
+    func renewHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionPlan? { throw Unsupported.operation }
+    func renewNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeActionPlan? {
+        try await fixture.client.renewBatchPackagePlan(plan, environment: environment, managerDirectory: fixture.root)
+    }
     func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan {
         try await fixture.client.planPackage(identity, action: operation.nodeAction, managerDirectory: fixture.root)
     }

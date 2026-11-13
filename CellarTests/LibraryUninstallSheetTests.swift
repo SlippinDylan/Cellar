@@ -197,6 +197,9 @@ private actor SheetCaskProvider: BatchOperationProviding {
 
     func finishPlanning() { continuation.yield(); continuation.finish() }
 
+    func renewHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionPlan? { try await base.renewHomebrew(plan) }
+    func renewNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeActionPlan? { try await base.renewNPM(plan, environment: environment) }
+
     func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan {
         started()
         for await _ in gate { break }

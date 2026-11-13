@@ -226,7 +226,12 @@ actor HomebrewClient {
         guard returned.count == 1, let package = returned.first else {
             throw HomebrewClientError.invalidJSON(arguments: result.arguments, detail: "未返回软件包信息")
         }
-        if validatedIdentity.name.contains("/"), package.identity.name != validatedIdentity.name {
+        let components = validatedIdentity.name.split(separator: "/").map(String.init)
+        guard let requestedName = components.last else { throw HomebrewClientError.stateChanged }
+        let canonicalName = package.identity.name.split(separator: "/").last.map(String.init)
+        let sourceMatches = components.count == 1 || components.dropLast().joined(separator: "/") == package.tap
+        let nameMatches = requestedName == canonicalName || package.aliases.contains(requestedName) || package.oldTokens.contains(requestedName)
+        if !sourceMatches || !nameMatches {
             throw HomebrewClientError.invalidJSON(arguments: result.arguments, detail: "软件包身份与请求不匹配")
         }
         return package
@@ -306,7 +311,8 @@ actor HomebrewClient {
         return plan(
             action: .install,
             targets: packages.map(\.identity),
-            stateFingerprint: packagesFingerprint(packages)
+            stateFingerprint: packagesFingerprint(packages),
+            confirmedTargets: try await confirmedTargets(packages)
         )
     }
 
@@ -320,22 +326,29 @@ actor HomebrewClient {
         guard Set(validatedTargets.map(\.kind)).count == 1 else {
             throw HomebrewClientError.invalidPlan("单次升级不能混合 Formula 与 Cask")
         }
+        let targetPackages = try await loadTargetPackages(validatedTargets)
+        let canonicalTargets = targetPackages.map(\.identity)
+        guard Set(canonicalTargets).count == canonicalTargets.count else { throw HomebrewClientError.stateChanged }
         let snapshot = try await loadSnapshot()
         guard snapshot.sectionErrors[.outdated] == nil else {
             throw HomebrewClientError.invalidPlan("无法确认当前可升级项目")
         }
         let outdated = Set(snapshot.outdatedPackages.map(\.identity))
-        guard validatedTargets.allSatisfy(outdated.contains) else {
+        guard canonicalTargets.allSatisfy(outdated.contains) else {
             throw HomebrewClientError.stateChanged
         }
-        let packages = snapshot.outdatedPackages.filter { validatedTargets.contains($0.identity) }
+        let packages = snapshot.outdatedPackages.filter { canonicalTargets.contains($0.identity) }
         guard packages.allSatisfy({ !$0.installedVersions.isEmpty && $0.currentVersion?.isEmpty == false }) else {
             throw HomebrewClientError.invalidPlan("无法确认升级目标的可用版本")
         }
+        let confirmed = try await confirmedTargets(targetPackages)
+        guard confirmed.allSatisfy({ target in packages.contains { $0.identity == target.identity && $0.currentVersion == target.version } })
+        else { throw HomebrewClientError.stateChanged }
         return plan(
             action: .upgrade,
-            targets: validatedTargets,
-            stateFingerprint: upgradeFingerprint(packages)
+            targets: canonicalTargets,
+            stateFingerprint: upgradeFingerprint(packages),
+            confirmedTargets: confirmed
         )
     }
 
@@ -614,7 +627,8 @@ actor HomebrewClient {
         residualPaths: [HomebrewResidualPath] = [],
         associatedPackages: [HomebrewPackageIdentity] = [],
         stateFingerprint: String? = nil,
-        caskRemoval: CaskRemovalPlan? = nil
+        caskRemoval: CaskRemovalPlan? = nil,
+        confirmedTargets: [HomebrewConfirmedTarget] = []
     ) -> HomebrewActionPlan {
         HomebrewActionPlan(
             id: UUID(),
@@ -628,6 +642,7 @@ actor HomebrewClient {
             associatedPackages: associatedPackages,
             generatedAt: Date(),
             stateFingerprint: stateFingerprint,
+            confirmedTargets: confirmedTargets,
             caskRemoval: caskRemoval
         )
     }
@@ -698,7 +713,40 @@ actor HomebrewClient {
         return failures
     }
 
+    private func loadTargetPackages(_ targets: [HomebrewPackageIdentity]) async throws -> [HomebrewPackage] {
+        var packages: [HomebrewPackage] = []
+        for target in targets { packages.append(try await loadPackage(target)) }
+        return packages
+    }
+
+    private func confirmedTargets(_ packages: [HomebrewPackage]) async throws -> [HomebrewConfirmedTarget] {
+        let configuration = try await loadConfiguration()
+        return try packages.map { package in
+            guard let source = package.tap, !source.isEmpty, let version = package.currentVersion, !version.isEmpty,
+                  configuration.prefix.hasPrefix("/") else { throw HomebrewClientError.stateChanged }
+            return .init(identity: package.identity, source: source, version: version, prefix: configuration.prefix)
+        }
+    }
+
+    func renewBatchPlan(_ confirmed: HomebrewActionPlan) async throws -> HomebrewActionPlan? {
+        guard confirmed.action == .install || confirmed.action == .upgrade,
+              confirmed.confirmedTargets.count == confirmed.targets.count else { throw HomebrewClientError.stateChanged }
+        let packages = try await loadTargetPackages(confirmed.targets)
+        guard try await confirmedTargets(packages) == confirmed.confirmedTargets else { throw HomebrewClientError.stateChanged }
+        if zip(packages, confirmed.confirmedTargets).allSatisfy({ $0.installedVersions.contains($1.version) }) { return nil }
+        if confirmed.action == .install, packages.contains(where: \.isInstalled) { throw HomebrewClientError.stateChanged }
+        let current = try await (confirmed.action == .install ? planInstall(confirmed.targets) : planUpgrade(confirmed.targets))
+        guard current.confirmedTargets == confirmed.confirmedTargets,
+              current.stateFingerprint == confirmed.stateFingerprint else { throw HomebrewClientError.stateChanged }
+        return current
+    }
+
     private func validateFreshness(of plan: HomebrewActionPlan) async throws {
+        if plan.action == .install || plan.action == .upgrade {
+            guard plan.confirmedTargets.count == plan.targets.count else { throw HomebrewClientError.stateChanged }
+            let packages = try await loadTargetPackages(plan.targets)
+            guard try await confirmedTargets(packages) == plan.confirmedTargets else { throw HomebrewClientError.stateChanged }
+        }
         switch plan.action {
         case .install:
             guard !plan.targets.isEmpty else {

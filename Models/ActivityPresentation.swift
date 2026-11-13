@@ -122,6 +122,7 @@ extension ActivityStatus {
 extension BatchItemStatus {
     var activityTitle: LocalizedStringResource {
         switch self {
+        case .skipped: LocalizedStringResource("Skipped")
         case .succeeded: LocalizedStringResource("Succeeded")
         case .partiallySucceeded: LocalizedStringResource("Partially Completed")
         case .failed: LocalizedStringResource("Failed")
@@ -131,6 +132,7 @@ extension BatchItemStatus {
     }
     var systemImage: String {
         switch self {
+        case .skipped: "arrow.right.circle"
         case .succeeded: "checkmark.circle"
         case .partiallySucceeded: "exclamationmark.circle"
         case .failed: "xmark.circle"
@@ -210,7 +212,7 @@ extension ActivityItemReason {
         if let error = error as? BatchOperationError {
             switch error {
             case .planUnavailable: self = .stateChanged
-            case .invalidPlan, .protectedNode: self = .preparationFailed
+            case .invalidPlan, .conflictingVersions, .protectedNode: self = .preparationFailed
             case .busy: self = .unavailable
             case .reconciliationUnavailable: self = .stateUnavailable
             }
@@ -231,6 +233,7 @@ extension ActivityItemReason {
         case .providerFailure: LocalizedStringResource("The provider could not complete the task. Refresh to check the result before trying again.")
         case .cancelledByUser: LocalizedStringResource("The task was cancelled. Completed changes are retained. Refresh to check the current state.")
         case .stateUnavailable: LocalizedStringResource("The result could not be verified. Refresh to check the current state before trying again.")
+        case .alreadySatisfied: LocalizedStringResource("The confirmed target version is already installed. No changes were needed.")
         case .alreadyInstalled: LocalizedStringResource("The package is already installed. Refresh Library to check its current version.")
         case .residueDetected: LocalizedStringResource("The package was removed, but some files remain. Review the uninstall results.")
         case .applicationRunning: LocalizedStringResource("The application is still running. Quit it before continuing.")

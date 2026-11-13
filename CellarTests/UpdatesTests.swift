@@ -159,7 +159,7 @@ final class UpdatesTests: XCTestCase {
         let refreshes = await provider.refreshCount()
         XCTAssertEqual(names, ["formula", "cask", "behind"])
         XCTAssertEqual(refreshes, 2)
-        XCTAssertEqual(result.groups.flatMap { $0.outcome.itemOutcomes }.map(\.status), [.partiallySucceeded, .succeeded, .succeeded])
+        XCTAssertEqual(result.groups.flatMap { $0.outcome.itemOutcomes }.map(\.status), [.failed, .succeeded, .succeeded])
         for group in result.groups.prefix(2) {
             guard case .homebrew(let diagnostic) = group.providerResults[0] else { return XCTFail("Expected typed Homebrew update") }
             XCTAssertEqual(diagnostic.plan.action, .upgrade)

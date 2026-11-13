@@ -56,6 +56,9 @@ struct BrewFormulaPayload: Decodable {
         let version: String
     }
 
+    let aliases: [String]?
+    let oldnames: [String]?
+    let revision: Int?
     let name: String
     let fullName: String
     let tap: String?
@@ -69,7 +72,7 @@ struct BrewFormulaPayload: Decodable {
     let disabled: Bool
 
     enum CodingKeys: String, CodingKey {
-        case name
+        case name, aliases, oldnames, revision
         case fullName = "full_name"
         case tap
         case description = "desc"
@@ -89,13 +92,17 @@ struct BrewFormulaPayload: Decodable {
             description: description,
             homepage: homepage,
             installedVersions: installed.map(\.version),
-            currentVersion: versions.stable ?? versions.head,
+            currentVersion: (versions.stable ?? versions.head).map { version in
+                if let revision, revision > 0 { return "\(version)_\(revision)" }
+                return version
+            },
             tap: tap,
             dependencies: dependencies,
             pinned: pinned,
             deprecated: deprecated,
             disabled: disabled,
-            artifacts: []
+            artifacts: [],
+            aliases: (aliases ?? []) + (oldnames ?? [])
         )
     }
 }

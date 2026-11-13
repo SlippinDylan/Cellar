@@ -321,6 +321,7 @@ struct BatchIntent: Equatable, Sendable {
 }
 
 enum BatchItemStatus: String, Codable, CaseIterable, Sendable {
+    case skipped
     case succeeded
     case partiallySucceeded
     case failed
@@ -329,7 +330,7 @@ enum BatchItemStatus: String, Codable, CaseIterable, Sendable {
 
     var activityStatus: ActivityStatus {
         switch self {
-        case .succeeded: .succeeded
+        case .succeeded, .skipped: .succeeded
         case .partiallySucceeded: .partiallySucceeded
         case .failed: .failed
         case .cancelled: .cancelled
@@ -385,6 +386,7 @@ struct BatchOutcome: Equatable, Sendable {
     }
 
     var status: ActivityStatus {
+        let itemOutcomes = itemOutcomes.filter { $0.status != .skipped }
         if itemOutcomes.allSatisfy({ $0.status == .succeeded }) { return .succeeded }
         if itemOutcomes.contains(where: { $0.status == .succeeded || $0.status == .partiallySucceeded }) { return .partiallySucceeded }
         if itemOutcomes.allSatisfy({ $0.status == .cancelled }) { return .cancelled }
@@ -425,6 +427,7 @@ enum ActivityItemReason: String, Codable, CaseIterable, Sendable {
     case permission
     case preparationFailed
     case alreadyInstalled
+    case alreadySatisfied
     case residueDetected
     case applicationRunning
     case authorizationFailed

@@ -482,6 +482,7 @@ extension BatchScope {
 extension BatchItemStatus {
     var libraryTitle: LocalizedStringResource {
         switch self {
+        case .skipped: LocalizedStringResource("Skipped")
         case .succeeded: LocalizedStringResource("Uninstalled")
         case .partiallySucceeded: LocalizedStringResource("Partially Completed")
         case .failed: LocalizedStringResource("Failed")

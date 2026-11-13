@@ -275,6 +275,7 @@ struct NodeOperationResult: Decodable, Sendable {
 
     var activityReason: ActivityItemReason? {
         switch batchItemStatus {
+        case .skipped: .alreadySatisfied
         case .succeeded: nil
         case .cancelled: .cancelledByUser
         case .unknown: detail == "project-changed" ? .stateChanged : .stateUnavailable

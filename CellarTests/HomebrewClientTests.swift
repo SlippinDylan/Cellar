@@ -2,6 +2,156 @@ import XCTest
 @testable import Cellar
 
 final class HomebrewClientTests: XCTestCase {
+    func testFormulaTargetVersionIncludesHomebrewRevision() throws {
+        let json = #"{"name":"demo","full_name":"demo","tap":"homebrew/core","versions":{"stable":"1.2.3"},"revision":2,"installed":[{"version":"1.2.3_2"}],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}"#
+        let package = try JSONDecoder().decode(BrewFormulaPayload.self, from: Data(json.utf8)).model
+        XCTAssertEqual(package.currentVersion, "1.2.3_2")
+        XCTAssertEqual(package.installedVersions, ["1.2.3_2"])
+    }
+
+    @MainActor
+    func testActualHomebrewBatchRenewsAgedPlansCanonicalizesAndSkipsInstalledDependency() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        try Data().write(to: fixture.directoryURL.appending(path: "install-dependency"))
+        let coordinator = BatchOperationCoordinator(provider: HomebrewFixtureBatchProvider(client: fixture.client, agePreparedPlans: true), operationStore: OperationStore())
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: ["new-alias", "homebrew/core/newpkg", "batchpkg"].map { .homebrew(.init(name: $0, kind: .formula)) }))
+        let confirmed = try await coordinator.prepare(intent)
+        XCTAssertEqual(confirmed.intent.items.map(\.displayIdentifier), ["newpkg", "batchpkg"])
+        XCTAssertTrue(confirmed.homebrewImpacts.allSatisfy { Date().timeIntervalSince($0.generatedAt) > 300 })
+        let result = try await coordinator.execute(confirmed)
+        XCTAssertEqual(result.outcome.itemOutcomes.map(\.status), [.succeeded, .skipped])
+        XCTAssertEqual(result.outcome.succeededItemCount, 1)
+        XCTAssertEqual(result.outcome.itemOutcomes[1].reason, .alreadySatisfied)
+        XCTAssertEqual(result.refreshStatus, .succeeded)
+        let writes = try String(contentsOf: fixture.logURL, encoding: .utf8).split(separator: "\n").filter { $0.hasPrefix("install ") }
+        XCTAssertEqual(writes.count, 1)
+        XCTAssertTrue(writes[0].hasPrefix("install --formula newpkg|"))
+    }
+
+    func testInstallAndUpgradeUnknownWhenDestinationObservationFails() async throws {
+        for action: HomebrewAction in [.install, .upgrade] {
+            let fixture = try FakeBrewFixture()
+            defer { fixture.remove() }
+            let plan = try await (action == .install ? fixture.client.planInstall(.init(name: "newpkg", kind: .formula)) : fixture.client.planUpgrade([.init(name: "acme/tools/demo", kind: .formula)]))
+            try Data().write(to: fixture.directoryURL.appending(path: "postflight-configuration-fails"))
+            let result = try await fixture.client.execute(plan)
+            XCTAssertEqual(result.outcome, .stateUnknown)
+            XCTAssertNotNil(result.snapshot?.sectionErrors[.configuration])
+        }
+    }
+
+    func testBatchRenewsAgedConfirmationWithoutExtendingSingleItemExpiry() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        var aged = try await fixture.client.planInstall(.init(name: "newpkg", kind: .formula))
+        aged = HomebrewActionPlan(id: aged.id, action: aged.action, targets: aged.targets, tapName: nil,
+            dependencies: aged.dependencies, dependents: [], artifacts: [], residualPaths: [], associatedPackages: [],
+            generatedAt: Date().addingTimeInterval(-601), stateFingerprint: aged.stateFingerprint, confirmedTargets: aged.confirmedTargets)
+        do { _ = try await fixture.client.execute(aged); XCTFail("Single-item expiry must remain") }
+        catch { guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected expiry") } }
+        let renewed = try await fixture.client.renewBatchPlan(aged)
+        let fresh = try XCTUnwrap(renewed)
+        XCTAssertLessThan(Date().timeIntervalSince(fresh.generatedAt), 300)
+        XCTAssertEqual(fresh.confirmedTargets, aged.confirmedTargets)
+        let result = try await fixture.client.execute(fresh)
+        XCTAssertTrue(result.succeeded)
+    }
+
+    func testUnknownHomebrewSourceOrVersionCannotPrepareAWritableConfirmation() async throws {
+        for field in ["source", "version"] {
+            let fixture = try FakeBrewFixture()
+            defer { fixture.remove() }
+            let source = field == "source" ? "" : "homebrew/core"
+            let version = field == "version" ? "" : "1.0.0"
+            let json = #"{"formulae":[{"name":"newpkg","full_name":"newpkg","tap":"\#(source)","versions":{"stable":"\#(version)"},"installed":[],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}"#
+            try Data(json.utf8).write(to: fixture.directoryURL.appending(path: "new-metadata.json"))
+            do { _ = try await fixture.client.planInstall(.init(name: "newpkg", kind: .formula)); XCTFail("Unknown target material must refuse preparation") }
+            catch { guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected state changed") } }
+            XCTAssertFalse(try String(contentsOf: fixture.logURL, encoding: .utf8).contains("install --formula"))
+        }
+    }
+
+    func testBatchRenewalRejectsVersionSourceAndPrefixDriftWithoutWriting() async throws {
+        for change in ["version", "source", "prefix"] {
+            let fixture = try FakeBrewFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planInstall(.init(name: "newpkg", kind: .formula))
+            if change == "prefix" {
+                try Data().write(to: fixture.directoryURL.appending(path: "prefix-changed"))
+            } else {
+                let version = change == "version" ? "2.0.0" : "1.0.0"
+                let source = change == "source" ? "other/tap" : "homebrew/core"
+                let json = #"{"formulae":[{"name":"newpkg","aliases":["new-alias"],"full_name":"newpkg","tap":"\#(source)","versions":{"stable":"\#(version)"},"installed":[],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}"#
+                try Data(json.utf8).write(to: fixture.directoryURL.appending(path: "new-metadata.json"))
+            }
+            do { _ = try await fixture.client.renewBatchPlan(plan); XCTFail("Drift: \(change)") }
+            catch { guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected state changed: \(error)") } }
+            XCTAssertFalse(try String(contentsOf: fixture.logURL, encoding: .utf8).contains("install --formula"))
+        }
+    }
+
+    func testDependencyInstalledAtConfirmedVersionIsSkippedAndWrongVersionRefused() async throws {
+        for wrongVersion in [false, true] {
+            let fixture = try FakeBrewFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planInstall(.init(name: "batchpkg", kind: .formula))
+            try Data().write(to: fixture.directoryURL.appending(path: "install-dependency"))
+            if wrongVersion { try Data().write(to: fixture.directoryURL.appending(path: "wrong-dependency-version")) }
+            let first = try await fixture.client.planInstall(.init(name: "newpkg", kind: .formula))
+            _ = try await fixture.client.execute(first)
+            if wrongVersion {
+                do { _ = try await fixture.client.renewBatchPlan(plan); XCTFail("A different installed version must not skip") }
+                catch { guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected refusal") } }
+            } else {
+                let renewed = try await fixture.client.renewBatchPlan(plan)
+                XCTAssertNil(renewed)
+            }
+            XCTAssertFalse(try String(contentsOf: fixture.logURL, encoding: .utf8).contains("install --formula batchpkg"))
+        }
+    }
+
+    func testCanonicalMetadataAcceptsAliasesOldTokensAndCorePrefixButRejectsUnrelatedNames() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        for name in ["newpkg", "homebrew/core/newpkg", "new-alias", "homebrew/core/new-alias"] {
+            let package = try await fixture.client.loadPackage(.init(name: name, kind: .formula))
+            XCTAssertEqual(package.identity.name, "newpkg")
+        }
+        let cask = try await fixture.client.loadPackage(.init(name: "old-sample", kind: .cask))
+        XCTAssertEqual(cask.identity.name, "acme/apps/sample")
+        for name in ["unrelated", "other/tap/newpkg"] {
+            do { _ = try await fixture.client.loadPackage(.init(name: name, kind: .formula)); XCTFail("Unrelated response must be refused") }
+            catch { guard case HomebrewClientError.invalidJSON = error else { return XCTFail("Expected identity refusal") } }
+        }
+    }
+
+    func testUpgradeWithoutInstalledTargetIsFailedOrUnknownWhenObservationFails() async throws {
+        for unreadable in [false, true] {
+            let fixture = try FakeBrewFixture()
+            defer { fixture.remove() }
+            let plan = try await fixture.client.planUpgrade([.init(name: "acme/tools/demo", kind: .formula)])
+            try Data().write(to: fixture.directoryURL.appending(path: "upgrade-removes-target"))
+            if unreadable { try Data().write(to: fixture.directoryURL.appending(path: "postflight-packages-fail")) }
+            let result = try await fixture.client.execute(plan)
+            XCTAssertEqual(result.command.terminationStatus, 0)
+            XCTAssertEqual(result.outcome, unreadable ? .stateUnknown : .failed)
+            if !unreadable {
+                XCTAssertFalse(result.snapshot?.packages.contains { $0.identity == plan.targets[0] && $0.isInstalled } == true)
+            }
+        }
+    }
+
+    func testUpgradeRequiresInstalledConfirmedVersionEvenWhenOutdatedIsEmpty() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planUpgrade([.init(name: "acme/tools/demo", kind: .formula)])
+        try Data().write(to: fixture.directoryURL.appending(path: "upgrade-leaves-old-version"))
+        let result = try await fixture.client.execute(plan)
+        XCTAssertEqual(result.outcome, .failed)
+        XCTAssertTrue(result.snapshot?.outdatedPackages.isEmpty == true)
+    }
+
     func testFinalProgressReportsARecreatedPathAsRetained() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
@@ -807,6 +957,8 @@ final class HomebrewClientTests: XCTestCase {
 
         XCTAssertEqual(result.command.terminationStatus, 0)
         XCTAssertEqual(result.outcome, .partial)
+        XCTAssertEqual(result.snapshot?.packages.first { $0.identity.name == "newpkg" }?.installedVersions, ["1.0.0"])
+        XCTAssertFalse(result.snapshot?.packages.contains { $0.identity.name == "batchpkg" && $0.isInstalled } == true)
     }
 
     func testBatchInstallRejectsExecutionWhenAnyTargetChangedAfterPlanning() async throws {
@@ -936,7 +1088,10 @@ struct FakeBrewFixture {
         printf '%s|%s|%s|%s\n' "$*" "${HOMEBREW_NO_AUTO_UPDATE:-}" "${HOMEBREW_NO_AUTOREMOVE:-}" "${HOMEBREW_NO_INSTALL_CLEANUP:-}" >> "$log_path"
 
         case "$*" in
-          "--prefix") [ ! -f "$state_dir/fail-configuration" ] || exit 1 ;;
+          "--prefix")
+            [ ! -f "$state_dir/fail-configuration" ] || exit 1
+            if [ -f "$state_dir/postflight-configuration-fails" ] && { [ -f "$state_dir/new-installed" ] || [ -f "$state_dir/formula-upgraded" ]; }; then exit 1; fi
+            ;;
           "info --json=v2 --installed") [ ! -f "$state_dir/fail-packages" ] || exit 1 ;;
           "tap-info --installed --json=v1") [ ! -f "$state_dir/fail-taps" ] || exit 1 ;;
         esac
@@ -949,7 +1104,7 @@ struct FakeBrewFixture {
             printf '%s\n' 'Homebrew 5.0.0' 'Homebrew/homebrew-core (git revision test)'
             ;;
           "-p") printf '%s\n' '/Library/Developer/CommandLineTools' ;;
-          "--prefix") printf '%s\n' '/opt/homebrew' ;;
+          "--prefix") if [ -f "$state_dir/prefix-changed" ]; then printf '%s\n' /other; else printf '%s\n' /opt/homebrew; fi ;;
           "--repository") printf '%s\n' '/opt/homebrew' ;;
           "--cache") printf '%s\n' "$state_dir/Library/Caches/Homebrew" ;;
           "--cache --cask acme/apps/sample") printf '%s\n' "$state_dir/Library/Caches/Homebrew/downloads/sample.dmg" ;;
@@ -962,11 +1117,14 @@ struct FakeBrewFixture {
               exit 1
             fi
             formula='{"name":"demo","full_name":"acme/tools/demo","tap":"acme/tools","desc":"Demo formula","homepage":"https://example.test/demo","versions":{"stable":"2.0.0","head":null,"bottle":true},"installed":[{"version":"1.0.0","future":"ignored"}],"dependencies":["libexample"],"pinned":false,"deprecated":false,"disabled":false,"future":{"nested":true}}'
+            if [ -f "$state_dir/formula-upgraded" ] && [ ! -f "$state_dir/upgrade-leaves-old-version" ]; then
+              formula="${formula/1.0.0/2.0.0}"
+            fi
             cask='{"token":"sample","old_tokens":["old-sample"],"full_token":"acme/apps/sample","tap":"acme/apps","name":["Sample"],"desc":"Sample cask","homepage":"https://example.test/sample","version":"3.0","installed":"3.0","outdated":false,"artifacts":[{"app":["Sample.app"]},{"zap":[{"trash":["~/Library/Preferences/com.acme.sample.plist"]}]}],"future":42}'
             [ -f "$state_dir/formula-removed" ] && formula=''
             [ -f "$state_dir/cask-removed" ] && cask=''
             new_formula=''
-            [ -f "$state_dir/new-installed" ] && new_formula='{"name":"newpkg","full_name":"newpkg","tap":"homebrew/core","desc":"New formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":[{"version":"1.0.0"}],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}'
+            [ -f "$state_dir/new-installed" ] && new_formula='{"name":"newpkg","aliases":["new-alias"],"full_name":"newpkg","tap":"homebrew/core","desc":"New formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":[{"version":"1.0.0"}],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}'
             batch_formula=''
             [ -f "$state_dir/batch-installed" ] && batch_formula='{"name":"batchpkg","full_name":"batchpkg","tap":"homebrew/core","desc":"Batch formula","homepage":null,"versions":{"stable":"2.0.0","head":null},"installed":[{"version":"2.0.0"}],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}'
             formula_list="$formula"
@@ -1026,21 +1184,23 @@ struct FakeBrewFixture {
           "info --json=v2 --formula other/tools/demo")
             printf '%s\n' '{"formulae":[{"name":"demo","full_name":"acme/tools/demo","tap":"acme/tools","desc":"Demo formula","homepage":null,"versions":{"stable":"2.0.0","head":null},"installed":[],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}'
             ;;
-          "info --json=v2 --formula newpkg")
+          "info --json=v2 --formula newpkg"|"info --json=v2 --formula homebrew/core/newpkg"|"info --json=v2 --formula new-alias"|"info --json=v2 --formula homebrew/core/new-alias"|"info --json=v2 --formula unrelated"|"info --json=v2 --formula other/tap/newpkg")
+            if [ -f "$state_dir/new-metadata.json" ]; then /bin/cat "$state_dir/new-metadata.json"; exit 0; fi
             installed='[]'
             [ -f "$state_dir/new-installed" ] && installed='[{"version":"1.0.0"}]'
-            printf '{"formulae":[{"name":"newpkg","full_name":"newpkg","tap":"homebrew/core","desc":"New formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":%s,"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}\n' "$installed"
+            printf '{"formulae":[{"name":"newpkg","aliases":["new-alias"],"full_name":"newpkg","tap":"homebrew/core","desc":"New formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":%s,"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}\n' "$installed"
             ;;
           "info --json=v2 --formula batchpkg")
             installed='[]'
             [ -f "$state_dir/batch-installed" ] && installed='[{"version":"2.0.0"}]'
+            [ ! -f "$state_dir/wrong-dependency-version" ] || installed='[{"version":"1.0.0"}]'
             printf '{"formulae":[{"name":"batchpkg","full_name":"batchpkg","tap":"homebrew/core","desc":"Batch formula","homepage":null,"versions":{"stable":"2.0.0","head":null},"installed":%s,"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}\n' "$installed"
             ;;
           "info --json=v2 --formula aliaspkg"|"info --json=v2 --formula acme/tools/aliaspkg")
             printf '%s\n' '{"formulae":[{"name":"aliaspkg","full_name":"acme/tools/aliaspkg","tap":"acme/tools","desc":"Alias formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":[],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}'
             ;;
           "uses --installed --formula acme/tools/demo") printf '%s\n' 'consumer' ;;
-          "info --json=v2 --cask sample"|"info --json=v2 --cask acme/apps/sample")
+          "info --json=v2 --cask sample"|"info --json=v2 --cask old-sample"|"info --json=v2 --cask acme/apps/sample")
             if [ -f "$state_dir/current-cask-changed" ]; then
               printf '%s\n' '{"formulae":[],"casks":[{"token":"sample","old_tokens":["old-sample"],"full_token":"acme/apps/sample","tap":"acme/apps","name":["New Name"],"desc":null,"homepage":null,"version":"4.0","installed":"3.0","outdated":true,"artifacts":[{"app":["NewName.app"]},{"zap":[{"trash":["~/Library/Application Support/OnlyNewMetadata"]}]}]}]}'
               exit 0
@@ -1064,6 +1224,7 @@ struct FakeBrewFixture {
             ;;
           "install --formula newpkg")
             touch "$state_dir/new-installed"
+            [ ! -f "$state_dir/install-dependency" ] || touch "$state_dir/batch-installed"
             printf '%s\n' 'installed'
             ;;
           "install --formula newpkg batchpkg")
@@ -1073,6 +1234,7 @@ struct FakeBrewFixture {
             ;;
           "upgrade --formula acme/tools/demo")
             touch "$state_dir/formula-upgraded"
+            [ ! -f "$state_dir/upgrade-removes-target" ] || touch "$state_dir/formula-removed"
             printf '%s\n' 'upgraded'
             ;;
           "update") printf '%s\n' 'updated' ;;
@@ -1160,13 +1322,27 @@ private actor CaskProgressRecorder {
 private struct HomebrewFixtureBatchProvider: BatchOperationProviding {
     enum Unsupported: Error { case operation }
     let client: HomebrewClient
+    var agePreparedPlans = false
+
+    func renewHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionPlan? { try await client.renewBatchPlan(plan) }
+    func renewNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeActionPlan? { throw Unsupported.operation }
 
     func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan {
-        guard operation == .uninstall else { throw Unsupported.operation }
-        switch identity.kind {
-        case .formula: return try await client.planFormulaUninstall(identity.name)
-        case .cask: return try await client.planCaskUninstall(identity.name, zap: false)
+        let plan: HomebrewActionPlan
+        switch operation {
+        case .install: plan = try await client.planInstall(identity)
+        case .update: plan = try await client.planUpgrade([identity])
+        case .uninstall:
+            switch identity.kind {
+            case .formula: plan = try await client.planFormulaUninstall(identity.name)
+            case .cask: plan = try await client.planCaskUninstall(identity.name, zap: false)
+            }
         }
+        guard agePreparedPlans else { return plan }
+        return HomebrewActionPlan(id: plan.id, action: plan.action, targets: plan.targets, tapName: plan.tapName,
+            dependencies: plan.dependencies, dependents: plan.dependents, artifacts: plan.artifacts, residualPaths: plan.residualPaths,
+            associatedPackages: plan.associatedPackages, generatedAt: Date().addingTimeInterval(-601), stateFingerprint: plan.stateFingerprint,
+            confirmedTargets: plan.confirmedTargets, caskRemoval: plan.caskRemoval)
     }
     func executeHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionResult { try await client.execute(plan) }
     func refreshHomebrew() async throws -> HomebrewStatus {

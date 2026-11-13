@@ -84,6 +84,14 @@ actor SystemProbeService {
         try await requireHomebrewClient().planUpgrade(targets)
     }
 
+    func renewHomebrewBatchPlan(_ plan: HomebrewActionPlan) async throws -> HomebrewActionPlan? {
+        try await requireHomebrewClient().renewBatchPlan(plan)
+    }
+
+    func renewNPMBatchPlan(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NodeActionPlan? {
+        try await nodeClient.renewBatchPackagePlan(plan, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
+    }
+
     func planHomebrewUpdate() async throws -> HomebrewActionPlan {
         try await requireHomebrewClient().planUpdate()
     }

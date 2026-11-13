@@ -30,6 +30,7 @@ struct HomebrewPackage: Identifiable, Sendable {
     let deprecated: Bool
     let disabled: Bool
     let artifacts: [HomebrewCaskArtifact]
+    var aliases: [String] = []
     var oldTokens: [String] = []
     var installedCaskToken: String? = nil
 
@@ -180,6 +181,13 @@ enum HomebrewAction: String, Sendable {
     case zapCask
 }
 
+struct HomebrewConfirmedTarget: Equatable, Sendable {
+    let identity: HomebrewPackageIdentity
+    let source: String
+    let version: String
+    let prefix: String
+}
+
 struct HomebrewActionPlan: Identifiable, Sendable {
     let id: UUID
     let action: HomebrewAction
@@ -192,6 +200,7 @@ struct HomebrewActionPlan: Identifiable, Sendable {
     let associatedPackages: [HomebrewPackageIdentity]
     let generatedAt: Date
     let stateFingerprint: String?
+    var confirmedTargets: [HomebrewConfirmedTarget] = []
     var caskRemoval: CaskRemovalPlan? = nil
 
     var canExecute: Bool {
@@ -252,11 +261,10 @@ struct HomebrewActionResult: Sendable {
         switch plan.action {
         case .install:
             return plan.targets.allSatisfy { target in
-                snapshot.packages.contains { $0.identity == target && $0.isInstalled }
+                targetIsSatisfied(target, in: snapshot)
             }
         case .upgrade:
-            let outdated = Set(snapshot.outdatedPackages.map(\.identity))
-            return plan.targets.allSatisfy { !outdated.contains($0) }
+            return plan.targets.allSatisfy { targetIsSatisfied($0, in: snapshot) }
         case .update:
             return true
         case .addTap:
@@ -270,12 +278,20 @@ struct HomebrewActionResult: Sendable {
         }
     }
 
+    private func targetIsSatisfied(_ target: HomebrewPackageIdentity, in snapshot: HomebrewSnapshot) -> Bool {
+        guard let package = snapshot.packages.first(where: { $0.identity == target }), package.isInstalled else { return false }
+        guard let confirmed = plan.confirmedTargets.first(where: { $0.identity == target }) else { return false }
+        return package.tap == confirmed.source && package.installedVersions.contains(confirmed.version)
+            && snapshot.configuration.prefix == confirmed.prefix
+    }
+
     private func observationIsAvailable(in snapshot: HomebrewSnapshot) -> Bool {
         switch plan.action {
-        case .install, .uninstallFormula, .uninstallCask, .zapCask:
+        case .install, .upgrade:
+            return snapshot.sectionErrors[.packages] == nil && snapshot.sectionErrors[.configuration] == nil
+                && (plan.action != .upgrade || snapshot.sectionErrors[.outdated] == nil)
+        case .uninstallFormula, .uninstallCask, .zapCask:
             return snapshot.sectionErrors[.packages] == nil
-        case .upgrade:
-            return snapshot.sectionErrors[.outdated] == nil
         case .addTap, .removeTap:
             return snapshot.sectionErrors[.taps] == nil
         case .update:
@@ -286,12 +302,8 @@ struct HomebrewActionResult: Sendable {
     private func observedPartialChange(in snapshot: HomebrewSnapshot) -> Bool {
         let completedCount: Int
         switch plan.action {
-        case .install:
-            let installed = Set(snapshot.packages.filter(\.isInstalled).map(\.identity))
-            completedCount = plan.targets.filter(installed.contains).count
-        case .upgrade:
-            let outdated = Set(snapshot.outdatedPackages.map(\.identity))
-            completedCount = plan.targets.filter { !outdated.contains($0) }.count
+        case .install, .upgrade:
+            completedCount = plan.targets.filter { targetIsSatisfied($0, in: snapshot) }.count
         default:
             return false
         }

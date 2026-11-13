@@ -364,6 +364,31 @@ actor NodeManagerClient {
                               confirmedInstallRegistry: registry)
     }
 
+    func renewBatchPackagePlan(_ confirmed: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeActionPlan? {
+        guard confirmed.request.action == .installPackage || confirmed.request.action == .updatePackage else {
+            throw BridgeError.managerFailure(code: "not-package-action", detail: nil)
+        }
+        let changed = BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil)
+        guard confirmed.exactInstallSpec != nil || confirmed.exactUpdateSpec != nil else { throw changed }
+        let validated = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+        guard try packageDestination(validated.summary) == confirmed.confirmedPackageDestination,
+              confirmed.confirmedInstallRegistry == (try await packageRegistry(confirmed.request.subject, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory))
+        else { throw changed }
+        // Read the same request so changes to a tag or latest cannot silently change the confirmed version.
+        let current = try await plan(confirmed.request, managerDirectory: managerDirectory, environment: validated.environment)
+        guard current.payload.packageName == confirmed.payload.packageName,
+              current.payload.targetVersion == confirmed.payload.targetVersion,
+              let target = confirmed.payload.targetVersion else { throw changed }
+        let final = try await validatedPackageEnvironment(environment, managerDirectory: managerDirectory)
+        guard try packageDestination(final.summary) == confirmed.confirmedPackageDestination,
+              confirmed.confirmedInstallRegistry == (try await packageRegistry(confirmed.request.subject, summary: final.summary, environment: final.environment, managerDirectory: managerDirectory))
+        else { throw changed }
+        if current.payload.installedVersion == target { return nil }
+        guard current.canExecute, current.payload.installedVersion == confirmed.payload.installedVersion else { throw changed }
+        return NodeActionPlan(id: current.id, request: current.request, payload: current.payload, generatedAt: current.generatedAt,
+                              confirmedPackageDestination: confirmed.confirmedPackageDestination, confirmedInstallRegistry: confirmed.confirmedInstallRegistry)
+    }
+
     func executePackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, managerDirectory: URL) async throws -> NodeOperationResult {
         guard plan.request.action == .installPackage || plan.request.action == .updatePackage || plan.request.action == .uninstallPackage else {
             throw BridgeError.managerFailure(code: "not-package-action", detail: nil)

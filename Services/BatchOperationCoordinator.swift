@@ -5,6 +5,8 @@ protocol BatchOperationProviding: Sendable {
     func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan
     func executeHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionResult
     func executeHomebrew(_ plan: HomebrewActionPlan, caskRemovalProgress: CaskRemovalProgressHandler?) async throws -> HomebrewActionResult
+    func renewHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionPlan?
+    func renewNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeActionPlan?
     func refreshHomebrew() async throws -> HomebrewStatus
     func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan
     func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult
@@ -22,6 +24,7 @@ extension BatchOperationProviding {
 enum BatchOperationError: Error, Equatable {
     case busy
     case invalidPlan
+    case conflictingVersions
     case planUnavailable
     case protectedNode
     case reconciliationUnavailable
@@ -180,21 +183,43 @@ final class BatchOperationCoordinator: ObservableObject {
 
     private func preparePlan(_ intent: BatchIntent) async throws -> BatchPlan {
         var plans: [BatchProviderPlan] = []
-        for item in intent.items {
+        var items: [BatchItem] = []
+        var npmPlans: [String: NodeActionPlan] = [:]
+        for input in intent.items {
+            var item = input
             try Task.checkCancellation()
             do {
                 switch item {
                 case .homebrew(let identity):
                     let plan = try await self.provider.planHomebrew(identity, operation: intent.operation)
-                    guard plan.targets == [identity], plan.canExecute,
+                    guard plan.targets.count == 1, let canonical = plan.targets.first,
+                          canonical.kind == identity.kind, plan.canExecute,
                           plan.action == intent.operation.homebrewAction(for: identity.kind)
                     else { throw BatchOperationError.invalidPlan }
+                    item = .homebrew(canonical)
+                    if let existing = items.firstIndex(of: item) {
+                        if case .unavailable(.unavailable, _) = plans[existing] { plans[existing] = .homebrew(plan) }
+                        continue
+                    }
+                    items.append(item)
                     plans.append(.homebrew(plan))
                 case .npm(let identity):
                     let plan = try await self.provider.planNPM(identity, operation: intent.operation)
                     guard plan.request == NodeActionRequest(action: intent.operation.nodeAction, subject: identity.name)
                     else { throw BatchOperationError.invalidPlan }
+                    if let name = plan.payload.packageName {
+                        if let existing = npmPlans[name] {
+                            guard let target = plan.payload.targetVersion, existing.payload.targetVersion == target,
+                                  existing.payload.installedVersion == plan.payload.installedVersion,
+                                  existing.confirmedInstallRegistry == plan.confirmedInstallRegistry,
+                                  existing.confirmedPackageDestination == plan.confirmedPackageDestination
+                            else { throw BatchOperationError.conflictingVersions }
+                            continue
+                        }
+                        npmPlans[name] = plan
+                    }
                     if intent.operation == .install, plan.payload.alreadyInstalled == true {
+                        items.append(item)
                         plans.append(.unavailable(.alreadyInstalled, .alreadyInstalled))
                         continue
                     }
@@ -202,6 +227,7 @@ final class BatchOperationCoordinator: ObservableObject {
                     if intent.operation == .install || intent.operation == .update {
                         guard plan.confirmedPackageDestination != nil, plan.confirmedInstallRegistry != nil else { throw BatchOperationError.invalidPlan }
                     }
+                    items.append(item)
                     plans.append(.npm(plan, identity.environment))
                 case .nodeRuntime(let identity):
                     let plan = try await self.provider.planNodeUninstall(identity)
@@ -210,18 +236,27 @@ final class BatchOperationCoordinator: ObservableObject {
                     guard plan.request == NodeActionRequest(action: .uninstallNode, subject: identity.version),
                           plan.canExecute
                     else { throw BatchOperationError.invalidPlan }
+                    items.append(item)
                     plans.append(.nodeRuntime(plan, identity.environment))
                 }
             } catch {
                 if Task.isCancelled || error is CancellationError { throw CancellationError() }
+                if case BatchOperationError.conflictingVersions = error { throw error }
                 guard intent.operation != .uninstall else { throw error }
+                if case HomebrewClientError.alreadyInstalled(let identity) = error { item = .homebrew(identity) }
+                guard !items.contains(item) else { continue }
+                items.append(item)
                 let status: BatchPreparationStatus = if case HomebrewClientError.alreadyInstalled = error { .alreadyInstalled } else { .unavailable }
                 plans.append(.unavailable(status, .init(error: error, preparing: true)))
                 diagnosticsStore.record(operation: intent.activityOperation, scope: intent.scope.activityScope, detail: error.localizedDescription)
             }
         }
         try Task.checkCancellation()
-        return BatchPlan(id: UUID(), intent: intent, plans: plans)
+        // Keep preview, execution and outcomes in the same stable order; npm replaces its own executable.
+        let ordered = plans.indices.filter { if case .npm(let plan, _) = plans[$0] { plan.payload.packageName != "npm" } else { true } }
+            + plans.indices.filter { if case .npm(let plan, _) = plans[$0] { plan.payload.packageName == "npm" } else { false } }
+        guard let canonicalIntent = BatchIntent(operation: intent.operation, items: ordered.map { items[$0] }) else { throw BatchOperationError.invalidPlan }
+        return BatchPlan(id: UUID(), intent: canonicalIntent, plans: ordered.map { plans[$0] })
     }
 
     func execute(_ plan: BatchPlan, caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> BatchExecutionResult {
@@ -307,8 +342,8 @@ final class BatchOperationCoordinator: ObservableObject {
                 }
                 operationStore.updateProgress(completed: completed + 1, total: total)
             }
-            if case .unavailable(_, let reason) = prepared {
-                outcomes.append(.init(item: item, status: .failed, userFacingMessage: nil, reason: reason))
+            if case .unavailable(let preparation, let reason) = prepared {
+                outcomes.append(.init(item: item, status: preparation == .alreadyInstalled ? .skipped : .failed, userFacingMessage: nil, reason: reason))
                 results.append(nil)
                 continue
             }
@@ -324,7 +359,17 @@ final class BatchOperationCoordinator: ObservableObject {
                 let reason: ActivityItemReason?
                 switch prepared {
                 case .homebrew(let providerPlan):
-                    let result = try await self.provider.executeHomebrew(providerPlan, caskRemovalProgress: caskRemovalProgress)
+                    let executionPlan: HomebrewActionPlan
+                    if plan.intent.operation == .install || plan.intent.operation == .update {
+                        guard let renewed = try await self.provider.renewHomebrew(providerPlan) else {
+                            outcomes.append(.init(item: item, status: .skipped, userFacingMessage: nil, reason: .alreadySatisfied))
+                            results.append(nil)
+                            continue
+                        }
+                        executionPlan = renewed
+                    } else { executionPlan = providerPlan }
+                    try Task.checkCancellation()
+                    let result = try await self.provider.executeHomebrew(executionPlan, caskRemovalProgress: caskRemovalProgress)
                     results.append(.homebrew(result))
                     status = switch result.outcome {
                     case .succeeded: .succeeded
@@ -339,7 +384,17 @@ final class BatchOperationCoordinator: ObservableObject {
                                                 + result.caskRemovalFailures.map { "\($0.path): \($0.reason)" }).joined(separator: "\n"),
                                             command: result.command)
                 case .npm(let providerPlan, let environment):
-                    let result = try await self.provider.executeNPM(providerPlan, environment: environment)
+                    let executionPlan: NodeActionPlan
+                    if plan.intent.operation == .install || plan.intent.operation == .update {
+                        guard let renewed = try await self.provider.renewNPM(providerPlan, environment: environment) else {
+                            outcomes.append(.init(item: item, status: .skipped, userFacingMessage: nil, reason: .alreadySatisfied))
+                            results.append(nil)
+                            continue
+                        }
+                        executionPlan = renewed
+                    } else { executionPlan = providerPlan }
+                    try Task.checkCancellation()
+                    let result = try await self.provider.executeNPM(executionPlan, environment: environment)
                     results.append(.npm(result))
                     status = result.batchItemStatus
                     reason = result.activityReason
@@ -420,6 +475,7 @@ extension BatchOutcome {
                                itemOutcomes: itemOutcomes.map { outcome in
             let reason: ActivityItemReason? = switch outcome.status {
             case .succeeded: nil
+            case .skipped: .alreadySatisfied
             case .failed, .partiallySucceeded: .providerFailure
             case .cancelled: .cancelledByUser
             case .unknown: .stateUnavailable

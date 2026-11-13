@@ -461,6 +461,9 @@ private actor PreviewProgressProvider: BatchOperationProviding {
     }
 
     func finish() { continuation.yield(()); continuation.finish() }
+    func renewHomebrew(_ plan: HomebrewActionPlan) async throws -> HomebrewActionPlan? { try await base.renewHomebrew(plan) }
+    func renewNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeActionPlan? { try await base.renewNPM(plan, environment: environment) }
+
     func planHomebrew(_ identity: HomebrewPackageIdentity, operation: BatchOperation) async throws -> HomebrewActionPlan {
         try await base.planHomebrew(identity, operation: operation)
     }

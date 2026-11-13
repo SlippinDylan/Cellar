@@ -3,7 +3,6 @@ import {
   createPublicKey,
   timingSafeEqual,
 } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -56,7 +55,9 @@ async function main() {
   if (process.argv[2] !== 'verify') {
     throw new Error(`Unknown command: ${process.argv[2] ?? ''}.`);
   }
-  const privateKeyValue = await readFile(0, 'utf8');
+  process.stdin.setEncoding('utf8');
+  let privateKeyValue = '';
+  for await (const chunk of process.stdin) privateKeyValue += chunk;
   verifySparkleKeyPair(privateKeyValue, process.env.SPARKLE_PUBLIC_KEY ?? '');
   process.stdout.write('Sparkle signing key pair verified.\n');
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { spawnSync } from 'node:child_process';
 import {
   deriveSparklePublicKey,
   verifySparkleKeyPair,
@@ -28,4 +29,25 @@ test('rejects malformed and mismatched keys', () => {
     seed.toString('base64'),
     Buffer.alloc(32).toString('base64'),
   ));
+});
+
+test('CLI verifies piped private keys and rejects mismatched public keys', () => {
+  for (const [expectedPublicKey, expectedStatus] of [
+    [publicKey, 0],
+    [Buffer.alloc(32), 1],
+  ]) {
+    const result = spawnSync(process.execPath, [
+      new URL('./sparkle-key.mjs', import.meta.url).pathname,
+      'verify',
+    ], {
+      input: seed.toString('base64'),
+      encoding: 'utf8',
+      env: { ...process.env, SPARKLE_PUBLIC_KEY: expectedPublicKey.toString('base64') },
+    });
+    assert.equal(result.status, expectedStatus, result.stderr);
+    assert.match(result.stdout + result.stderr, expectedStatus === 0
+      ? /Sparkle signing key pair verified/
+      : /do not belong to the same key pair/);
+    assert.ok(!(result.stdout + result.stderr).includes(seed.toString('base64')));
+  }
 });

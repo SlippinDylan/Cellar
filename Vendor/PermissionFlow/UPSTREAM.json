@@ -1,0 +1,51 @@
+{
+  "repository": "https://github.com/jaywcjlove/PermissionFlow",
+  "revision": "65434c9ae04dba97cf52c1dffbe3e4e62b547c82",
+  "license": "MIT",
+  "sourceFiles": {
+    "Sources/PermissionFlow/PermissionAuthorizationState.swift": "b56e17991042e4d0af71b19ab3716cba10c6a4c861205e90535bc43771f48963",
+    "Sources/PermissionFlow/PermissionFlow.swift": "2659bd252ecdbd7d699bfe5fd68308a9e86e95f16bfaae847c27b0f74d817a69",
+    "Sources/PermissionFlow/PermissionFlowButton.swift": "eae45685e21982e608b363a9a801efbecf8a36f964e5a458898a812cdaf2cee2",
+    "Sources/PermissionFlow/PermissionFlowButtonState.swift": "acd7937077014b205b3281695ca5cc50202572e5416b94a1e32cde9fe3f11f0d",
+    "Sources/PermissionFlow/PermissionFlowConfiguration.swift": "2fe39df84668e532bb58a06df4155ca220e0f210fc4bbfa4bcdbd35ca3da6f65",
+    "Sources/PermissionFlow/PermissionFlowController.swift": "871122861b9791662459b780c64a192b460a5763ee3f4b3c0c1806ed5d37d942",
+    "Sources/PermissionFlow/PermissionFlowLocalizer.swift": "49c21c5b54ef67f7763b0e7b411be2a702477cc8803316f297306749f00ac2f0",
+    "Sources/PermissionFlow/PermissionFlowPane.swift": "88ebbfa31a6311b8a77baa120605f04d3dd15e9bb1efae4e8e6bb7620b6309e0",
+    "Sources/PermissionFlow/PermissionFlowResources.swift": "cb974c7c92c53bbaef707073640239ae6c102e7b26138efcfbfbd2015ebf7809",
+    "Sources/PermissionFlow/PermissionStatusCapability.swift": "245b453142589c28623b97f0a45e38e0ad483db250214337f3b185de2844e40f",
+    "Sources/PermissionFlow/PermissionStatusProviders/AccessibilityPermissionStatusProvider.swift": "b3a3f5611a357b954e4487378b295625daa08dbd12e22bd9bafff08fc1c1a9d9",
+    "Sources/PermissionFlow/PermissionStatusProviders/CalendarPermissionStatusProvider.swift": "3ab808e8b4e3e5acb65d1807a0a38cb7e93680af8d6ac296460f71b6a153906f",
+    "Sources/PermissionFlow/PermissionStatusProviders/FullDiskAccessPermissionStatusProvider.swift": "1468ab8579826dc0c7fa327046498c39d7f93830c6d630a8e8fa663bd5da3974",
+    "Sources/PermissionFlow/PermissionStatusProviders/MicrophonePermissionStatusProvider.swift": "ac2cfbdb65ad933625ad7ba76bf29adc765b14cf6e73544373186173ccf07a56",
+    "Sources/PermissionFlow/PermissionStatusProviders/RemindersPermissionStatusProvider.swift": "efc2ae5ad9dea74860fbc3de4fb04d3368157f9cf31ae5c20df31dbcfc2c2217",
+    "Sources/PermissionFlow/PermissionStatusProviders/UnsupportedPermissionStatusProvider.swift": "e39c6a358c3ac2b67230b065d43cb291ffb3563f63859042d265995208952eac",
+    "Sources/PermissionFlow/PermissionStatusRegistry.swift": "7f3ddda021c52f628f0ec184bf065014c8fc81cbbcd38afd2a947e1677a33622",
+    "Sources/PermissionFlow/Resources/ar.lproj/Localizable.strings": "cef085cccbe8b87c452bc54bca752d5fb7b6e9967ff0f9b9930f9d51b69d6802",
+    "Sources/PermissionFlow/Resources/de.lproj/Localizable.strings": "95091d04cf02c7fc894b67dac95c3605a802a74b9cec5e1a25cd56d2df7d7064",
+    "Sources/PermissionFlow/Resources/en.lproj/Localizable.strings": "a7b502c475f48381ba9cce6a624909efb3a21a8637386edb35b47fe9feffcdec",
+    "Sources/PermissionFlow/Resources/es.lproj/Localizable.strings": "2b2fa313bc3fa1c7d66a600bcba33ce262912dd4a2474ab9aed0afc33a7fb9f5",
+    "Sources/PermissionFlow/Resources/fr.lproj/Localizable.strings": "7b5cf3aefde3b9812ee5505da336c9e56bf97c4442c61b73c9695533ae2bd4c6",
+    "Sources/PermissionFlow/Resources/ja.lproj/Localizable.strings": "36ec6861aac551ee6467108cbbd2e04aeeb66aa6fc3ad31c75162236b506f268",
+    "Sources/PermissionFlow/Resources/ko.lproj/Localizable.strings": "b7d49965b10633700f3b2d47e4d56fb68a77992eb4b42fb4e28fa27d20700f32",
+    "Sources/PermissionFlow/Resources/pt.lproj/Localizable.strings": "28476c252f0418a84173ce8b6fd2ed0fd2455eff9a31f2e7927817186a5ebd1d",
+    "Sources/PermissionFlow/Resources/ru.lproj/Localizable.strings": "34d9f93f5ee700e6ee20c26bea7afabc758f0d7fe6e99b8d629c6d4d20305161",
+    "Sources/PermissionFlow/Resources/zh-Hans.lproj/Localizable.strings": "39ca5e9200ccf2262745358fca8017d5eebe77c267754d3482bc62effce8c821",
+    "Sources/PermissionFlow/Resources/zh-Hant.lproj/Localizable.strings": "c3b5de3691fe1b62014789d4d1b5540db631665c0419f1da6add78e638645f22",
+    "Sources/PermissionFlow/Tracking/SettingsWindowTracker.swift": "23327738d58a9b10e93b5e68de8ea748c30065e10d9f81882d8fae2653b44a1d",
+    "Sources/PermissionFlow/UI/AppDropArea.swift": "879c9a53689af7521930ba12e9bcfb04b9c850734e58427efe91854021449d21",
+    "Sources/PermissionFlow/UI/FloatingDropPanel.swift": "98842e7bc62ca4aa527ad9a697911a2c7f30ceeb624c1888bca6293f27b55622",
+    "Sources/PermissionFlow/UI/PermissionFlowPanelView.swift": "269dcf7fb5129562adecb949b32ea3b154f3b8a941db678071fae784cab0423e",
+    "Sources/SystemSettingsKit/SettingsNavigator.swift": "1390397cdb5548b8fcce40096ef865174451791c07fa7b1321ec725ba9a265d4",
+    "Sources/SystemSettingsKit/SystemSettings.swift": "70aaf7b2f5b1cfa93b5259fc4c6c53b9d2bdb42189c2785a9fa271b0be6915e9",
+    "Sources/SystemSettingsKit/SystemSettingsDestination.swift": "df079580437d90882a96a91da97da1a0e92988e80c8360bd9711cfc60d161e0f"
+  },
+  "patchedUpstreamFiles": [
+    "Sources/PermissionFlow/PermissionFlowController.swift",
+    "Sources/PermissionFlow/Tracking/SettingsWindowTracker.swift"
+  ],
+  "unchangedUIFiles": [
+    "Sources/PermissionFlow/UI/AppDropArea.swift",
+    "Sources/PermissionFlow/UI/FloatingDropPanel.swift",
+    "Sources/PermissionFlow/UI/PermissionFlowPanelView.swift"
+  ]
+}

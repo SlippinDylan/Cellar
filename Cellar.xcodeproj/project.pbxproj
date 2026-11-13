@@ -14,6 +14,8 @@
 		C00000000000000000000033 /* Cellar.icon in Resources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000034 /* Cellar.icon */; };
 		C00000000000000000000035 /* BrandIcons.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000036 /* BrandIcons.xcassets */; };
 		C00000000000000000000037 /* BrandIcons-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000038 /* BrandIcons-LICENSE.txt */; };
+		C00000000000000000000039 /* PermissionFlow-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = C0000000000000000000003A /* PermissionFlow-LICENSE.txt */; };
+		C0000000000000000000003B /* PermissionFlow in Frameworks */ = {isa = PBXBuildFile; productRef = C0000000000000000000003D /* PermissionFlow */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,6 +38,7 @@
 		C00000000000000000000034 /* Cellar.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Cellar.icon; sourceTree = SOURCE_ROOT; };
 		C00000000000000000000036 /* BrandIcons.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = BrandIcons.xcassets; sourceTree = "<group>"; };
 		C00000000000000000000038 /* BrandIcons-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BrandIcons-LICENSE.txt"; sourceTree = "<group>"; };
+		C0000000000000000000003A /* PermissionFlow-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "PermissionFlow-LICENSE.txt"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -72,6 +75,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				C00000000000000000000026 /* Sparkle in Frameworks */,
+				C0000000000000000000003B /* PermissionFlow in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -107,6 +111,7 @@
 				C00000000000000000000004 /* Managers */,
 				C00000000000000000000036 /* BrandIcons.xcassets */,
 				C00000000000000000000038 /* BrandIcons-LICENSE.txt */,
+				C0000000000000000000003A /* PermissionFlow-LICENSE.txt */,
 				C00000000000000000000032 /* Localizable.xcstrings */,
 			);
 			path = Resources;
@@ -146,6 +151,7 @@
 			name = Cellar;
 			packageProductDependencies = (
 				C00000000000000000000028 /* Sparkle */,
+				C0000000000000000000003D /* PermissionFlow */,
 			);
 			productName = Cellar;
 			productReference = C00000000000000000000008 /* Cellar.app */;
@@ -206,6 +212,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				C00000000000000000000027 /* XCRemoteSwiftPackageReference "Sparkle" */,
+				C0000000000000000000003C /* XCLocalSwiftPackageReference "PermissionFlow" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C00000000000000000000013 /* Products */;
@@ -226,6 +233,7 @@
 				C00000000000000000000003 /* Managers in Resources */,
 				C00000000000000000000035 /* BrandIcons.xcassets in Resources */,
 				C00000000000000000000037 /* BrandIcons-LICENSE.txt in Resources */,
+				C00000000000000000000039 /* PermissionFlow-LICENSE.txt in Resources */,
 				C00000000000000000000033 /* Cellar.icon in Resources */,
 				C00000000000000000000031 /* Localizable.xcstrings in Resources */,
 			);
@@ -492,6 +500,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		C0000000000000000000003C /* XCLocalSwiftPackageReference "PermissionFlow" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Vendor/PermissionFlow;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		C00000000000000000000027 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -508,6 +523,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = C00000000000000000000027 /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		C0000000000000000000003D /* PermissionFlow */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C0000000000000000000003C /* XCLocalSwiftPackageReference "PermissionFlow" */;
+			productName = PermissionFlow;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

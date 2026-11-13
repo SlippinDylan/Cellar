@@ -71,6 +71,9 @@ jobs:
           xcodebuild -version
           node --version
 
+      - name: Test PermissionFlow
+        run: swift test --package-path Vendor/PermissionFlow --scratch-path build/PermissionFlow-Package-Tests
+
       - name: Test Cellar
         run: |
           set -o pipefail

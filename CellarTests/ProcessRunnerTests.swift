@@ -166,24 +166,74 @@ final class ProcessRunnerTests: XCTestCase {
     }
 
     func testSpawnFailureDoesNotLeakPipeDescriptors() async throws {
-        let runner = ProcessRunner()
-        let descriptorCountBefore = try openDescriptorCount()
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarProcessDescriptorProbe-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appending(path: "DescriptorProbe.swift")
+        let executable = root.appending(path: "probe")
+        // A hosted async test cannot attribute the entire App's descriptor changes to this runner.
+        let program = #"""
+        import Darwin
+        import Foundation
 
-        for _ in 0..<20 {
-            do {
-                _ = try await runner.run(ProcessRequest(
-                    executableURL: URL(filePath: "/path/that/does/not/exist"),
-                    arguments: [],
-                    environment: [:],
-                    currentDirectoryURL: nil
-                ))
-                XCTFail("Expected spawn to fail")
-            } catch {
-                // Expected.
+        @main enum DescriptorProbe {
+            static func descriptors() throws -> [Int32: UInt32] {
+                let required = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, nil, 0)
+                guard required > 0 else { throw POSIXError(.EIO) }
+                let stride = MemoryLayout<proc_fdinfo>.stride
+                var records = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(required) / stride + 16)
+                let bytes = records.withUnsafeMutableBytes {
+                    proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count))
+                }
+                guard bytes > 0, Int(bytes) < records.count * stride, Int(bytes) % stride == 0 else {
+                    throw POSIXError(.EIO)
+                }
+                return Dictionary(uniqueKeysWithValues: records.prefix(Int(bytes) / stride).map {
+                    ($0.proc_fd, $0.proc_fdtype)
+                })
+            }
+
+            static func main() async throws {
+                let runner = ProcessRunner()
+                let before = try descriptors()
+                for attempt in 1...100 {
+                    do {
+                        _ = try await runner.run(ProcessRequest(
+                            executableURL: URL(filePath: "/path/that/does/not/exist"),
+                            arguments: [], environment: [:], currentDirectoryURL: nil
+                        ))
+                        print("Attempt \(attempt): missing executable unexpectedly started")
+                        exit(2)
+                    } catch let error as NSError {
+                        guard error.domain == NSPOSIXErrorDomain, error.code == Int(ENOENT) else { throw error }
+                    }
+                    let after = try descriptors()
+                    guard after == before else {
+                        let added = after.filter { before[$0.key] != $0.value }
+                        let removed = before.filter { after[$0.key] != $0.value }
+                        print("Attempt \(attempt): added descriptors/types=\(added); removed=\(removed)")
+                        exit(3)
+                    }
+                }
+                print("Verified 100 failed spawns without descriptor changes")
             }
         }
-
-        XCTAssertEqual(try openDescriptorCount(), descriptorCountBefore)
+        """#
+        try Data(program.utf8).write(to: source)
+        let repository = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let environment = ShellEnvironmentResolver(homeDirectory: root, temporaryDirectory: root).environment()
+        let runner = ProcessRunner()
+        let compile = try await runner.run(ProcessRequest(executableURL: URL(filePath: "/usr/bin/xcrun"),
+            arguments: ["swiftc", "-swift-version", "6", "-parse-as-library",
+                        repository.appending(path: "Bridge/ProcessRunner.swift").path,
+                        repository.appending(path: "Bridge/BridgeError.swift").path, source.path,
+                        "-target", "arm64-apple-macos26.0", "-o", executable.path],
+            environment: environment, currentDirectoryURL: root, timeout: .seconds(60)))
+        XCTAssertEqual(compile.terminationStatus, 0, compile.errorText)
+        guard compile.terminationStatus == 0 else { return }
+        let result = try await runner.run(ProcessRequest(executableURL: executable, arguments: [],
+            environment: environment, currentDirectoryURL: root, timeout: .seconds(5)))
+        XCTAssertEqual(result.terminationStatus, 0, result.outputText + result.errorText)
     }
 
     private func makeScript(_ contents: String) throws -> URL {
@@ -192,9 +242,5 @@ final class ProcessRunnerTests: XCTestCase {
         try Data(contents.utf8).write(to: script)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
         return script
-    }
-
-    private func openDescriptorCount() throws -> Int {
-        try FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count
     }
 }

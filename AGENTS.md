@@ -105,6 +105,8 @@ git diff -- scripts
 ## 文档与清理
 
 - README 只记录用户可见能力、限制、数据位置、网络行为和源码构建入口。
+- README 默认入口为英文 `README.md`；简体中文、繁体中文、日本語、한국어、Deutsch、Français、Español 分别为 `docs/README.zh-CN.md`、`docs/README.zh-TW.md`、`docs/README.ja.md`、`docs/README.ko.md`、`docs/README.de.md`、`docs/README.fr.md`、`docs/README.es.md`。各版本顶部提供全部八种语言的切换链接，并突出当前语言。App 默认跟随系统，README 默认入口为英文，两者不可混淆。App 新增或移除语言时，同步调整对应 README 和语言导航。
+- 修改任一 README 语言版本时，必须在同一变更中同步其他语言版本，保持功能、发布状态、系统要求、操作边界、命令、数据位置和链接的语义一致；不得只更新默认英文版。路径按文件所在目录调整，提交前检查各版本的链接、图片和代码块。README 不复制界面尺寸、内部实现或验收细节，这些内容维护在既有权威文档中。
 - 架构文档描述当前实现和已知风险；产品需求描述稳定行为；开发指南描述命令、测试和构建；研究文档保存外部依据。
 - 只有用户明确要求时才执行清理；执行前必须读取并遵循 [开发产物清理规则](docs/development-cleanup.md)。
 - 不删除源码、Git 数据、工程配置、Manager 源文件和快照、用户环境、Agent 对话和状态，或用途不明的文件。

@@ -1,7 +1,7 @@
 import Foundation
 
 actor ManagerSnapshotInstaller {
-    static let snapshotVersion = "075464e-app4"
+    static let snapshotVersion = "8aaa85d-app5"
 
     private let fileManager: FileManager
     private let bundle: Bundle

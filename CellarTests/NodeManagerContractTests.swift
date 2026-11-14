@@ -718,3 +718,66 @@ extension NodeManagerContractTests {
         }
     }
 }
+
+extension NodeManagerContractTests {
+    func testBundledRegistryNormalizesRawDefaultAndScopeWritesInNonNVMEnvironment() async throws {
+        let source = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Managers/node-manager")
+        let fixture = try SourceNodeManagerFixture(managerSource: source, nonNVM: true)
+        for input in ["\u{00A0}https://registry.example.test/npm%2fprivate+one\u{00A0}", "\u{000B}http://[::1]:8080/npm//\u{000B}"] {
+            let expected = try XCTUnwrap(SourceConfiguration.registryURL(input)).absoluteString
+            for action in [NodeAction.setRegistry, .setScopeRegistry] {
+                let arguments = action == .setRegistry ? [action.rawValue, input] : [action.rawValue, "@company", input]
+                let payload: NodeActionPlanPayload = try await fixture.client.request("plan", arguments: arguments, managerDirectory: fixture.manager, environment: fixture.environment)
+                XCTAssertEqual(action == .setRegistry ? payload.subject : payload.value, expected)
+                let operation: NodeOperationResult = try await fixture.client.request("execute", arguments: arguments, managerDirectory: fixture.manager, environment: fixture.environment)
+                XCTAssertEqual(operation.batchItemStatus, .succeeded)
+                let key = action == .setRegistry ? "registry" : "@company:registry"
+                XCTAssertTrue(try String(contentsOf: fixture.root.appending(path: ".npmrc"), encoding: .utf8).contains("\(key)=\(expected)\n"))
+            }
+        }
+        let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.manager, environment: fixture.environment)
+        XCTAssertFalse(summary.nvmLoaded)
+        XCTAssertFalse(summary.nodePath.contains("/.nvm/"))
+        let plan = try await fixture.client.plan(.init(action: .setRegistry, subject: "https://registry.example.test"), managerDirectory: fixture.manager, detectedSummary: summary)
+        let operation = try await fixture.client.execute(plan, managerDirectory: fixture.manager)
+        XCTAssertEqual(operation.batchItemStatus, .succeeded)
+        let layers = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager)
+        XCTAssertEqual(layers.user, "http://[::1]:8080/npm//")
+    }
+
+    func testBundledScopeReadPreservesSuccessfulEmptyAndRejectsActualReadFailures() async throws {
+        let source = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Managers/node-manager")
+        for effectiveFailure in [true, false] {
+            let fixture = try SourceNodeManagerFixture(managerSource: source, nonNVM: true)
+            let config = fixture.root.appending(path: ".npmrc")
+            try Data("@company:registry=\n".utf8).write(to: config)
+            let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.manager, environment: fixture.environment)
+            let empty = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager)
+            XCTAssertEqual(empty.effective, "")
+            XCTAssertEqual(empty.user, "")
+            XCTAssertEqual(empty.project, "undefined")
+            XCTAssertEqual(empty.global, "undefined")
+            if effectiveFailure { try Data().write(to: fixture.root.appending(path: "fail-effective-scope")) }
+            else {
+                try fixture.tool("ruby", #"""
+                #!/bin/bash
+                case "${2:-}" in *"File.foreach(config_file)"*) /bin/mv "$3" "$3.removed" ;; esac
+                exec /usr/bin/ruby "$@"
+                """#)
+            }
+            let result = try await ProcessRunner().run(.init(executableURL: URL(filePath: "/bin/bash"),
+                arguments: [fixture.manager.appending(path: "main.sh").path, "--json", "plan", "scope-registry-delete", "@company"],
+                environment: fixture.environment, currentDirectoryURL: fixture.manager))
+            let envelope = try JSONDecoder().decode(ManagerEnvelope<NodeActionPlanPayload>.self, from: result.standardOutput)
+            XCTAssertNotEqual(result.terminationStatus, 0)
+            XCTAssertFalse(envelope.ok)
+            XCTAssertNil(envelope.data)
+            XCTAssertEqual(envelope.error?.code, "registry-state-unavailable")
+            try Data("@company:registry=\n".utf8).write(to: config)
+            do {
+                _ = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager)
+                XCTFail("An actual bundled query or file read failure must fail the Swift boundary")
+            } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "registry-state-unavailable") }
+        }
+    }
+}

@@ -643,6 +643,7 @@ render_execute_json() {
             return 1
             ;;
         registry-set)
+            subject="$(normalize_registry_url_trailing_slash "$subject")"
             validate_registry_url "$subject" || {
                 printf '{"code":"invalid-registry-url","action":"registry-set","registry":"%s"}\n' "$(json_escape "$subject")"
                 return 1
@@ -669,6 +670,7 @@ render_execute_json() {
                 printf '{"code":"invalid-scope-name","action":"scope-registry-set","scope":"%s"}\n' "$(json_escape "$subject")"
                 return 1
             }
+            extra="$(normalize_registry_url_trailing_slash "$extra")"
             validate_registry_url "$extra" || {
                 printf '{"code":"invalid-registry-url","action":"scope-registry-set","scope":"%s","registry":"%s"}\n' "$(json_escape "$subject")" "$(json_escape "$extra")"
                 return 1

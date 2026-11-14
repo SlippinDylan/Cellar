@@ -1,8 +1,8 @@
 # Manager Snapshot
 
-- Node source commit: `075464ed72f8d3ce01c0316e17a23c6cb8c3652c`（25 个生产白名单文件）
+- Node source commit: `8aaa85dd2cd832ae6553aede87f9c48dab78b4f5`（25 个生产白名单文件）
 - Homebrew / frozen Zsh source commit: `1c9d71b3fbec98034b397d76babe47e459ad83f6`（19 个冻结生产文件）
-- Snapshot version: `075464e-app4`
+- Snapshot version: `8aaa85d-app5`
 - Generated: 2026-11-14
 
 `node-manager` follows `scripts/node-manager/app-bundle-manifest.txt`.
@@ -28,3 +28,12 @@ in this resource tree and must keep the interactive source file byte-identical.
 并保留清理的部分完成、未知及未开始事实和稳定失败 code。旧来源的 Homebrew、
 交互式 Zsh 文件及现有 Cellar-owned Zsh adapters 均未变更。新 runtime 目录防止复用
 旧 `1c9d71b-app3` 运行副本；不迁移或删除旧版本目录。
+
+`app5`（2026-11-14）按生产白名单从已审查 Node source commit
+`8aaa85dd2cd832ae6553aede87f9c48dab78b4f5` 同步全部 25 项，实际变化只涉及
+`lib/package.sh`、`lib/json_plan.sh` 和 `lib/json_execute.sh`。Registry URL
+统一支持无凭证 HTTPS 与精确 loopback HTTP，首尾 Unicode 空白规范化后补齐 slash，
+保留编码路径；非 nvm 环境仍可管理 Registry。计划在输出成功前完成所需配置读取，
+实际查询或文件读取失败返回失败响应，成功的显式空配置值保留。Homebrew、交互式
+Zsh 与现有 Cellar-owned Zsh adapters 的来源及内容不变。新 runtime 目录防止复用
+旧 `075464e-app4` 运行副本；不迁移或删除旧版本目录。

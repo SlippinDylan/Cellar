@@ -264,34 +264,34 @@ validate_scope_name() {
 
 validate_registry_url() {
     local url="${1:-}"
-    local remainder=""
-    local authority=""
-    local path=""
-
-    case "$url" in
-        https://*) remainder="${url#https://}" ;;
-        http://localhost/*|http://localhost:[0-9]*/*|http://127.0.0.1/*|http://127.0.0.1:[0-9]*/*)
-            remainder="${url#http://}"
-            ;;
-        *) return 1 ;;
-    esac
-    case "$url" in
-        *[[:space:]]*|*\?*|*\#*) return 1 ;;
-    esac
-    case "$remainder" in
-        */) ;;
-        *) return 1 ;;
-    esac
-    authority="${remainder%%/*}"
-    path="${remainder#*/}"
-    [ -n "$authority" ] || return 1
+    local authority="" host="" port="" path=""
+    [[ "$url" =~ ^https?://([A-Za-z0-9._-]+|\[::1\])(:[0-9]+)?(/[A-Za-z0-9._~/%+-]*)?$ ]] || return 1
+    case "$url" in *[[:space:]]*) return 1 ;; esac
+    authority="${url#*://}"
+    authority="${authority%%/*}"
+    host="$authority"
     case "$authority" in
-        *"@"*) return 1 ;;
+        \[::1\]:*) host="[::1]"; port="${authority#\[::1\]:}" ;;
+        \[::1\]) ;;
+        *:*) host="${authority%%:*}"; port="${authority#*:}" ;;
     esac
-    [[ "$authority" =~ ^[A-Za-z0-9._-]+(:[0-9]+)?$ ]] || return 1
-    case "$path" in
-        *[!A-Za-z0-9._~/%+-]*) return 1 ;;
+    if [ -n "$port" ]; then
+        [ "${#port}" -le 5 ] && [ "$((10#$port))" -ge 1 ] && [ "$((10#$port))" -le 65535 ] || return 1
+    fi
+    case "$url" in
+        http://*)
+            host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+            case "$host" in localhost|127.0.0.1|\[::1\]) ;; *) return 1 ;; esac
+            ;;
     esac
+    path="${url#*://}"
+    path="${path#*/}"
+    # A percent escape represents one byte; never silently repair invalid escapes.
+    while [[ "$path" = *%* ]]; do
+        path="${path#*%}"
+        [[ "$path" =~ ^[0-9A-Fa-f]{2} ]] || return 1
+        path="${path:2}"
+    done
     return 0
 }
 
@@ -299,14 +299,17 @@ validate_registry_url() {
 # trailing slash, so a missing slash is a real correctness footgun, not
 # just a style nit -- but rejecting the extremely common "no trailing
 # slash" typed form outright is bad UX. Add it back for otherwise
-# http(s)-shaped input before validation, at interactive entry points only.
+# http(s)-shaped input before validation at every input boundary.
 normalize_registry_url_trailing_slash() {
-    local url="${1:-}"
-    case "$url" in
-        */) printf '%s\n' "$url" ;;
-        http://*|https://*) printf '%s/\n' "$url" ;;
-        *) printf '%s\n' "$url" ;;
-    esac
+    # Match Foundation's whitespacesAndNewlines: Unicode separators and tab/newline controls.
+    ruby -e '
+      whitespace = /[\p{Z}\u0009-\u000D\u0085]/
+      url = ARGV.fetch(0).dup.force_encoding(Encoding::UTF_8)
+      exit 1 unless url.valid_encoding?
+      url = url.sub(/\A#{whitespace}+/, "").sub(/#{whitespace}+\z/, "")
+      url += "/" if url.match?(/\Ahttps?:\/\//) && !url.end_with?("/")
+      puts url
+    ' "${1:-}"
 }
 
 sanitize_filename_component() {

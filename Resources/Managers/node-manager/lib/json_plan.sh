@@ -162,9 +162,12 @@ render_non_package_action_plan_json() {
     local external_write="false"
     local plan_token=""
     local cleanup_plan_material=""
+    local registry_key="" effective_registry="" user_registry="" project_registry="" global_registry=""
+    local registry_read_failed=false
 
     case "$action" in
         registry-set)
+            subject="$(normalize_registry_url_trailing_slash "$subject")"
             validate_registry_url "$subject" || {
                 printf '{"code":"invalid-registry-url","action":"registry-set","registry":"%s"}\n' "$(json_escape "$subject")"
                 return 1
@@ -180,6 +183,7 @@ render_non_package_action_plan_json() {
                 printf '{"code":"invalid-scope-name","action":"scope-registry-set","scope":"%s"}\n' "$(json_escape "$subject")"
                 return 1
             }
+            extra="$(normalize_registry_url_trailing_slash "$extra")"
             validate_registry_url "$extra" || {
                 printf '{"code":"invalid-registry-url","action":"scope-registry-set","scope":"%s","registry":"%s"}\n' "$(json_escape "$subject")" "$(json_escape "$extra")"
                 return 1
@@ -263,6 +267,26 @@ render_non_package_action_plan_json() {
             ;;
     esac
 
+    case "$action" in
+        registry-set|registry-delete) registry_key="registry" ;;
+        scope-registry-set|scope-registry-delete) registry_key="${subject}:registry" ;;
+    esac
+    if [ -n "$registry_key" ]; then
+        effective_registry="$(npm config get "$registry_key" 2>/dev/null)" || registry_read_failed=true
+        case "$action" in
+            registry-delete|scope-registry-delete)
+                user_registry="$(npm_config_get_layer "$registry_key" user)" || registry_read_failed=true
+                project_registry="$(npm_config_get_layer "$registry_key" project)" || registry_read_failed=true
+                global_registry="$(npm_config_get_layer "$registry_key" global)" || registry_read_failed=true
+                ;;
+        esac
+        # Finish all required reads before rendering success; unset values remain explicit strings.
+        if [ "$registry_read_failed" = true ]; then
+            printf '{"code":"registry-state-unavailable","action":"%s"}\n' "$(json_escape "$action")"
+            return 1
+        fi
+    fi
+
     printf '{'
     printf '"ok":true,'
     printf '"schemaVersion":1,'
@@ -277,24 +301,24 @@ render_non_package_action_plan_json() {
 
     case "$action" in
         registry-set)
-            printf ',"effectiveRegistry":"%s"' "$(json_escape "$(npm config get registry 2>/dev/null || true)")"
+            printf ',"effectiveRegistry":"%s"' "$(json_escape "$effective_registry")"
             printf ',"targetRegistry":"%s"' "$(json_escape "$subject")"
             ;;
         registry-delete)
-            printf ',"effectiveRegistry":"%s"' "$(json_escape "$(npm config get registry 2>/dev/null || true)")"
-            printf ',"userRegistry":"%s"' "$(json_escape "$(npm_config_get_layer registry user)")"
-            printf ',"projectRegistry":"%s"' "$(json_escape "$(npm_config_get_layer registry project)")"
-            printf ',"globalRegistry":"%s"' "$(json_escape "$(npm_config_get_layer registry global)")"
+            printf ',"effectiveRegistry":"%s"' "$(json_escape "$effective_registry")"
+            printf ',"userRegistry":"%s"' "$(json_escape "$user_registry")"
+            printf ',"projectRegistry":"%s"' "$(json_escape "$project_registry")"
+            printf ',"globalRegistry":"%s"' "$(json_escape "$global_registry")"
             ;;
         scope-registry-set)
-            printf ',"effectiveRegistry":"%s"' "$(json_escape "$(npm config get "${subject}:registry" 2>/dev/null || true)")"
+            printf ',"effectiveRegistry":"%s"' "$(json_escape "$effective_registry")"
             printf ',"targetRegistry":"%s"' "$(json_escape "$extra")"
             ;;
         scope-registry-delete)
-            printf ',"effectiveRegistry":"%s"' "$(json_escape "$(npm config get "${subject}:registry" 2>/dev/null || true)")"
-            printf ',"userRegistry":"%s"' "$(json_escape "$(npm_config_get_layer "${subject}:registry" user)")"
-            printf ',"projectRegistry":"%s"' "$(json_escape "$(npm_config_get_layer "${subject}:registry" project)")"
-            printf ',"globalRegistry":"%s"' "$(json_escape "$(npm_config_get_layer "${subject}:registry" global)")"
+            printf ',"effectiveRegistry":"%s"' "$(json_escape "$effective_registry")"
+            printf ',"userRegistry":"%s"' "$(json_escape "$user_registry")"
+            printf ',"projectRegistry":"%s"' "$(json_escape "$project_registry")"
+            printf ',"globalRegistry":"%s"' "$(json_escape "$global_registry")"
             ;;
         nvm-install)
             printf ',"requestedVersion":"%s"' "$(json_escape "$subject")"

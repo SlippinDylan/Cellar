@@ -186,7 +186,7 @@ extension ActivityItemReason {
         if let error = error as? BridgeError {
             switch error {
             case .executableNotFound: self = .unavailable
-            case .processTimedOut: self = .network
+            case .processTimedOut: self = .timedOut
             case .invalidOutput, .unsupportedSchema: self = .stateUnavailable
             case .managerFailure(let code, _):
                 if Self.verificationStatus(code: code) != nil { self = .stateUnavailable }
@@ -227,6 +227,7 @@ extension ActivityItemReason {
         switch self {
         case .stateChanged: LocalizedStringResource("The environment changed after confirmation. Refresh and review the task again.")
         case .unavailable: LocalizedStringResource("The target or required tool is unavailable. Refresh and check the environment.")
+        case .timedOut: LocalizedStringResource("The task exceeded its time limit. Refresh to check the current state before trying again.")
         case .network: LocalizedStringResource("The service could not be reached. Check the connection and try again.")
         case .permission: LocalizedStringResource("The task could not access the required files. Check permissions and try again.")
         case .preparationFailed: LocalizedStringResource("The task could not be prepared safely. Refresh and review the selected targets.")

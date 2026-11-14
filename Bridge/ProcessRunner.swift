@@ -75,6 +75,7 @@ actor ProcessRunner {
     private var runningProcesses: [UUID: pid_t] = [:]
 
     func run(_ request: ProcessRequest) async throws -> ProcessResult {
+        try Task.checkCancellation()
         let identifier = UUID()
         let process = try Self.spawn(request)
         runningProcesses[identifier] = process.processIdentifier

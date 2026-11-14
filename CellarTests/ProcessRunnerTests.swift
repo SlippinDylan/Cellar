@@ -24,6 +24,47 @@ final class ProcessRunnerTests: XCTestCase {
         XCTAssertFalse(result.standardErrorWasTruncated)
     }
 
+    func testAlreadyCancelledRequestDoesNotStartExecutable() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cellar-pre-cancelled-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appending(path: "started")
+        let script = try makeScript("#!/bin/sh\nprintf started > \"$1\"\n")
+        defer { try? FileManager.default.removeItem(at: script) }
+        let runner = ProcessRunner()
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await runner.run(ProcessRequest(
+                executableURL: script, arguments: [marker.path], environment: ["HOME": root.path, "PATH": "/usr/bin:/bin"],
+                currentDirectoryURL: root
+            ))
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation")
+        } catch is CancellationError {
+            // The request has unwound, including any child cleanup.
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+    }
+
+    func testAlreadyCancelledRequestTakesPrecedenceOverSpawnFailure() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cellar-pre-cancelled-\(UUID().uuidString)")
+        let runner = ProcessRunner()
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await runner.run(ProcessRequest(
+                executableURL: root.appending(path: "missing"), arguments: [], environment: [:], currentDirectoryURL: nil
+            ))
+        }
+        do {
+            _ = try await task.value
+            XCTFail("Expected cancellation before spawn")
+        } catch is CancellationError {
+            // Cancellation must win over the deterministic ENOENT from spawn.
+        }
+    }
+
     func testBoundsEachCapturedStreamAndContinuesDraining() async throws {
         let script = try makeScript(
             "#!/bin/sh\ni=0\nwhile [ $i -lt 10000 ]; do\n  printf 1234567890\n  printf abcdefghij >&2\n  i=$((i + 1))\ndone\n"

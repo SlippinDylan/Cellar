@@ -424,6 +424,7 @@ enum ActivityItemReason: String, Codable, CaseIterable, Sendable {
     case stateChanged
     case unavailable
     case network
+    case timedOut
     case permission
     case preparationFailed
     case alreadyInstalled

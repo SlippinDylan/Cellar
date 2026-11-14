@@ -1,6 +1,59 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The task exceeded its time limit. Refresh to check the current state before trying again." : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The task exceeded its time limit. Refresh to check the current state before trying again."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任务已超时。请刷新以检查当前状态，然后再重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "任務已逾時。請重新整理以檢查目前狀態，再重試。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "タスクが制限時間を超えました。再試行する前に、更新して現在の状態を確認してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "작업이 제한 시간을 초과했습니다. 다시 시도하기 전에 새로 고침하여 현재 상태를 확인하세요."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Aufgabe hat das Zeitlimit überschritten. Aktualisiere, um den aktuellen Zustand zu prüfen, bevor du es erneut versuchst."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La tâche a dépassé le délai imparti. Actualisez pour vérifier l’état actuel avant de réessayer."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La tarea superó el límite de tiempo. Actualiza para comprobar el estado actual antes de volver a intentarlo."
+          }
+        }
+      }
+    },
     "These installed Formula packages use this software. Cask dependents are not listed. Homebrew checks the installed versions and may refuse removal." : {
       "extractionState": "manual",
       "localizations": {
@@ -11063,55 +11116,55 @@
         }
       }
     },
-    "Finish or cancel the current task before changing the language." : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Finish or cancel the current task before changing the language."
+    "Wait for the current task to finish before changing the language." : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wait for the current task to finish before changing the language."
           }
         },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "请先完成或取消当前任务，再更改语言。"
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请等待当前任务完成后再更改语言。"
           }
         },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "請先完成或取消目前的作業，再更改語言。"
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請等待目前的任務完成後再更改語言。"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "言語を変更する前に、現在のタスクを完了するかキャンセルしてください。"
+            "value": "言語を変更する前に、現在のタスクが完了するまでお待ちください。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "언어를 변경하기 전에 현재 작업을 완료하거나 취소하세요."
+            "value": "현재 작업이 완료될 때까지 기다린 후 언어를 변경하세요."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Beende die aktuelle Aufgabe oder brich sie ab, bevor du die Sprache änderst."
+            "value": "Warte, bis die aktuelle Aufgabe abgeschlossen ist, bevor du die Sprache änderst."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Terminez ou annulez la tâche en cours avant de changer la langue."
+            "value": "Attendez la fin de la tâche en cours avant de changer de langue."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Termina o cancela la tarea actual antes de cambiar el idioma."
+            "value": "Espera a que termine la tarea actual antes de cambiar el idioma."
           }
         }
       }

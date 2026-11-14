@@ -41,7 +41,7 @@ struct SettingsView: View {
         .alert("Unable to Restart", isPresented: $showsRestartBlocked) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Finish or cancel the current task before changing the language.")
+            Text("Wait for the current task to finish before changing the language.")
         }
     }
 
@@ -52,7 +52,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Language")
                         Text(operationStore.hasActiveOperations
-                             ? LocalizedStringResource("Finish or cancel the current task before changing the language.")
+                             ? LocalizedStringResource("Wait for the current task to finish before changing the language.")
                              : LocalizedStringResource("Changing the language restarts Cellar."))
                             .font(.callout)
                             .foregroundStyle(.secondary)

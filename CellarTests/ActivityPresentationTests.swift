@@ -22,6 +22,39 @@ final class ActivityPresentationTests: XCTestCase {
         }
     }
 
+    func testLocalProcessTimeoutKeepsItsReasonAndActualSummaryStatus() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "cellar-local-timeout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let script = root.appending(path: "local-work.sh")
+        try Data("#!/bin/sh\nexec /bin/sleep 10\n".utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        do {
+            _ = try await ProcessRunner().run(.init(executableURL: script, arguments: [],
+                environment: ["HOME": root.path, "PATH": "/usr/bin:/bin"], currentDirectoryURL: root, timeout: .milliseconds(100)))
+            XCTFail("Expected local process timeout")
+        } catch let error as BridgeError {
+            guard case .processTimedOut = error else { return XCTFail("Unexpected error: \(error)") }
+            let reason = ActivityItemReason(error: error)
+            XCTAssertEqual(reason, .timedOut)
+            XCTAssertEqual(ActivityItemReason(error: error, preparing: true), .timedOut)
+            let renderer = ActivityRenderer(locale: .init(identifier: "en"))
+            for status in [ActivityStatus.failed, .cancelled, .unknown, .partiallySucceeded] {
+                let record = ActivitySummary(id: UUID(), operation: .maintenance, scope: .shell,
+                    targetDisplayNames: [], date: Date(), status: status, itemOutcomes: [], reason: reason)
+                let restored = try JSONDecoder().decode(ActivitySummary.self, from: JSONEncoder().encode(record))
+                XCTAssertEqual(restored.status, status)
+                XCTAssertEqual(restored.reason, .timedOut)
+                let detail = renderer.detail(restored)
+                XCTAssertTrue(detail.contains(renderer.status(status)))
+                XCTAssertTrue(detail.contains("exceeded its time limit"))
+                XCTAssertTrue(detail.contains("Refresh to check the current state"))
+                XCTAssertFalse(detail.contains("connection"))
+                XCTAssertFalse(detail.contains(script.path))
+            }
+        }
+    }
+
     func testIncompleteOwnershipVerificationHasItsOwnReason() {
         XCTAssertEqual(ActivityItemReason(error: HomebrewClientError.scanIncomplete), .scanIncomplete)
     }

@@ -1,6 +1,110 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+  "This Node installation is readable. npm package changes and search require a supported nvm installation.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "This Node installation is readable. npm package changes and search require a supported nvm installation."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "可以读取此 Node 安装的信息。npm 软件包修改和搜索需要受支持的 nvm 安装。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "可以讀取此 Node 安裝的資訊。npm 套件變更和搜尋需要支援的 nvm 安裝。"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "この Node インストールの情報は読み取れます。npm パッケージの変更と検索には、対応する nvm インストールが必要です。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "이 Node 설치의 정보는 읽을 수 있습니다. npm 패키지 변경과 검색에는 지원되는 nvm 설치가 필요합니다."
+        }
+      },
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Diese Node-Installation kann gelesen werden. Änderungen und Suche nach npm-Paketen erfordern eine unterstützte nvm-Installation."
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Les informations de cette installation Node sont lisibles. La modification et la recherche de paquets npm nécessitent une installation nvm prise en charge."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Se puede leer esta instalación de Node. Los cambios y la búsqueda de paquetes npm requieren una instalación de nvm compatible."
+        }
+      }
+    }
+  },
+  "Use a credential-free HTTPS Registry URL, or HTTP on localhost, 127.0.0.1, or [::1]. Other addresses are unsupported.": {
+    "localizations": {
+      "en": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Use a credential-free HTTPS Registry URL, or HTTP on localhost, 127.0.0.1, or [::1]. Other addresses are unsupported."
+        }
+      },
+      "zh-Hans": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "请使用不含凭证的 HTTPS 软件源地址，或 localhost、127.0.0.1、[::1] 上的 HTTP 地址。不支持其他地址。"
+        }
+      },
+      "zh-Hant": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "請使用不含憑證的 HTTPS 套件來源網址，或 localhost、127.0.0.1、[::1] 上的 HTTP 網址。不支援其他位址。"
+        }
+      },
+      "ja": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "認証情報を含まない HTTPS レジストリ URL、または localhost、127.0.0.1、[::1] の HTTP URL を使用してください。他のアドレスには対応していません。"
+        }
+      },
+      "ko": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "인증 정보가 없는 HTTPS 레지스트리 URL 또는 localhost, 127.0.0.1, [::1]의 HTTP URL을 사용하세요. 다른 주소는 지원하지 않습니다."
+        }
+      },
+      "de": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Verwende eine HTTPS-Registry-URL ohne Zugangsdaten oder HTTP auf localhost, 127.0.0.1 oder [::1]. Andere Adressen werden nicht unterstützt."
+        }
+      },
+      "fr": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Utilisez une URL de registre HTTPS sans identifiants, ou HTTP sur localhost, 127.0.0.1 ou [::1]. Les autres adresses ne sont pas prises en charge."
+        }
+      },
+      "es": {
+        "stringUnit": {
+          "state": "translated",
+          "value": "Usa una URL de registro HTTPS sin credenciales, o HTTP en localhost, 127.0.0.1 o [::1]. No se admiten otras direcciones."
+        }
+      }
+    }
+  },
   "The item changed. Review it again before retrying." : {
     "localizations" : {
       "en" : {

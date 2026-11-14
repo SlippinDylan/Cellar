@@ -246,9 +246,9 @@ private struct ToolsDirectFixture {
           exit 1
         fi
         case "$2" in
-          summary) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"/fixture/node","npmPath":"/fixture/npm","nodeVersion":"v22.0.0","npmVersion":"10.0.0","nvmLoaded":false,"globalPrefix":"/fixture","globalRoot":"/fixture/lib","registry":"https://registry.example.test/"}}' ;;
+          summary) printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"%s/.nvm/versions/node/v22.0.0/bin/node","npmPath":"%s/.nvm/versions/node/v22.0.0/bin/npm","nodeVersion":"v22.0.0","npmVersion":"10.0.0","nvmLoaded":false,"globalPrefix":"%s/prefix","globalRoot":"%s/prefix/lib","registry":"https://registry.example.test/"}}\n' "$HOME" "$HOME" "$HOME" "$HOME" ;;
           packages) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{}}}' ;;
-          config) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"config","data":{"registry":"https://registry.example.test/","cache":"/fixture/cache","prefix":"/fixture","userRegistry":"","projectRegistry":"","globalRegistry":""}}' ;;
+          config) printf '{"ok":true,"schemaVersion":1,"command":"config","data":{"registry":"https://registry.example.test/","cache":"%s/.npm","prefix":"%s/prefix","userRegistry":"","projectRegistry":"","globalRegistry":""}}\n' "$HOME" "$HOME" ;;
           logs) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"logs","data":[]}' ;;
           outdated) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"outdated","data":{}}' ;;
           plan) printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","effectiveRegistry":"https://registry.example.test/","executeSupported":true,"executable":true}}\n' "$3" ;;
@@ -290,6 +290,7 @@ private struct ToolsDirectFixture {
             try Data("#!/bin/bash\nexit 1\n".utf8).write(to: file)
             try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
         }
+        try Data("#!/bin/sh\ncase \"$*\" in \"config get userconfig\") printf '%s/.npmrc\\n' \"$HOME\" ;; prefix) printf '%s/prefix\\n' \"$HOME\" ;; \"config get cache\") printf '%s/.npm\\n' \"$HOME\" ;; *) printf '%s/global/npmrc\\n' \"$HOME\" ;; esac\n".utf8).write(to: bin.appending(path: "npm"))
         try FileManager.default.copyItem(at: brew, to: bin.appending(path: "brew"))
         try Data("v22.0.0".utf8).write(to: root.appending(path: ".nvm/alias/default"))
     }

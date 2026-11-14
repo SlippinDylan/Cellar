@@ -250,6 +250,12 @@ npm 目录能力只针对全局包：
 - Registry 管理位于环境 > Homebrew Tap，Node 版本与项目版本位于环境 > Node.js；
 - current/wanted/latest 不能比较时产生 `unknown`，不得猜测或自动降级。
 
+### Node 包能力与 Registry 精确环境
+
+Bridge 在受控快照读取边界，通过 resolver 与写入口共享的真实 nvm 安装匹配校验派生并保存可选包操作上下文；UI 只读取该事实与 freshness，不在绘制或逐卡片 gate 中访问文件系统。版本补充与保留旧 outdated 信息的快照转换保留该能力，写入口仍重新复验真实安装：版本、Node/npm 可执行入口、canonical 安装边界均须相符；不依赖 `nvmLoaded`，不以版本相同推断归属。Library 保留其他已检测安装的数据，Discover 与包修改入口不把它们视为可管理目标。失败读取使保留的数据失去动作资格；runtime 的显式目标规则独立保留。
+
+Registry、scope 各层读取及 npm 缓存任务绑定读取时完整 summary 中的 Node/npm 入口和版本、global prefix/root；确认后重新读取同一环境，不重选 default/PATH 中的另一安装。Registry 指纹包含实际 npm 返回的 userconfig、globalconfig 与项目 prefix 配置路径，保留有界文件读取、配置引用、文件身份和默认别名复验。scope 各层查询同样在读取前后检查有界配置指纹与精确环境；`undefined`／`null` 是未设置，成功读取的显式空配置值保留；非零查询／文件读取状态在 source adapter 生成失败响应，旧 adapter 的 `<unavailable>` 标记同样作为读取失败处理，不显示成成功数据。包写入仍使用更严格的 nvm 与目的地重复校验。URLSession 的 ATS 仅为 `localhost`、`127.0.0.1`、`::1` 配置独立 HTTP 例外，无全局或整个局域网放宽；响应和重定向同源检查不变。真实 ATS 联网兼容性须按人工清单验收，fake transport 只验证协议。
+
 ## Shell 与环境
 
 冻结的 `omz-manager.sh` 与来源逐字节一致。Cellar-owned `app-json.sh` 和模块继续作为独立 schema v1 adapter，不驱动交互菜单。
@@ -268,7 +274,7 @@ Zsh tidy 位于环境 > 终端的维护区域，只移动确认列出的受限�
 
 网络 client 使用可注入 session、明确官方 host/用户配置来源、bounded response、deadline、取消和适当的 ETag/cache 语义。网络失败不触发无限重试或 polling。
 
-当前 `CatalogHTTPClient` 使用有界内存 ETag 缓存，并遵守 `no-store`；`NPMRegistryClient` 将有界搜索结果绑定到调用方明确提供的 Node environment 和 Registry origin，用户明确配置的 Registry 可使用无凭证的 HTTP 或 HTTPS，不能跨 origin 响应或重定向；`NodeVersionMetadataClient` 并发查询三个官方版本来源并分别保留失败。内置官方来源保持 HTTPS；Homebrew 下载仅允许官方 GitHub HTTPS 资产来源及其 HTTPS Release CDN，按官方资产大小流式写入自有临时文件。网站链接只接受无凭证的 HTTP/HTTPS URL。
+当前 `CatalogHTTPClient` 使用有界内存 ETag 缓存，并遵守 `no-store`；`NPMRegistryClient` 将有界搜索结果绑定到调用方明确提供的 Node environment 和 Registry origin，Registry 仅接受无凭证的 HTTPS 与 localhost／127.0.0.1／[::1] 本机 HTTP 测试地址，规范化只补齐结尾 `/` 并保留原路径和转义，不能跨 origin 响应或重定向；`NodeVersionMetadataClient` 并发查询三个官方版本来源并分别保留失败。内置官方来源保持 HTTPS；Homebrew 下载仅允许官方 GitHub HTTPS 资产来源及其 HTTPS Release CDN，按官方资产大小流式写入自有临时文件。网站链接只接受无凭证的 HTTP/HTTPS URL。
 
 Manager 从只读 Bundle 快照安装到版本化 Application Support：
 

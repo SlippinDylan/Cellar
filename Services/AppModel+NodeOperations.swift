@@ -54,7 +54,7 @@ extension AppModel {
         }
         let plan = try await operationStore.performCancellable(operationID: operationID) {
             try Task.checkCancellation()
-            let plan = try await self.service.planNode(request, snapshot: managers, preferredNodeVersion: self.preferredNodeVersion)
+            let plan = try await self.service.planNode(request, snapshot: managers, preferredNodeVersion: self.preferredNodeVersion, detectedSummary: self.node?.summary)
             try Task.checkCancellation()
             return plan
         }
@@ -161,7 +161,10 @@ extension AppModel {
 
     private func nodeActionIsAvailable(_ request: NodeActionRequest) -> Bool {
         // Selecting an explicit runtime remains available to recover a failed session read.
-        !nodeRefreshFailed || [.installNode, .useNode].contains(request.action)
+        if [.installPackage, .updatePackage, .uninstallPackage].contains(request.action) {
+            return nodePackageEnvironment != nil
+        }
+        return !nodeRefreshFailed || [.installNode, .useNode].contains(request.action)
     }
 
     private func updatePreferredNodeVersion(after plan: NodeActionPlan) {

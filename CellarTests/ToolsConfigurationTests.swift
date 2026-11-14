@@ -159,8 +159,9 @@ final class ToolsConfigurationTests: XCTestCase {
         }
     }
 
-    func testRegistryKeepsUserHTTPAndRejectsCredentialsAndMalformedScopes() {
-        XCTAssertEqual(SourceConfiguration.registryURL("http://registry.example.test/")?.scheme, "http")
+    func testRegistrySupportsHTTPSAndLoopbackAndRejectsCredentialsAndMalformedScopes() {
+        XCTAssertNil(SourceConfiguration.registryURL("http://registry.example.test/"))
+        XCTAssertEqual(SourceConfiguration.registryURL("http://localhost/")?.scheme, "http")
         XCTAssertNil(SourceConfiguration.registryURL("https://user:secret@example.test/"))
         XCTAssertNil(SourceConfiguration.registryURL("https://example.test/#token"))
         XCTAssertTrue(SourceConfiguration.validScope("@company"))
@@ -191,4 +192,36 @@ final class ToolsConfigurationTests: XCTestCase {
 private actor RuntimeReadCounter {
     private(set) var count = 0
     func read() -> [OfficialNodeRelease] { count += 1; return [] }
+}
+
+extension ToolsConfigurationTests {
+    func testRegistryNormalizationPreservesEncodedPathAndOnlyAllowsExactLocalHTTPHosts() throws {
+        for (input, expected) in [
+            (" https://registry.example.test\n", "https://registry.example.test/"),
+            ("https://registry.example.test/npm%2FPrivate+one", "https://registry.example.test/npm%2FPrivate+one/"),
+            ("https://registry.example.test/npm//", "https://registry.example.test/npm//"),
+            ("http://localhost:8080/npm", "http://localhost:8080/npm/"),
+            ("http://127.0.0.1", "http://127.0.0.1/"), ("http://[::1]:8080/", "http://[::1]:8080/")
+        ] {
+            let normalized = try XCTUnwrap(SourceConfiguration.registryURL(input))
+            XCTAssertEqual(normalized.absoluteString, expected)
+            XCTAssertEqual(SourceConfiguration.registryURL(normalized.absoluteString), normalized)
+            XCTAssertEqual(try NPMRegistryClient(registryURL: normalized).registryURL, normalized)
+        }
+        for input in ["http://remote.example/", "http://localhost.example/", "http://127.0.0.2/", "http://[::2]/", "https://example.test:0/",
+                      "https://example.test:65536/", "https://example.test:%31/", "https://example.test/%zz/", "https://example.test/?q", "https://example.test/#f",
+                      "https://user:secret@example.test/", "https://example.test/path\tpart/"] {
+            XCTAssertNil(SourceConfiguration.registryURL(input), input)
+        }
+    }
+
+    func testRegistryATSExceptionsAreLimitedToExactLoopbackHosts() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let plist = try XCTUnwrap(PropertyListSerialization.propertyList(from: Data(contentsOf: root.appending(path: "Info.plist")), format: nil) as? [String: Any])
+        let ats = try XCTUnwrap(plist["NSAppTransportSecurity"] as? [String: Any])
+        XCTAssertEqual(Set(ats.keys), ["NSExceptionDomains"])
+        let domains = try XCTUnwrap(ats["NSExceptionDomains"] as? [String: [String: Bool]])
+        XCTAssertEqual(Set(domains.keys), ["localhost", "127.0.0.1", "::1"])
+        for exception in domains.values { XCTAssertEqual(exception, ["NSExceptionAllowsInsecureHTTPLoads": true]) }
+    }
 }

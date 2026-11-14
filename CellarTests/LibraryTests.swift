@@ -3,6 +3,22 @@ import XCTest
 
 @MainActor
 final class LibraryTests: XCTestCase {
+    private let capabilityRoot = FileManager.default.temporaryDirectory.appending(path: "CellarLibraryCapability-\(UUID())")
+
+    override func setUpWithError() throws {
+        let bin = capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["node", "npm"] {
+            let file = bin.appending(path: name)
+            try Data("#!/bin/sh\nexit 97\n".utf8).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: capabilityRoot)
+    }
+
     func testUnknownPostflightDoesNotClaimHomebrewRemovedThePackage() async {
         let removal = previewRemoval()
         let provider = PreviewProgressProvider(removal: removal, snapshotUnavailable: true)
@@ -381,7 +397,7 @@ final class LibraryTests: XCTestCase {
         let privateContext = NodeEnvironmentContext(identifier: "/private/fixture/user/.nvm/node", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
         let summary = ActivitySummary(id: UUID(), operation: .uninstall, scope: .nodeRuntime(privateContext), targetDisplayNames: ["v18.0.0"], date: Date(), status: .succeeded, itemOutcomes: [.init(displayName: "v18.0.0", status: .succeeded, reason: nil)])
         let sanitized = try ActivitySummarySanitizer.sanitize(summary)
-        XCTAssertEqual(sanitized.scope, .nodeRuntime(context))
+        XCTAssertEqual(sanitized.scope, .nodeRuntime(.init(identifier: "nvm:v22.0.0", nodeVersion: context.nodeVersion, npmVersion: context.npmVersion)))
         XCTAssertFalse(String(decoding: try JSONEncoder().encode(sanitized), as: UTF8.self).contains("private"))
         let invalid = ActivitySummary(id: UUID(), operation: .uninstall, scope: .nodeRuntime(privateContext), targetDisplayNames: ["../../private"], date: Date(), status: .failed, itemOutcomes: [])
         XCTAssertThrowsError(try ActivitySummarySanitizer.sanitize(invalid))
@@ -421,7 +437,7 @@ final class LibraryTests: XCTestCase {
     }
 
     private var context: NodeEnvironmentContext {
-        .init(identifier: "nvm:v22.0.0", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
+        .init(identifier: capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin/node").path, nodeVersion: "v22.0.0", npmVersion: "10.0.0")
     }
 
     private func card(_ name: String, kind: HomebrewPackageKind) -> CatalogCardState {
@@ -433,7 +449,13 @@ final class LibraryTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarLibraryUnused-\(UUID().uuidString)")
         let runner = ProcessRunner()
         let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root), nodeClient: NodeManagerClient(runner: runner, environmentResolver: .init(homeDirectory: root)), shellClient: ShellManagerClient(runner: runner), environmentResolver: .init(homeDirectory: root))
-        return AppModel(service: service, operationStore: OperationStore(), batchProvider: provider)
+        let model = AppModel(service: service, operationStore: OperationStore(), batchProvider: provider)
+        let bin = capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin")
+        model.node = NodeSnapshot(summary: .init(nodePath: bin.appending(path: "node").path, npmPath: bin.appending(path: "npm").path,
+            nodeVersion: context.nodeVersion, npmVersion: context.npmVersion, nvmLoaded: false, globalPrefix: "/fixture", globalRoot: "/fixture/lib", registry: "https://registry.npmjs.org/"),
+            configuration: .init(registry: "https://registry.npmjs.org/", cache: "", prefix: "/fixture", userRegistry: "", projectRegistry: "", globalRegistry: ""),
+            packages: [], installations: NodeEnvironmentResolver(homeDirectory: capabilityRoot).installations(), managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil, packageEnvironment: context)
+        return model
     }
 }
 

@@ -78,12 +78,12 @@ private final class SourceNodeManagerFixture {
     let globalRoot: URL
     let client: NodeManagerClient
 
-    init(managerSource: URL? = nil) throws {
+    init(managerSource: URL? = nil, nonNVM: Bool = false) throws {
         let temporary = URL(filePath: "/private/tmp/CellarSourceCleanup-\(UUID())")
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         root = temporary
         manager = root.appending(path: "manager")
-        bin = root.appending(path: ".nvm/versions/node/v24.0.0/bin")
+        bin = root.appending(path: nonNVM ? "detected/bin" : ".nvm/versions/node/v24.0.0/bin")
         globalRoot = root.appending(path: "prefix/lib/node_modules")
         client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: NodeEnvironmentResolver(homeDirectory: root))
         for directory in [manager, bin, globalRoot, root.appending(path: "prefix/bin"), root.appending(path: ".nvm/alias")] {
@@ -100,13 +100,26 @@ private final class SourceNodeManagerFixture {
         try tool("node", "#!/bin/sh\nprintf 'v24.0.0\\n'\n")
         try tool("npm", #"""
         #!/bin/bash
+        printf '%s|%s|%s\n' "$NODE_MANAGER_ALLOW_JSON_EXECUTE" "$0" "$*" >> "$HOME/npm-calls"
         case "$1" in
+          --version|-v) [ ! -f "$HOME/npm-version-changed" ] || { printf '12.0.0\n'; exit; }; printf '11.0.0\n' ;;
+          ls) printf '{"dependencies":{}}\n' ;;
+          outdated) printf '{}\n' ;;
           root) printf '%s\n' "$HOME/prefix/lib/node_modules" ;;
           prefix) printf '%s\n' "$HOME/prefix" ;;
           config)
             case "$2:$3" in
-              get:cache) printf '%s\n' "$HOME/.npm" ;;
+              get:registry|get:@company:registry)
+                if [ "$3" = @company:registry ] && [ -f "$HOME/fail-effective-scope" ]; then exit 23; fi
+                key="$3"
+                /usr/bin/ruby -e 'p=File.join(ENV.fetch("HOME"),".npmrc"); k=ARGV[0]; v=File.file?(p) ? File.readlines(p).map{|l| n,v=l.strip.split("=",2); v if n==k}.compact.last : nil; puts(v || (k=="registry" ? "https://registry.npmjs.org/" : "undefined"))' "$key" ;;
+              get:userconfig) printf '%s/.npmrc\n' "$HOME" ;;
+              get:globalconfig) printf '%s/global/npmrc\n' "$HOME" ;;
+              get:cache) [ ! -f "$HOME/cache-path-changed" ] || { printf '%s/other-cache\n' "$HOME"; exit; }; printf '%s\n' "$HOME/.npm" ;;
               get:devdir) printf 'undefined\n' ;;
+              set:*|delete:*)
+                [ ! -f "$HOME/fail-registry-write" ] || exit 23
+                /usr/bin/ruby -e 'p=File.join(ENV.fetch("HOME"),".npmrc"); a,k,v=ARGV; lines=File.file?(p) ? File.readlines(p).reject{|l| l.split("=",2).first.strip==k} : []; lines << "#{k}=#{v}\n" if a=="set"; File.write(p,lines.join)' "$2" "$3" "$4" ;;
               *) exit 23 ;;
             esac ;;
           cache)
@@ -306,7 +319,7 @@ extension NodeManagerContractTests {
             do {
                 _ = try await fixture.client.execute(plan, managerDirectory: fixture.manager)
                 XCTFail("Changed \(mutation) must reject")
-            } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-stale") }
+            } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, mutation == "bin" ? "node-environment-changed" : "plan-stale") }
             XCTAssertTrue(FileManager.default.fileExists(atPath: link.path) || (try? FileManager.default.destinationOfSymbolicLink(atPath: link.path)) != nil)
         }
     }
@@ -394,12 +407,16 @@ extension NodeManagerContractTests {
                        [["path": path + "-other", "status": "unknown", "reason": "deletion-incomplete"]], [] ] {
             var changed = error; changed["cleanupItems"] = items; invalid.append(changed)
         }
+        let original = fixture.manager.appending(path: "test-source-main.sh")
+        try FileManager.default.copyItem(at: fixture.manager.appending(path: "main.sh"), to: original)
         for value in invalid {
             let data = try JSONSerialization.data(withJSONObject: ["ok": false, "schemaVersion": 1, "command": "execute", "error": value])
             let payload = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "'", with: "'\\''")
-            try Data("#!/bin/bash\nprintf '%s\\n' '\(payload)'\nexit 1\n".utf8).write(to: fixture.manager.appending(path: "main.sh"))
+            let wrapper = "#!/bin/bash\nif [ \"$2\" = execute ]; then printf '%s\\n' '\(payload)'; exit 1; fi\nexec /bin/bash '\(original.path)' \"$@\"\n"
+            try Data(wrapper.utf8).write(to: fixture.manager.appending(path: "main.sh"))
+            let confirmed = try await fixture.plan("orphan-bins")
             do {
-                _ = try await fixture.client.execute(plan, managerDirectory: fixture.manager)
+                _ = try await fixture.client.execute(confirmed, managerDirectory: fixture.manager)
                 XCTFail("Malformed failure must not become an operation result")
             } catch BridgeError.invalidOutput { }
         }
@@ -471,9 +488,233 @@ extension NodeManagerContractTests {
         let operation = try await fixture.client.execute(plan, managerDirectory: fixture.manager)
         XCTAssertEqual(operation.cleanupItems, [])
         XCTAssertEqual(operation.batchItemStatus, .succeeded)
+        try Data().write(to: fixture.root.appending(path: "fail-registry-write"))
         do {
             let _: NodeOperationResult = try await fixture.client.request("execute", arguments: ["registry-delete", "registry"], managerDirectory: fixture.manager, environment: fixture.environment)
             XCTFail("Fake npm config delete fails")
         } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "operation-failed") }
+    }
+}
+
+extension NodeManagerContractTests {
+    func testActualSourceRegistryNormalizationScopeAndNonNVMConfiguration() async throws {
+        let fixture = try SourceNodeManagerFixture(nonNVM: true)
+        let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.manager, environment: fixture.environment)
+        XCTAssertFalse(summary.nvmLoaded)
+        for input in ["https://registry.example.test", "https://registry.example.test/npm%2Fprivate", "http://localhost:8080/npm", "http://127.0.0.1:8080", "http://[::1]:8080/npm/"] {
+            let expected = try XCTUnwrap(SourceConfiguration.registryURL(input)).absoluteString
+            let plan = try await fixture.client.plan(.init(action: .setRegistry, subject: input), managerDirectory: fixture.manager, detectedSummary: summary)
+            XCTAssertEqual(plan.request.subject, expected)
+            let result = try await fixture.client.execute(plan, managerDirectory: fixture.manager)
+            XCTAssertEqual(result.batchItemStatus, .succeeded)
+            XCTAssertTrue(try String(contentsOf: fixture.root.appending(path: ".npmrc"), encoding: .utf8).contains("registry=\(expected)"))
+            let scoped = try await fixture.client.plan(.init(action: .setScopeRegistry, subject: "@company", value: input), managerDirectory: fixture.manager, detectedSummary: summary)
+            XCTAssertEqual(scoped.request.value, expected)
+            let scopedResult = try await fixture.client.execute(scoped, managerDirectory: fixture.manager)
+            XCTAssertEqual(scopedResult.batchItemStatus, .succeeded)
+            let layers = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager)
+            XCTAssertEqual(layers.effective, expected)
+            XCTAssertEqual(layers.user, expected)
+            let removed = try await fixture.client.plan(.init(action: .deleteScopeRegistry, subject: "@company"), managerDirectory: fixture.manager, detectedSummary: summary)
+            let removedResult = try await fixture.client.execute(removed, managerDirectory: fixture.manager)
+            XCTAssertEqual(removedResult.batchItemStatus, .succeeded)
+        }
+        let unset = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager)
+        XCTAssertEqual(unset.effective, "undefined")
+        XCTAssertEqual(unset.user, "undefined")
+        let removed = try await fixture.client.plan(.init(action: .deleteRegistry), managerDirectory: fixture.manager, detectedSummary: summary)
+        let removedResult = try await fixture.client.execute(removed, managerDirectory: fixture.manager)
+        XCTAssertEqual(removedResult.batchItemStatus, .succeeded)
+        let cache = try await fixture.client.plan(NodeMaintenanceAction.verify.request, managerDirectory: fixture.manager, detectedSummary: summary)
+        let cacheResult = try await fixture.client.execute(cache, managerDirectory: fixture.manager)
+        XCTAssertEqual(cacheResult.batchItemStatus, .succeeded)
+        let clean = try await fixture.client.plan(NodeMaintenanceAction.npmCache.request, managerDirectory: fixture.manager, detectedSummary: summary)
+        let cleanResult = try await fixture.client.execute(clean, managerDirectory: fixture.manager)
+        XCTAssertEqual(cleanResult.batchItemStatus, .succeeded)
+        let changedCache = try await fixture.client.plan(NodeMaintenanceAction.verify.request, managerDirectory: fixture.manager, detectedSummary: summary)
+        try Data().write(to: fixture.root.appending(path: "cache-path-changed"))
+        do { _ = try await fixture.client.execute(changedCache, managerDirectory: fixture.manager); XCTFail("Changed cache target must reject") }
+        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-stale") }
+        for action in [NodeAction.installPackage, .updatePackage, .uninstallPackage] {
+            do {
+                _ = try await fixture.client.plan(.init(action: action, subject: "example"), managerDirectory: fixture.manager, detectedSummary: summary)
+                XCTFail("Readable non-nvm npm must not authorize package writes")
+            } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-environment-changed") }
+        }
+        let calls = try String(contentsOf: fixture.root.appending(path: "npm-calls"), encoding: .utf8)
+        XCTAssertTrue(calls.split(separator: "\n").allSatisfy { $0.contains(fixture.bin.path + "/npm") })
+        XCTAssertFalse(calls.contains("install example"))
+    }
+
+    func testActualSourceRegistryRejectsChangedExactEnvironmentAndGlobalConfiguration() async throws {
+        for change in ["global-file", "global-inode", "npm-version", "npm-entry", "default"] {
+            let fixture = try SourceNodeManagerFixture(nonNVM: true)
+            let global = fixture.root.appending(path: "global/npmrc")
+            try FileManager.default.createDirectory(at: global.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("registry=https://global.example.test/\n".utf8).write(to: global)
+            let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.manager, environment: fixture.environment)
+            let plan = try await fixture.client.plan(.init(action: .setRegistry, subject: "https://new.example.test"), managerDirectory: fixture.manager, detectedSummary: summary)
+            switch change {
+            case "global-file": try Data("registry=https://changed.example.test/\n".utf8).write(to: global)
+            case "global-inode":
+                try FileManager.default.moveItem(at: global, to: global.appendingPathExtension("old"))
+                try Data("registry=https://global.example.test/\n".utf8).write(to: global)
+            case "npm-version": try Data().write(to: fixture.root.appending(path: "npm-version-changed"))
+            case "npm-entry": try FileManager.default.removeItem(at: fixture.bin.appending(path: "npm"))
+            default: try Data("v22.0.0\n".utf8).write(to: fixture.root.appending(path: ".nvm/alias/default"))
+            }
+            do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.manager); XCTFail("Changed confirmation: \(change)") }
+            catch { XCTAssertTrue([ActivityItemReason.stateChanged, .stateUnavailable].contains(ActivityItemReason(error: error))) }
+            XCTAssertFalse(try String(contentsOf: fixture.root.appending(path: "npm-calls"), encoding: .utf8).contains("|config set "))
+        }
+    }
+
+    func testActualSourceRegistryURLPolicyMatchesAppAndNormalizesJSONEntryPoints() async throws {
+        let fixture = try SourceNodeManagerFixture(nonNVM: true)
+        for (input, accepted) in [
+            ("https://registry.example.test", true), ("https://registry.example.test/npm%2fpath+one", true),
+            (" https://registry.example.test/npm \n", true), ("\u{00A0}https://registry.example.test\u{00A0}", true), ("\u{000B}https://registry.example.test\u{000B}", true), ("https://registry.example.test/with\u{00A0}space", false), ("https://registry.example.test/with\u{000B}space", false), ("https://registry.example.test:65535/npm//", true),
+            ("http://localhost:8080", true), ("http://127.0.0.1/npm", true), ("http://[::1]:8080/npm", true),
+            ("http://registry.example.test/", false), ("http://localhost.example/", false), ("http://127.0.0.2/", false),
+            ("https://user:secret@example.test/", false), ("https://example.test/?query", false), ("https://example.test/#fragment", false),
+            ("https://example.test:0/", false), ("https://example.test:65536/", false), ("https://example.test:9999999999999/", false),
+            ("https://example.test/%zz/", false), ("https://example.test/path space/", false), ("HTTPS://example.test/", false)
+        ] {
+            XCTAssertEqual(SourceConfiguration.registryURL(input) != nil, accepted, input)
+            for action in [NodeAction.setRegistry, .setScopeRegistry] {
+                let arguments = action == .setRegistry ? [action.rawValue, input] : [action.rawValue, "@company", input]
+                do {
+                    let payload: NodeActionPlanPayload = try await fixture.client.request("plan", arguments: arguments, managerDirectory: fixture.manager, environment: fixture.environment)
+                    XCTAssertTrue(accepted, input)
+                    XCTAssertTrue(payload.executeSupported ?? false)
+                    XCTAssertEqual(action == .setRegistry ? payload.subject : payload.value, SourceConfiguration.registryURL(input)?.absoluteString)
+                } catch { XCTAssertFalse(accepted, "\(input): \(error)") }
+                do {
+                    let operation: NodeOperationResult = try await fixture.client.request("execute", arguments: arguments, managerDirectory: fixture.manager, environment: fixture.environment)
+                    XCTAssertTrue(accepted, input)
+                    XCTAssertEqual(operation.batchItemStatus, .succeeded)
+                    let contents = try String(contentsOf: fixture.root.appending(path: ".npmrc"), encoding: .utf8)
+                    XCTAssertTrue(contents.contains(try XCTUnwrap(SourceConfiguration.registryURL(input)).absoluteString))
+                } catch { XCTAssertFalse(accepted, "execute \(input): \(error)") }
+            }
+        }
+    }
+}
+
+extension NodeManagerContractTests {
+    func testSourceScopeReadBoundsAllDiscoveredLayersBeforeLayerReader() async throws {
+        for location in [".npmrc", "global/npmrc", "prefix/.npmrc"] {
+            let fixture = try SourceNodeManagerFixture()
+            let file = fixture.root.appending(path: location)
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(repeating: 65, count: 65_537).write(to: file)
+            try fixture.tool("ruby", #"""
+            #!/bin/bash
+            case "${2:-}" in *"File.foreach(config_file)"*) /usr/bin/touch "$HOME/layer-reader-ran" ;; esac
+            exec /usr/bin/ruby "$@"
+            """#)
+            let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.manager, environment: fixture.environment)
+            do { _ = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager); XCTFail("Oversized \(location) must refuse scope read") }
+            catch { }
+            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "layer-reader-ran").path))
+        }
+    }
+
+    func testSourceScopeReadRejectsLayerFailureAndConfigurationOrEnvironmentDrift() async throws {
+        for mode in ["layer-failure", "effective-failure", "config-drift", "entry-drift"] {
+            let fixture = try SourceNodeManagerFixture(nonNVM: true)
+            try Data("@company:registry=https://scope.example.test/\n".utf8).write(to: fixture.root.appending(path: ".npmrc"))
+            let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.manager, environment: fixture.environment)
+            let initial = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager)
+            XCTAssertEqual(initial.user, "https://scope.example.test/")
+            if mode == "effective-failure" { try Data().write(to: fixture.root.appending(path: "fail-effective-scope")) }
+            else {
+                try Data(mode.utf8).write(to: fixture.root.appending(path: "scope-mode"))
+                try fixture.tool("ruby", #"""
+                #!/bin/bash
+                case "${2:-}" in
+                  *"File.foreach(config_file)"*)
+                    case "$(/bin/cat "$HOME/scope-mode")" in
+                      layer-failure) /bin/mv "$3" "$3.removed" ;;
+                      config-drift) printf '# changed\n' >> "$HOME/.npmrc" ;;
+                      entry-drift) /usr/bin/touch "$HOME/npm-version-changed" ;;
+                    esac ;;
+                esac
+                exec /usr/bin/ruby "$@"
+                """#)
+            }
+            do { _ = try await fixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: fixture.manager); XCTFail("Failed or mixed layer data must refuse: \(mode)") }
+            catch { }
+        }
+    }
+
+    @MainActor
+    func testSourceSnapshotCapabilityIsRecordedAtReadAndWriteStillRevalidates() async throws {
+        let fixture = try SourceNodeManagerFixture()
+        let node = try await fixture.client.loadSnapshot(managerDirectory: fixture.manager)
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: fixture.root)
+        let service = SystemProbeService(runner: runner, installer: .init(applicationSupportDirectory: fixture.root.appending(path: "support")),
+            nodeClient: fixture.client, shellClient: .init(runner: runner, environmentResolver: .init(homeDirectory: fixture.root)), environmentResolver: resolver)
+        let model = AppModel(service: service, operationStore: OperationStore())
+        model.applyNodeReadResult(.success(node))
+        let context = try XCTUnwrap(model.nodePackageEnvironment)
+        try FileManager.default.removeItem(at: fixture.bin.appending(path: "npm"))
+        XCTAssertEqual(model.nodePackageEnvironment, context, "UI reads consume the recorded fact without new filesystem IO")
+        do { _ = try await fixture.client.planPackage(.init(name: "example", environment: context), action: .installPackage, managerDirectory: fixture.manager); XCTFail("Write preparation must revalidate missing npm") }
+        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-environment-changed") }
+        model.applyNodeReadResult(.failure(BridgeError.invalidOutput("fixture read failed")))
+        XCTAssertNil(model.nodePackageEnvironment)
+    }
+}
+
+extension NodeManagerContractTests {
+    func testSourceSnapshotDoesNotGrantCapabilityToSameVersionForeignEntries() async throws {
+        for name in ["node", "npm"] {
+            let fixture = try SourceNodeManagerFixture()
+            let foreign = fixture.root.appending(path: "detected/bin/\(name)")
+            try FileManager.default.createDirectory(at: foreign.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let entry = fixture.bin.appending(path: name)
+            try FileManager.default.copyItem(at: entry, to: foreign)
+            try FileManager.default.removeItem(at: entry)
+            try FileManager.default.createSymbolicLink(at: entry, withDestinationURL: foreign)
+            let snapshot = try await fixture.client.loadSnapshot(managerDirectory: fixture.manager)
+            XCTAssertEqual(snapshot.summary.nodeVersion, "v24.0.0")
+            XCTAssertEqual(snapshot.summary.npmVersion, "11.0.0")
+            XCTAssertNil(snapshot.packageEnvironment, "A same-version foreign \(name) entry remains readable but unsupported")
+        }
+    }
+}
+
+extension NodeManagerContractTests {
+    func testSourceScopeLayerFailuresProduceFailedRawEnvelopes() async throws {
+        let emptyFixture = try SourceNodeManagerFixture(nonNVM: true)
+        try Data("@company:registry=\n".utf8).write(to: emptyFixture.root.appending(path: ".npmrc"))
+        let summary: NodeSummary = try await emptyFixture.client.request("summary", managerDirectory: emptyFixture.manager, environment: emptyFixture.environment)
+        let emptyLayers = try await emptyFixture.client.scopeRegistryLayers("@company", summary: summary, managerDirectory: emptyFixture.manager)
+        XCTAssertEqual(emptyLayers.effective, "")
+        XCTAssertEqual(emptyLayers.user, "")
+        XCTAssertEqual(emptyLayers.project, "undefined")
+        XCTAssertEqual(emptyLayers.global, "undefined")
+        for effectiveFailure in [true, false] {
+            let fixture = try SourceNodeManagerFixture(nonNVM: true)
+            try Data("@company:registry=https://scope.example.test/\n".utf8).write(to: fixture.root.appending(path: ".npmrc"))
+            if effectiveFailure { try Data().write(to: fixture.root.appending(path: "fail-effective-scope")) }
+            else {
+                try fixture.tool("ruby", #"""
+                #!/bin/bash
+                case "${2:-}" in *"File.foreach(config_file)"*) /bin/mv "$3" "$3.removed" ;; esac
+                exec /usr/bin/ruby "$@"
+                """#)
+            }
+            let result = try await ProcessRunner().run(.init(executableURL: URL(filePath: "/bin/bash"),
+                arguments: [fixture.manager.appending(path: "main.sh").path, "--json", "plan", "scope-registry-delete", "@company"],
+                environment: fixture.environment, currentDirectoryURL: fixture.manager))
+            let envelope = try JSONDecoder().decode(ManagerEnvelope<NodeActionPlanPayload>.self, from: result.standardOutput)
+            XCTAssertNotEqual(result.terminationStatus, 0)
+            XCTAssertFalse(envelope.ok)
+            XCTAssertNil(envelope.data)
+            XCTAssertEqual(envelope.error?.code, "registry-state-unavailable")
+        }
     }
 }

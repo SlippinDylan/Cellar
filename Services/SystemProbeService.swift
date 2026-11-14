@@ -175,12 +175,14 @@ actor SystemProbeService {
     func planNode(
         _ request: NodeActionRequest,
         snapshot: SnapshotStatus,
-        preferredNodeVersion: String?
+        preferredNodeVersion: String?,
+        detectedSummary: NodeSummary? = nil
     ) async throws -> NodeActionPlan {
         try await nodeClient.plan(
             request,
             managerDirectory: nodeManagerDirectory(snapshot),
-            preferredNodeVersion: preferredNodeVersion
+            preferredNodeVersion: preferredNodeVersion,
+            detectedSummary: detectedSummary
         )
     }
 
@@ -205,8 +207,8 @@ actor SystemProbeService {
         return try await nodeClient.effectivePackageRegistry(specOrQuery, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
     }
 
-    func scopeRegistryLayers(_ scope: String, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NPMRegistryLayers {
-        try await nodeClient.scopeRegistryLayers(scope, environment: environment, managerDirectory: nodeManagerDirectory(snapshot))
+    func scopeRegistryLayers(_ scope: String, summary: NodeSummary, snapshot: SnapshotStatus) async throws -> NPMRegistryLayers {
+        try await nodeClient.scopeRegistryLayers(scope, summary: summary, managerDirectory: nodeManagerDirectory(snapshot))
     }
 
     func executeNPMPackage(_ plan: NodeActionPlan, environment: NodeEnvironmentContext, snapshot: SnapshotStatus) async throws -> NodeOperationResult {

@@ -5,8 +5,8 @@ struct NPMRegistryClient: Sendable {
     private let http: CatalogHTTPClient
 
     init(registryURL: URL, http: CatalogHTTPClient = CatalogHTTPClient()) throws {
-        guard CatalogWebsites.origin(registryURL) != nil, registryURL.query == nil, registryURL.fragment == nil else { throw CatalogSourceError.invalidURL }
-        self.registryURL = registryURL.path.isEmpty ? registryURL.appending(path: "/") : registryURL
+        guard let normalized = SourceConfiguration.registryURL(registryURL.absoluteString) else { throw CatalogSourceError.invalidURL }
+        self.registryURL = normalized
         self.http = http
     }
 

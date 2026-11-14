@@ -10,10 +10,18 @@ struct NPMRegistryLayers: Sendable {
 enum SourceConfiguration {
     static func registryURL(_ input: String) -> URL? {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty, value.rangeOfCharacter(from: .whitespacesAndNewlines.union(.controlCharacters)) == nil,
-              let components = URLComponents(string: value), components.query == nil, components.fragment == nil,
-              let url = components.url, CatalogWebsites.origin(url) != nil else { return nil }
-        return url
+        // Share the Manager's deliberately bounded URL syntax; preserve the encoded path verbatim.
+        guard value.range(of: #"^https?://(?:[A-Za-z0-9._-]+|\[::1\])(?::[0-9]+)?(?:/[A-Za-z0-9._~/%+\-]*)?$"#, options: .regularExpression) != nil,
+              !value.contains("\n"), !value.contains("\r"),
+              value.range(of: #"%(?![0-9A-Fa-f]{2})"#, options: .regularExpression) == nil,
+              let components = URLComponents(string: value, encodingInvalidCharacters: false),
+              let host = components.host, let url = components.url,
+              CatalogWebsites.origin(url) != nil,
+              components.port.map({ (1...65535).contains($0) }) ?? true,
+              value.range(of: #":([0-9]{6,})(?:/|$)"#, options: .regularExpression) == nil,
+              components.scheme == "https" || ["localhost", "127.0.0.1", "[::1]"].contains(host.lowercased())
+        else { return nil }
+        return URL(string: value.hasSuffix("/") ? value : value + "/")
     }
     static func validScope(_ scope: String) -> Bool {
         scope.range(of: #"^@[a-z0-9][a-z0-9._-]*$"#, options: .regularExpression) != nil

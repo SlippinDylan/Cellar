@@ -199,7 +199,7 @@ final class NodeConfigurationSafetyTests: XCTestCase {
             do { _ = try await fixture.client.plan(request, managerDirectory: fixture.root); XCTFail("Invalid boundary input must fail") }
             catch { XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "calls.log").path)) }
         }
-        for request in [NodeActionRequest(action: .setScopeRegistry, subject: "@company", value: "http://registry.example.test/"),
+        for request in [NodeActionRequest(action: .setScopeRegistry, subject: "@company", value: "http://localhost/"),
                         .init(action: .deleteScopeRegistry, subject: "@company"), .init(action: .deleteRegistry)] {
             let plan = try await fixture.client.plan(request, managerDirectory: fixture.root)
             _ = try await fixture.client.execute(plan, managerDirectory: fixture.root)
@@ -265,10 +265,19 @@ private struct NodeConfigurationFixture {
     init() throws {
         root = FileManager.default.temporaryDirectory.appending(path: "CellarNodeConfigurationTests-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let bin = root.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["node", "npm"] {
+            let tool = bin.appending(path: name)
+            try Data("#!/bin/sh\ncase \"$*\" in \"config get userconfig\") printf '%s/.npmrc\\n' \"$HOME\" ;; prefix) printf '%s/prefix\\n' \"$HOME\" ;; *) printf '%s/prefix/etc/npmrc\\n' \"$HOME\" ;; esac\n".utf8).write(to: tool)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: tool.path)
+        }
         let script = #"""
         #!/bin/bash
         printf '%s|%s|%s|%s\n' "$2" "$NODE_MANAGER_ALLOW_JSON_EXECUTE" "${NODE_MANAGER_ALLOW_PROJECT_WRITE:-0}" "$3" >> "$HOME/calls.log"
         case "$2" in
+          summary)
+            printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"%s/bin/node","npmPath":"%s/bin/npm","nodeVersion":"v24.0.0","npmVersion":"11.0.0","nvmLoaded":false,"globalPrefix":"%s/prefix","globalRoot":"%s/prefix/lib/node_modules","registry":"https://registry.example.test/"}}\n' "$HOME" "$HOME" "$HOME" "$HOME" ;;
           plan)
             if [ "$3" = project-nvmrc ] && [ -f "$HOME/replace-during-plan" ]; then
               /bin/mv "$4" "$HOME/project-during-plan"

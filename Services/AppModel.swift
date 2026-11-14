@@ -334,11 +334,17 @@ final class AppModel: ObservableObject {
         }
     }
 
+    var nodePackageEnvironment: NodeEnvironmentContext? {
+        nodeRefreshFailed ? nil : node?.packageEnvironment
+    }
+
     func canMutatePackages(in scope: BatchScope) -> Bool {
         switch scope {
         case .homebrew:
             return !homebrewRefreshFailed && homebrew?.snapshot?.sectionErrors[.packages] == nil
-        case .npm, .nodeRuntime:
+        case .npm(let environment):
+            return nodePackageEnvironment == environment
+        case .nodeRuntime:
             return !nodeRefreshFailed
         }
     }

@@ -117,8 +117,8 @@ final class CatalogSourceTests: XCTestCase {
         XCTAssertEqual(count, 0)
     }
 
-    func testExplicitHTTPRegistryAndWebsitesAreAcceptedWithoutCrossOriginResponses() async throws {
-        let url = try XCTUnwrap(URL(string: "http://registry.example:8080/npm/"))
+    func testLoopbackHTTPRegistryAndWebsitesAreAcceptedWithoutCrossOriginResponses() async throws {
+        let url = try XCTUnwrap(URL(string: "http://localhost:8080/npm/"))
         let website = try XCTUnwrap(URL(string: "http://package.example/docs"))
         let transport = FakeCatalogTransport(body: Data(#"{"objects":[{"package":{"name":"tool","version":"1.0.0","links":{"homepage":"http://package.example/docs"}}}],"total":1}"#.utf8))
         let registry = try NPMRegistryClient(registryURL: url, http: CatalogHTTPClient(transport: transport))
@@ -127,7 +127,7 @@ final class CatalogSourceTests: XCTestCase {
         XCTAssertEqual(results.first?.registryURL, url)
         XCTAssertEqual(results.first?.websiteURL, website)
         let requests = await transport.requests
-        XCTAssertEqual(requests.first?.allowedOrigins, ["http://registry.example:8080"])
+        XCTAssertEqual(requests.first?.allowedOrigins, ["http://localhost:8080"])
         XCTAssertEqual(requests.first?.url.path, "/npm/-/v1/search")
         await transport.setResponseURL(url.appending(path: "canonical/search"))
         let redirectedResults = try await registry.search("tool", environment: environment)
@@ -442,4 +442,19 @@ private actor ConcurrentNotModifiedTransport: CatalogHTTPTransport {
     }
 
     func download(_ request: CatalogHTTPRequest, to destination: URL) async throws { throw URLError(.unsupportedURL) }
+}
+
+extension CatalogSourceTests {
+    func testRegistrySearchPreservesEncodedBasePathInActualRequest() async throws {
+        for base in ["/npm%2FPrivate+one/", "/npm%2fPrivate+one//"] {
+            let transport = FakeCatalogTransport(body: Data(#"{"objects":[],"total":0}"#.utf8))
+            let url = try XCTUnwrap(URL(string: "https://registry.example.test" + base))
+            let client = try NPMRegistryClient(registryURL: url, http: .init(transport: transport))
+            _ = try await client.search("example", environment: .init(identifier: "fixture", nodeVersion: "v22.0.0", npmVersion: "10.0.0"))
+            let requests = await transport.requests
+            let request = try XCTUnwrap(requests.first)
+            let components = try XCTUnwrap(URLComponents(url: request.url, resolvingAgainstBaseURL: false))
+            XCTAssertEqual(components.percentEncodedPath, base + "-/v1/search")
+        }
+    }
 }

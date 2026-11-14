@@ -758,11 +758,11 @@ actor FakeBatchProvider: BatchOperationProviding {
         if refreshFails { throw Failure.refresh }
         if let snapshot = npmRefreshSnapshot { return snapshot }
         return NodeSnapshot(
-            summary: .init(nodePath: "/fake/node", npmPath: "/fake/npm", nodeVersion: environment.nodeVersion,
+            summary: .init(nodePath: environment.identifier, npmPath: URL(filePath: environment.identifier).deletingLastPathComponent().appending(path: "npm").path, nodeVersion: environment.nodeVersion,
                            npmVersion: environment.npmVersion, nvmLoaded: false, globalPrefix: "/fake",
                            globalRoot: "/fake", registry: "https://registry.npmjs.org"),
             configuration: .init(registry: "", cache: "", prefix: "", userRegistry: "", projectRegistry: "", globalRegistry: ""),
-            packages: [], installations: [], managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil
+            packages: [], installations: [.init(version: environment.nodeVersion, directory: URL(filePath: environment.identifier).deletingLastPathComponent().deletingLastPathComponent().path, isActive: true, isDefault: true)], managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil, packageEnvironment: environment
         )
     }
 

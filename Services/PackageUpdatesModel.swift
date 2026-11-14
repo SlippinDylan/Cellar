@@ -77,7 +77,7 @@ final class PackageUpdatesModel: ObservableObject {
     private func valid(_ intent: BatchIntent) -> Bool {
         let contextMatches = switch intent.scope {
         case .homebrew: model.canMutatePackages(in: intent.scope) && model.homebrewUpdateState == .available
-        case .npm(let environment): !model.nodeRefreshFailed && model.nodeUpdateState == .available && model.node.map { LibraryCatalog.context($0.summary) } == environment
+        case .npm: model.canMutatePackages(in: intent.scope) && model.nodeUpdateState == .available
         case .nodeRuntime: false
         }
         let currentItems = Set(model.updateCards.filter { $0.primaryAction == .update }.map(\.batchItem))

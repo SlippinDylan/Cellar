@@ -92,9 +92,11 @@ final class AppModelBatchIntegrationTests: XCTestCase {
         for version in ["v20.0.0", "v22.0.0"] {
             let bin = root.appending(path: ".nvm/versions/node/\(version)/bin")
             try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-            let entry = bin.appending(path: "node")
-            try Data("fixture only".utf8).write(to: entry)
-            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: entry.path)
+            for name in ["node", "npm"] {
+                let entry = bin.appending(path: name)
+                try Data("fixture only".utf8).write(to: entry)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: entry.path)
+            }
         }
         let resolver = NodeEnvironmentResolver(homeDirectory: root)
         let runner = ProcessRunner()
@@ -104,10 +106,16 @@ final class AppModelBatchIntegrationTests: XCTestCase {
                                          shellClient: ShellManagerClient(runner: runner), environmentResolver: resolver)
         let provider = FakeBatchProvider()
         let model = AppModel(service: service, operationStore: OperationStore(), batchProvider: provider)
-        let defaultEnvironment = NodeEnvironmentContext(identifier: "nvm:v20.0.0", nodeVersion: "v20.0.0", npmVersion: "10.0.0")
+        let defaultEnvironment = NodeEnvironmentContext(identifier: root.appending(path: ".nvm/versions/node/v20.0.0/bin/node").path, nodeVersion: "v20.0.0", npmVersion: "10.0.0")
         model.node = try await provider.refreshNPM(defaultEnvironment)
         XCTAssertNil(model.preferredNodeVersion)
-        let targetEnvironment = NodeEnvironmentContext(identifier: "nvm:v22.0.0", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
+        let targetEnvironment = NodeEnvironmentContext(identifier: root.appending(path: ".nvm/versions/node/v22.0.0/bin/node").path, nodeVersion: "v22.0.0", npmVersion: "10.0.0")
+        let alternate = try XCTUnwrap(BatchIntent(operation: .install, items: [.npm(.init(name: "example", environment: targetEnvironment))]))
+        do { _ = try await model.prepareBatch(alternate); XCTFail("The displayed v20 context cannot authorize v22") }
+        catch BatchOperationError.reconciliationUnavailable {}
+        // The displayed target is a controlled read; reconciliation must also pin future resolver calls to it.
+        model.node = try await provider.refreshNPM(targetEnvironment)
+        XCTAssertNil(model.preferredNodeVersion)
         let intent = try XCTUnwrap(BatchIntent(operation: .install, items: [.npm(.init(name: "example", environment: targetEnvironment))]))
         let plan = try await model.prepareBatch(intent)
         _ = try await model.executeBatch(plan)

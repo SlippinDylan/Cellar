@@ -3,7 +3,23 @@ import XCTest
 
 @MainActor
 final class DiscoverTests: XCTestCase {
-    private let environment = NodeEnvironmentContext(identifier: "/fixture/node", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
+    private let capabilityRoot = FileManager.default.temporaryDirectory.appending(path: "CellarDiscoverCapability-\(UUID())")
+
+    override func setUpWithError() throws {
+        let bin = capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["node", "npm"] {
+            let file = bin.appending(path: name)
+            try Data("#!/bin/sh\nexit 97\n".utf8).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: capabilityRoot)
+    }
+
+    private var environment: NodeEnvironmentContext { NodeEnvironmentContext(identifier: capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin/node").path, nodeVersion: "v22.0.0", npmVersion: "10.0.0") }
 
     func testPackageEditorLinesIncludeEmptyAndTrailingLines() {
         XCTAssertEqual(PackageEditorLines.starts(in: ""), [0])
@@ -426,7 +442,7 @@ final class DiscoverTests: XCTestCase {
     }
 
     private func snapshot(packages: [NodePackageRow] = [], registry: String = "https://registry.npmjs.org") -> NodeSnapshot {
-        NodeSnapshot(summary: .init(nodePath: environment.identifier, npmPath: "/fixture/npm", nodeVersion: environment.nodeVersion, npmVersion: environment.npmVersion, nvmLoaded: true, globalPrefix: "/fixture", globalRoot: "/fixture/lib", registry: registry), configuration: .init(registry: registry, cache: "", prefix: "/fixture", userRegistry: "", projectRegistry: "", globalRegistry: ""), packages: packages, installations: [], managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil)
+        NodeSnapshot(summary: .init(nodePath: environment.identifier, npmPath: capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin/npm").path, nodeVersion: environment.nodeVersion, npmVersion: environment.npmVersion, nvmLoaded: true, globalPrefix: "/fixture", globalRoot: "/fixture/lib", registry: registry), configuration: .init(registry: registry, cache: "", prefix: "/fixture", userRegistry: "", projectRegistry: "", globalRegistry: ""), packages: packages, installations: NodeEnvironmentResolver(homeDirectory: capabilityRoot).installations(), managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil, packageEnvironment: environment)
     }
 
     private func fixtureModel(_ provider: FakeBatchProvider) -> AppModel {

@@ -15,8 +15,8 @@ final class AppModelRefreshReliabilityTests: XCTestCase {
         let items: [NodeCleanupItem] = [.init(path: "/fixture/removed", status: .removed, reason: .removed),
                                         .init(path: "/fixture/failed", status: .failed, reason: .deletionFailed),
                                         .init(path: "/fixture/unattempted", status: .notAttempted, reason: .previousFailure)]
-        let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(#"{"action":"cleanup","executeSupported":true,"executable":true,"paths":["/fixture/removed","/fixture/failed","/fixture/unattempted"]}"#.utf8))
-        model.nodePlan = .init(id: UUID(), request: NodeMaintenanceAction.orphanBins.request, payload: payload, generatedAt: Date())
+        await model.prepareNodeAction(NodeMaintenanceAction.orphanBins.request)
+        XCTAssertNotNil(model.nodePlan)
         await model.executeNodePlan()
         let result = try XCTUnwrap(model.nodeActionResult)
         XCTAssertEqual(result.operation.cleanupItems, items)
@@ -334,7 +334,7 @@ private struct NodeRefreshFixture {
             try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
             for name in ["node", "npm"] {
                 let executable = bin.appending(path: name)
-                try Data("#!/bin/sh\nexit 93\n".utf8).write(to: executable)
+                try Data("#!/bin/sh\ncase \"$*\" in \"config get userconfig\") printf '%s/.npmrc\\n' \"$HOME\" ;; prefix) printf '%s/prefix\\n' \"$HOME\" ;; *) printf '%s/global/npmrc\\n' \"$HOME\" ;; esac\n".utf8).write(to: executable)
                 try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: executable.path)
             }
         }
@@ -356,7 +356,7 @@ private struct NodeRefreshFixture {
           exit 0
         fi
         case "$2" in
-          plan) printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","executeSupported":true,"executable":true,"normalizedVersion":"%s"}}\n' "$3" "$4" ;;
+          plan) printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","executeSupported":true,"executable":true,"normalizedVersion":"%s","paths":["/fixture/removed","/fixture/failed","/fixture/unattempted"]}}\n' "$3" "$4" ;;
           summary)
             if [ -f "$HOME/executed" ] && [ -f "$HOME/fail-after-execute" ]; then exit 1; fi
             bin="${PATH%%:*}"

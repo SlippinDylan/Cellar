@@ -129,7 +129,7 @@ extension AppModel {
             else {
                 node = NodeSnapshot(summary: core.summary, configuration: core.configuration, packages: core.packages,
                                     installations: core.installations, managerStatus: core.managerStatus, logs: core.logs,
-                                    outdatedError: error.localizedDescription, maintenanceError: core.maintenanceError)
+                                    outdatedError: error.localizedDescription, maintenanceError: core.maintenanceError, packageEnvironment: core.packageEnvironment)
                 nodeUpdateState = .failed
                 nodeOutdatedCheckedAt = Date()
             }

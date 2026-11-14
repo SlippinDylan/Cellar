@@ -471,6 +471,8 @@ final class NodePackageEnvironmentTests: XCTestCase {
     func testPackageActionUsesExplicitInstallationAndOneInvocationWriteGate() async throws {
         let fixture = try PackageManagerFixture()
         defer { fixture.remove() }
+        XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: ".nvm/alias/default"), encoding: .utf8), "v20.0.0")
+        XCTAssertEqual(fixture.context.nodeVersion, "v22.0.0", "The Bridge explicit target remains independent of the current default")
         let identity = NPMPackageIdentity(name: "example", environment: fixture.context)
         let plan = try await fixture.client.planPackage(identity, action: .installPackage, managerDirectory: fixture.root)
         let result = try await fixture.client.executePackage(plan, environment: fixture.context, managerDirectory: fixture.root)
@@ -746,4 +748,120 @@ private struct NodeFixtureBatchProvider: BatchOperationProviding {
     func refreshHomebrew() async throws -> HomebrewStatus { throw Unsupported.operation }
     func planNodeUninstall(_ identity: NodeRuntimeIdentity) async throws -> NodeActionPlan { throw Unsupported.operation }
     func executeNodeUninstall(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult { throw Unsupported.operation }
+}
+
+extension NodePackageEnvironmentTests {
+    @MainActor
+    func testRealInstallationCapabilityControlsDirectBatchAndDiscoverWithoutHidingReads() async throws {
+        let fixture = try PackageManagerFixture()
+        defer { fixture.remove() }
+        let service = try fixture.batchProvider().service
+        let managers = try await service.installManagers()
+        let model = AppModel(service: service, operationStore: OperationStore(), managerSnapshot: managers)
+        let resolver = NodeEnvironmentResolver(homeDirectory: fixture.root)
+        let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.root, environment: resolver.environment(preferredNodeVersion: "v22.0.0"))
+        let configuration = try JSONDecoder().decode(NodeConfiguration.self, from: Data(#"{"registry":"https://registry.npmjs.org/","cache":"/fake/cache","prefix":"/fake","userRegistry":"","projectRegistry":"","globalRegistry":""}"#.utf8))
+        func snapshot(_ summary: NodeSummary) -> NodeSnapshot {
+            .init(summary: summary, configuration: configuration, packages: [.init(name: "example", installedVersion: "1.0.0", wantedVersion: "2.0.0", latestVersion: "3.0.0")],
+                  installations: resolver.installations(preferredNodeVersion: "v22.0.0"), managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil,
+                  packageEnvironment: NodeEnvironmentResolver.packageInstallation(summary: summary, installations: resolver.installations()).map { _ in LibraryCatalog.context(summary) })
+        }
+        XCTAssertFalse(summary.nvmLoaded)
+        let supported = snapshot(summary)
+        let environment = LibraryCatalog.context(summary)
+        XCTAssertNotNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: supported.installations))
+        model.applyNodeReadResult(.success(supported))
+        XCTAssertTrue(model.canMutatePackages(in: .npm(environment)))
+        XCTAssertNotNil(model.discoverContext.npm)
+        await model.prepareNodeAction(.init(action: .updatePackage, subject: "example"))
+        let direct = try XCTUnwrap(model.nodePlan)
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: [.npm(.init(name: "example", environment: environment))]))
+        let batch = try await model.prepareBatch(intent)
+        let detected = fixture.root.appending(path: "detected/bin")
+        try FileManager.default.createDirectory(at: detected, withIntermediateDirectories: true)
+        for entry in ["node", "npm"] {
+            let file = detected.appending(path: entry)
+            try Data("#!/bin/sh\nexit 97\n".utf8).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+        let other = NodeSummary(nodePath: detected.appending(path: "node").path, npmPath: detected.appending(path: "npm").path,
+                                nodeVersion: summary.nodeVersion, npmVersion: summary.npmVersion, nvmLoaded: true,
+                                globalPrefix: summary.globalPrefix, globalRoot: summary.globalRoot, registry: summary.registry)
+        model.applyNodeReadResult(.success(snapshot(other)))
+        XCTAssertEqual(model.node?.packages.count, 1)
+        XCTAssertNil(model.nodePackageEnvironment)
+        XCTAssertNil(model.discoverContext.npm)
+        XCTAssertTrue(model.discoverContext.nodeAvailable)
+        XCTAssertFalse(model.canMutatePackages(in: .npm(environment)))
+        XCTAssertTrue(model.canMutatePackages(in: .nodeRuntime(environment)))
+        await model.executeNodePlan(confirmed: direct)
+        XCTAssertNil(model.nodeActionResult)
+        do { _ = try await model.executeBatch(batch); XCTFail("Changed package context must refuse confirmed batch") }
+        catch BatchOperationError.reconciliationUnavailable {}
+        for operation in [BatchOperation.install, .update, .uninstall] {
+            let rejected = try XCTUnwrap(BatchIntent(operation: operation, items: intent.items))
+            do { _ = try await model.prepareBatch(rejected); XCTFail("Unsupported package context must refuse \(operation)") }
+            catch BatchOperationError.reconciliationUnavailable {}
+        }
+        for action in [NodeAction.installPackage, .updatePackage, .uninstallPackage] {
+            await model.prepareNodeAction(.init(action: action, subject: "example"))
+            XCTAssertNil(model.nodePlan)
+        }
+        XCTAssertFalse(try String(contentsOf: fixture.log, encoding: .utf8).contains("execute|"))
+        model.applyNodeReadResult(.success(supported))
+        model.applyNodeReadResult(.failure(BridgeError.invalidOutput("fixture failed read")))
+        XCTAssertNil(model.discoverContext.npm)
+        XCTAssertFalse(model.canMutatePackages(in: .npm(environment)))
+        XCTAssertEqual(model.node?.packages.count, 1)
+    }
+
+    func testCapabilityRejectsMissingOrEscapingNPMAndSameVersionForeignNode() async throws {
+        for variant in ["npm-missing", "npm-escape", "foreign-node"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            let resolver = NodeEnvironmentResolver(homeDirectory: fixture.root)
+            let summary: NodeSummary = try await fixture.client.request("summary", managerDirectory: fixture.root, environment: resolver.environment(preferredNodeVersion: "v22.0.0"))
+            XCTAssertNotNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: resolver.installations()))
+            if variant == "foreign-node" {
+                let foreign = NodeSummary(nodePath: fixture.root.appending(path: ".nvm/versions/node/v20.0.0/bin/node").path,
+                                          npmPath: summary.npmPath, nodeVersion: summary.nodeVersion, npmVersion: summary.npmVersion,
+                                          nvmLoaded: true, globalPrefix: summary.globalPrefix, globalRoot: summary.globalRoot, registry: summary.registry)
+                XCTAssertNil(NodeEnvironmentResolver.packageInstallation(summary: foreign, installations: resolver.installations()))
+            } else {
+                let npm = fixture.selectedBin.appending(path: "npm")
+                try FileManager.default.removeItem(at: npm)
+                if variant == "npm-escape" {
+                    try FileManager.default.createSymbolicLink(at: npm, withDestinationURL: fixture.root.appending(path: ".nvm/versions/node/v20.0.0/bin/npm"))
+                }
+                XCTAssertNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: resolver.installations()))
+                do { _ = try await fixture.client.planPackage(.init(name: "example", environment: LibraryCatalog.context(summary)), action: .installPackage, managerDirectory: fixture.root); XCTFail("Unsupported installation must refuse") }
+                catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "node-environment-changed") }
+            }
+        }
+    }
+}
+
+extension NodePackageEnvironmentTests {
+    func testSnapshotBoundaryClassifiesActualEntriesAndPreservesCapabilityDuringEnrichment() async throws {
+        for variant in ["supported", "npm-missing", "npm-escape", "foreign-node"] {
+            let fixture = try PackageManagerFixture()
+            defer { fixture.remove() }
+            try Data("example\n".utf8).write(to: fixture.root.appending(path: "written-name"))
+            try Data("1.0.0\n".utf8).write(to: fixture.root.appending(path: "written-version"))
+            if variant == "npm-missing" { try FileManager.default.removeItem(at: fixture.selectedBin.appending(path: "npm")) }
+            if variant == "npm-escape" || variant == "foreign-node" {
+                let name = variant == "npm-escape" ? "npm" : "node"
+                let entry = fixture.selectedBin.appending(path: name)
+                try FileManager.default.removeItem(at: entry)
+                try FileManager.default.createSymbolicLink(at: entry, withDestinationURL: fixture.root.appending(path: ".nvm/versions/node/v20.0.0/bin/\(name)"))
+            }
+            let snapshot = try await fixture.client.loadSnapshot(managerDirectory: fixture.root, preferredNodeVersion: "v22.0.0")
+            XCTAssertFalse(snapshot.summary.nvmLoaded)
+            XCTAssertEqual(snapshot.packageEnvironment != nil, variant == "supported", variant)
+            let enriched = snapshot.replacingOutdated(packages: ["example": .init(current: "1.0.0", wanted: "2.0.0", latest: "2.0.0")], error: "fixture partial read")
+            XCTAssertEqual(enriched.packageEnvironment, snapshot.packageEnvironment)
+            let retained = enriched.retainingKnownOutdated(from: snapshot)
+            XCTAssertEqual(retained.packageEnvironment, snapshot.packageEnvironment)
+        }
+    }
 }

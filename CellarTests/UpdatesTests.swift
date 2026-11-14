@@ -4,6 +4,22 @@ import XCTest
 
 @MainActor
 final class UpdatesTests: XCTestCase {
+    private let capabilityRoot = FileManager.default.temporaryDirectory.appending(path: "CellarUpdatesCapability-\(UUID())")
+
+    override func setUpWithError() throws {
+        let bin = capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["node", "npm"] {
+            let file = bin.appending(path: name)
+            try Data("#!/bin/sh\nexit 97\n".utf8).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+    }
+
+    override func tearDownWithError() throws {
+        try FileManager.default.removeItem(at: capabilityRoot)
+    }
+
     func testLibraryPendingFilterIntersectsTypeSubtypeSearchAndCanonicalEligibility() throws {
         let library = LibraryCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available)
         let updates = UpdatesCatalog.cards(homebrew: brewSnapshot(), node: nodeSnapshot(), homebrewUpdates: .available, nodeUpdates: .available)
@@ -317,7 +333,7 @@ final class UpdatesTests: XCTestCase {
         model.node = NodeSnapshot(summary: node.summary, configuration: node.configuration,
                                   packages: ["one", "two"].map { .init(name: $0, installedVersion: "1.0.0", wantedVersion: "1.0.0", latestVersion: "2.0.0") },
                                   installations: node.installations, managerStatus: node.managerStatus, logs: node.logs,
-                                  outdatedError: nil, maintenanceError: nil)
+                                  outdatedError: nil, maintenanceError: nil, packageEnvironment: node.packageEnvironment)
         let updates = PackageUpdatesModel(model: model)
         await updates.prepareAll(model.updateCards, scope: .npm, subtype: .all)
         XCTAssertNil(updates.confirmation)
@@ -375,7 +391,7 @@ final class UpdatesTests: XCTestCase {
         let activity = ActivityStore()
         let prior = nodeSnapshot()
         let packages = prior.packages.map { NodePackageRow(name: $0.name, installedVersion: $0.name == "behind" ? "2.0.0" : $0.installedVersion, wantedVersion: nil, latestVersion: nil) }
-        let partial = NodeSnapshot(summary: prior.summary, configuration: prior.configuration, packages: packages, installations: prior.installations, managerStatus: prior.managerStatus, logs: prior.logs, outdatedError: "fixture enrichment unavailable", maintenanceError: nil)
+        let partial = NodeSnapshot(summary: prior.summary, configuration: prior.configuration, packages: packages, installations: prior.installations, managerStatus: prior.managerStatus, logs: prior.logs, outdatedError: "fixture enrichment unavailable", maintenanceError: nil, packageEnvironment: prior.packageEnvironment)
         let model = fixtureModel(FakeBatchProvider(npmRefreshSnapshot: partial), activity: activity)
         let updates = PackageUpdatesModel(model: model)
         await updates.prepareAll(model.updateCards, scope: .npm, subtype: .all)
@@ -421,7 +437,7 @@ final class UpdatesTests: XCTestCase {
         }
     }
 
-    private var context: NodeEnvironmentContext { .init(identifier: "/fake/node", nodeVersion: "v22.0.0", npmVersion: "10.0.0") }
+    private var context: NodeEnvironmentContext { .init(identifier: capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin/node").path, nodeVersion: "v22.0.0", npmVersion: "10.0.0") }
     private func groupIntents() throws -> [BatchIntent] {
         try [BatchIntent(operation: .update, items: [.homebrew(.init(name: "formula", kind: .formula))]),
              BatchIntent(operation: .update, items: [.homebrew(.init(name: "cask", kind: .cask))]),
@@ -434,12 +450,12 @@ final class UpdatesTests: XCTestCase {
         return HomebrewSnapshot(executablePath: "/fake/brew", version: "5.0.0", configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]), packages: packages, outdatedPackages: packages.map { .init(identity: $0.identity, installedVersions: $0.installedVersions, currentVersion: $0.currentVersion) }, taps: [], sectionErrors: [:], controlledPath: "", commandLineToolsAvailable: true)
     }
     private func nodeSnapshot() -> NodeSnapshot {
-        NodeSnapshot(summary: .init(nodePath: context.identifier, npmPath: "/fake/npm", nodeVersion: context.nodeVersion, npmVersion: context.npmVersion, nvmLoaded: false, globalPrefix: "/fake", globalRoot: "/fake", registry: "https://registry.npmjs.org"), configuration: .init(registry: "", cache: "", prefix: "", userRegistry: "", projectRegistry: "", globalRegistry: ""), packages: [
+        NodeSnapshot(summary: .init(nodePath: context.identifier, npmPath: capabilityRoot.appending(path: ".nvm/versions/node/v22.0.0/bin/npm").path, nodeVersion: context.nodeVersion, npmVersion: context.npmVersion, nvmLoaded: false, globalPrefix: "/fake", globalRoot: "/fake", registry: "https://registry.npmjs.org"), configuration: .init(registry: "", cache: "", prefix: "", userRegistry: "", projectRegistry: "", globalRegistry: ""), packages: [
             .init(name: "behind", installedVersion: "1.0.0", wantedVersion: "1.0.0", latestVersion: "2.0.0"),
             .init(name: "ahead", installedVersion: "3.0.0", wantedVersion: nil, latestVersion: "2.0.0"),
             .init(name: "unknown", installedVersion: "git", wantedVersion: nil, latestVersion: "2.0.0"),
             .init(name: "current", installedVersion: "2.0.0", wantedVersion: nil, latestVersion: "2.0.0")
-        ], installations: [], managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil)
+        ], installations: NodeEnvironmentResolver(homeDirectory: capabilityRoot).installations(), managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil, packageEnvironment: context)
     }
     private func fixtureModel(_ provider: FakeBatchProvider, activity: ActivityStore? = nil, outdated: HomeOutdatedDependencies? = nil) -> AppModel {
         let root = FileManager.default.temporaryDirectory.appending(path: "CellarUpdatesUnused-\(UUID())")

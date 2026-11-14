@@ -21,7 +21,7 @@ struct NPMRegistrySettingsView: View {
         }
         .onChange(of: scope) { _, _ in scopeLayers = nil; scopeReadError = nil }
         .onChange(of: model.nodeActionResult?.operation.operationId) { _, _ in scopeLayers = nil }
-        .onChange(of: model.node?.summary.activityEnvironment) { _, _ in
+        .onChange(of: model.node?.summary) { _, _ in
             scopeLayers = nil
             scopeReadError = nil
         }
@@ -35,7 +35,7 @@ struct NPMRegistrySettingsView: View {
                 .font(.callout).foregroundStyle(.secondary)
             SettingsTextField(title: "Default Registry URL", text: $registry, prompt: "https://registry.example.com/")
             if !registry.isEmpty && SourceConfiguration.registryURL(registry) == nil {
-                Text("Enter a credential-free HTTP or HTTPS Registry URL.")
+                Text("Use a credential-free HTTPS Registry URL, or HTTP on localhost, 127.0.0.1, or [::1]. Other addresses are unsupported.")
             }
             HStack {
                 Spacer()
@@ -51,7 +51,7 @@ struct NPMRegistrySettingsView: View {
             if !scope.isEmpty && !SourceConfiguration.validScope(scope) { Text("Use a lowercase npm scope, such as @company.") }
             SettingsTextField(title: "Scope Registry URL", text: $scopeRegistry, prompt: "https://registry.example.com/")
             if !scopeRegistry.isEmpty && SourceConfiguration.registryURL(scopeRegistry) == nil {
-                Text("Enter a credential-free HTTP or HTTPS Registry URL.")
+                Text("Use a credential-free HTTPS Registry URL, or HTTP on localhost, 127.0.0.1, or [::1]. Other addresses are unsupported.")
             }
             Button("Check Effective Scope Registry") { Task { await readScope() } }
                 .disabled(!SourceConfiguration.validScope(scope) || unavailable)
@@ -73,7 +73,7 @@ struct NPMRegistrySettingsView: View {
         }
     }
 
-    private var unavailable: Bool { model.isBusy || model.node == nil }
+    private var unavailable: Bool { model.isBusy || model.node == nil || model.nodeRefreshFailed }
     private func prepare(_ request: NodeActionRequest) { Task { await model.prepareNodeAction(request) } }
     private func registryLayer(_ title: LocalizedStringResource, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 24) {
@@ -90,18 +90,17 @@ struct NPMRegistrySettingsView: View {
         .frame(minHeight: AppLayout.minimumInfoRowHeight)
     }
     private func readScope() async {
-        guard let node = model.node, let managers = model.managers, !model.isBusy else { return }
+        guard let node = model.node, let managers = model.managers, !model.isBusy, !model.nodeRefreshFailed else { return }
         let requestedScope = scope
-        let environment = NodeEnvironmentContext(identifier: node.summary.nodePath, nodeVersion: node.summary.nodeVersion, npmVersion: node.summary.npmVersion)
         let id = model.operationStore.begin()
         defer { model.operationStore.end(id) }
         scopeReadError = nil
         do {
-            let layers = try await model.operationStore.performCancellable(operationID: id) { try await model.service.scopeRegistryLayers(requestedScope, environment: environment, snapshot: managers) }
-            guard scope == requestedScope, model.node?.summary.activityEnvironment == environment else { return }
+            let layers = try await model.operationStore.performCancellable(operationID: id) { try await model.service.scopeRegistryLayers(requestedScope, summary: node.summary, snapshot: managers) }
+            guard scope == requestedScope, !model.nodeRefreshFailed, model.node?.summary == node.summary else { return }
             scopeLayers = layers
         } catch {
-            guard scope == requestedScope, model.node?.summary.activityEnvironment == environment else { return }
+            guard scope == requestedScope, !model.nodeRefreshFailed, model.node?.summary == node.summary else { return }
             scopeReadError = String(localized: "The scope Registry could not be read. Refresh and try again.")
         }
     }

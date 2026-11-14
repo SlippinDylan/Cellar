@@ -162,10 +162,19 @@ final class NodeManagerClientTests: XCTestCase {
         let log = manager.appending(path: "calls.log")
         let project = manager.appending(path: "project")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        let bin = manager.appending(path: "bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        for name in ["node", "npm"] {
+            let entry = bin.appending(path: name)
+            try Data("#!/bin/sh\ncase \"$*\" in \"config get userconfig\") printf '%s/.npmrc\\n' \"$HOME\" ;; prefix) printf '%s/prefix\\n' \"$HOME\" ;; *) printf '%s/global/npmrc\\n' \"$HOME\" ;; esac\n".utf8).write(to: entry)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: entry.path)
+        }
         let contents = #"""
         #!/bin/bash
         printf '%s|%s|%s|%s|%s|%s\n' "$2" "${3:-}" "${4:-}" "${5:-}" "${NODE_MANAGER_ALLOW_JSON_EXECUTE:-}" "${NODE_MANAGER_ALLOW_PROJECT_WRITE:-}" >> '\#(log.path)'
-        if [ "$2" = plan ] && [ "$3" = project-nvmrc ]; then
+        if [ "$2" = summary ]; then
+          printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"%s/bin/node","npmPath":"%s/bin/npm","nodeVersion":"v22.14.0","npmVersion":"10.0.0","nvmLoaded":false,"globalPrefix":"%s/prefix","globalRoot":"%s/prefix/lib","registry":"https://registry.npmjs.org/"}}\n' "$HOME" "$HOME" "$HOME" "$HOME"
+        elif [ "$2" = plan ] && [ "$3" = project-nvmrc ]; then
           printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"ok":true,"schemaVersion":1,"action":"project-nvmrc","targetType":"project-nvmrc","subject":"%s","value":"v22.14.0","requiresConfirmation":true,"executeSupported":true,"externalWrite":true,"pathExists":true,"pathIsDirectory":true,"nvmrcPath":"%s/.nvmrc","currentNvmrc":"","packageJsonExists":false,"enginesNode":"","nvmrcIsSymlink":false,"executable":true,"blockedReason":""}}\n' "$4" "$4"
         elif [ "$2" = plan ] && [ "$3" = cleanup ]; then
           printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"plan","data":{"ok":true,"schemaVersion":1,"action":"cleanup","targetType":"cleanup","subject":"npm-cache-clean","value":"","requiresConfirmation":true,"executeSupported":true,"externalWrite":false,"paths":["/test/cache"],"planToken":"token-1"}}'

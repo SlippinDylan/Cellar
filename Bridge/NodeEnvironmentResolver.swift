@@ -71,6 +71,19 @@ struct NodeEnvironmentResolver: Sendable {
         }
     }
 
+    static func packageInstallation(summary: NodeSummary, installations: [NodeInstallation]) -> NodeInstallation? {
+        guard let installation = installations.first(where: { $0.version == summary.nodeVersion }) else { return nil }
+        let directory = URL(filePath: installation.directory).resolvingSymlinksInPath().standardizedFileURL
+        for (name, actual) in [("node", summary.nodePath), ("npm", summary.npmPath)] {
+            let entry = directory.appending(path: "bin/\(name)")
+            let resolved = entry.resolvingSymlinksInPath().standardizedFileURL
+            guard actual.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: entry.path),
+                  resolved.path.hasPrefix(directory.path + "/"),
+                  URL(filePath: actual).resolvingSymlinksInPath().standardizedFileURL == resolved else { return nil }
+        }
+        return installation
+    }
+
     func resolvedDefaultNodeBin(in nvmDirectory: URL) -> URL? {
         let installed = installedNodes(in: nvmDirectory)
 

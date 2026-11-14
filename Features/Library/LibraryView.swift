@@ -31,7 +31,7 @@ struct LibraryView: View {
         let updateCards = model.updateCards
         let contents = LibraryCatalog.contents(cards, scope: selectedTab.scope, subtype: selectedTab.subtype, query: query,
                                                updateFilter: updateFilter, updateCards: updateCards)
-        let targets = LibraryCatalog.updateTargets(for: contents.matching, from: updateCards)
+        let targets = LibraryCatalog.updateTargets(for: contents.matching, from: updateCards).filter { model.canMutatePackages(in: $0.batchItem.scope) }
         libraryContent(cards: contents.matching, scopedCount: contents.scoped.count, updateTargets: targets,
                        totalUpdateCount: LibraryCatalog.updateTargets(for: cards, from: updateCards).count)
         .focusedSceneValue(\.catalogSearchAction) { searchFocusRequest = UUID() }
@@ -136,6 +136,9 @@ struct LibraryView: View {
         }
         if scope != .homebrew, nodeReadState == .failed {
             Label("Node and npm could not be refreshed. Previously loaded items may be out of date. Use Refresh to retry.", systemImage: "exclamationmark.circle")
+        }
+        if scope != .homebrew, !model.nodeRefreshFailed, model.node != nil, model.nodePackageEnvironment == nil {
+            Text("This Node installation is readable. npm package changes and search require a supported nvm installation.").foregroundStyle(.secondary)
         }
         if scope != .npm, model.homebrewUpdateState == .failed { updateWarning("Homebrew") }
         if scope != .homebrew, model.nodeUpdateState == .failed { updateWarning("npm") }

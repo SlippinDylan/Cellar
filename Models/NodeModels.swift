@@ -51,7 +51,7 @@ struct ManagerEnvelope<Payload: Decodable & Sendable>: Decodable, Sendable {
     let error: ManagerErrorPayload?
 }
 
-struct NodeSummary: Decodable, Sendable {
+struct NodeSummary: Decodable, Equatable, Sendable {
     let nodePath: String
     let npmPath: String
     let nodeVersion: String
@@ -384,13 +384,29 @@ struct NodeSnapshot: Sendable {
     let outdatedError: String?
     let maintenanceError: String?
 
+    let packageEnvironment: NodeEnvironmentContext?
+
+    init(summary: NodeSummary, configuration: NodeConfiguration, packages: [NodePackageRow], installations: [NodeInstallation],
+         managerStatus: NodeManagerStatus?, logs: [String], outdatedError: String?, maintenanceError: String?,
+         packageEnvironment: NodeEnvironmentContext? = nil) {
+        self.summary = summary
+        self.configuration = configuration
+        self.packages = packages
+        self.installations = installations
+        self.managerStatus = managerStatus
+        self.logs = logs
+        self.outdatedError = outdatedError
+        self.maintenanceError = maintenanceError
+        self.packageEnvironment = packageEnvironment
+    }
+
     func replacingOutdated(packages outdated: [String: OutdatedPackage], error: String?) -> Self {
         let rows = packages.map { package in
             NodePackageRow(name: package.name, installedVersion: package.installedVersion,
                            wantedVersion: outdated[package.name]?.wanted, latestVersion: outdated[package.name]?.latest)
         }
         return Self(summary: summary, configuration: configuration, packages: rows, installations: installations,
-                    managerStatus: managerStatus, logs: logs, outdatedError: error, maintenanceError: maintenanceError)
+                    managerStatus: managerStatus, logs: logs, outdatedError: error, maintenanceError: maintenanceError, packageEnvironment: packageEnvironment)
     }
 
     func retainingKnownOutdated(from previous: Self?) -> Self {
@@ -406,6 +422,6 @@ struct NodeSnapshot: Sendable {
                            latestVersion: package.latestVersion ?? known[package.name]?.latestVersion)
         }
         return Self(summary: summary, configuration: configuration, packages: rows, installations: installations,
-                    managerStatus: managerStatus, logs: logs, outdatedError: outdatedError, maintenanceError: maintenanceError)
+                    managerStatus: managerStatus, logs: logs, outdatedError: outdatedError, maintenanceError: maintenanceError, packageEnvironment: packageEnvironment)
     }
 }

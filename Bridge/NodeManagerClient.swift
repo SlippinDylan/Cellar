@@ -4,7 +4,9 @@ import Foundation
 actor NodeManagerClient {
     private let runner: ProcessRunner
     private let environmentResolver: NodeEnvironmentResolver
-    private var registryConfirmations: [UUID: (environment: [String: String], fingerprint: String)] = [:]
+    private var registryConfirmations: [UUID: (environment: [String: String], fingerprint: String, summary: NodeSummary)] = [:]
+    private var environmentConfirmations: [UUID: (environment: [String: String], summary: NodeSummary, fingerprint: String)] = [:]
+    private var packageConfirmations: [UUID: NodeEnvironmentContext] = [:]
     private var configurationConfirmations: [UUID: (environment: [String: String], fingerprint: String)] = [:]
     private var projectConfirmations: [UUID: (environment: [String: String], fingerprint: String, directory: NodeProjectDirectory)] = [:]
     private var logConfirmations: [UUID: NodeLogMaintenanceState] = [:]
@@ -72,18 +74,21 @@ actor NodeManagerClient {
 
         try Task.checkCancellation()
         let outdatedError = outdatedResult.failure?.localizedDescription
+        let installations = environmentResolver.installations(preferredNodeVersion: preferredNodeVersion)
+        let packageEnvironment = NodeEnvironmentResolver.packageInstallation(summary: summary, installations: installations).map { _ in LibraryCatalog.context(summary) }
         return NodeSnapshot(
             summary: summary,
             configuration: configurationValue,
             packages: packages,
-            installations: environmentResolver.installations(preferredNodeVersion: preferredNodeVersion),
+            installations: installations,
             managerStatus: try? statusResult.get(),
             logs: (try? logsResult.get()) ?? [],
             outdatedError: outdatedError,
             maintenanceError: [statusResult.failure, logsResult.failure]
                 .compactMap { $0?.localizedDescription }
                 .joined(separator: "；")
-                .nilIfBlank
+                .nilIfBlank,
+            packageEnvironment: packageEnvironment
         )
     }
 
@@ -108,9 +113,38 @@ actor NodeManagerClient {
     func plan(
         _ request: NodeActionRequest,
         managerDirectory: URL,
-        preferredNodeVersion: String? = nil
+        preferredNodeVersion: String? = nil,
+        detectedSummary: NodeSummary? = nil
     ) async throws -> NodeActionPlan {
-        let environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        var environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        let request = try normalizedRegistryRequest(request)
+        if [.installPackage, .updatePackage, .uninstallPackage].contains(request.action) {
+            let summary: NodeSummary
+            if let detectedSummary { summary = detectedSummary }
+            else { summary = try await self.request("summary", managerDirectory: managerDirectory, environment: environment) }
+            let context = LibraryCatalog.context(summary)
+            let plan = try await planPackage(.init(name: request.subject, environment: context), action: request.action, managerDirectory: managerDirectory)
+            packageConfirmations[plan.id] = context
+            return plan
+        }
+        if request.action.isRegistryConfiguration || requiresDetectedNPM(request) {
+            _ = try registryFileFingerprint(environment: environment, managerDirectory: managerDirectory)
+            let summary: NodeSummary
+            if let detectedSummary { summary = detectedSummary }
+            else { summary = try await self.request("summary", managerDirectory: managerDirectory, environment: environment) }
+            environment = try await validatedDetectedEnvironment(summary, managerDirectory: managerDirectory)
+            let fingerprint = try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: summary)
+            let plan = try await self.plan(request, managerDirectory: managerDirectory, environment: environment)
+            guard fingerprint == (try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: summary)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+            _ = try await validatedDetectedEnvironment(summary, managerDirectory: managerDirectory)
+            if request.action.isRegistryConfiguration {
+                guard plan.payload.effectiveRegistry != nil else { throw BridgeError.managerFailure(code: "registry-state-unavailable", detail: nil) }
+                registryConfirmations[plan.id] = (environment, fingerprint, summary)
+            } else {
+                environmentConfirmations[plan.id] = (environment, summary, fingerprint)
+            }
+            return plan
+        }
         if request.action == .cleanup, request.subject == NodeMaintenanceAction.logs.rawValue {
             guard request.value == "100" else { throw BridgeError.managerFailure(code: "invalid-log-retention", detail: nil) }
             let state = try NodeLogMaintenanceState.read(managerDirectory: managerDirectory)
@@ -118,15 +152,6 @@ actor NodeManagerClient {
             guard state == (try NodeLogMaintenanceState.read(managerDirectory: managerDirectory)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
             logConfirmations[plan.id] = state
             return NodeActionPlan(id: plan.id, request: request, payload: plan.payload, generatedAt: plan.generatedAt, maintenanceCandidates: state.candidates)
-        }
-        if request.action.isRegistryConfiguration {
-            try validateRegistryRequest(request)
-            let fingerprint = try registryFingerprint(environment: environment, managerDirectory: managerDirectory)
-            let plan = try await plan(request, managerDirectory: managerDirectory, environment: environment)
-            guard fingerprint == (try registryFingerprint(environment: environment, managerDirectory: managerDirectory)),
-                  plan.payload.effectiveRegistry != nil else { throw BridgeError.managerFailure(code: "registry-state-unavailable", detail: nil) }
-            registryConfirmations[plan.id] = (environment, fingerprint)
-            return plan
         }
         if request.action == .writeProjectNVMRC {
             let directory = try NodeProjectDirectory.read(selectedPath: request.subject)
@@ -170,7 +195,19 @@ actor NodeManagerClient {
         managerDirectory: URL,
         preferredNodeVersion: String? = nil
     ) async throws -> NodeOperationResult {
-        let environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        var environment = environmentResolver.environment(preferredNodeVersion: preferredNodeVersion)
+        if [.installPackage, .updatePackage, .uninstallPackage].contains(plan.request.action) {
+            guard let context = packageConfirmations.removeValue(forKey: plan.id) else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
+            return try await executePackage(plan, environment: context, managerDirectory: managerDirectory)
+        }
+        if requiresDetectedNPM(plan.request) {
+            guard let baseline = environmentConfirmations.removeValue(forKey: plan.id) else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
+            environment = try await validatedDetectedEnvironment(baseline.summary, managerDirectory: managerDirectory)
+            guard environment == baseline.environment,
+                  baseline.fingerprint == (try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: baseline.summary))
+            else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+            _ = try await validatedDetectedEnvironment(baseline.summary, managerDirectory: managerDirectory)
+        }
         if plan.request.action == .writeProjectNVMRC {
             return try await executeProject(plan, managerDirectory: managerDirectory, environment: environment)
         }
@@ -188,31 +225,54 @@ actor NodeManagerClient {
                   baseline.fingerprint == (try configurationFingerprint(plan.request, environment: environment)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
         }
         if plan.request.action.isRegistryConfiguration {
-            guard let baseline = registryConfirmations.removeValue(forKey: plan.id), baseline.environment == environment,
-                  baseline.fingerprint == (try registryFingerprint(environment: environment, managerDirectory: managerDirectory))
+            guard let baseline = registryConfirmations.removeValue(forKey: plan.id) else { throw BridgeError.managerFailure(code: "registry-state-changed", detail: nil) }
+            environment = try await validatedDetectedEnvironment(baseline.summary, managerDirectory: managerDirectory)
+            guard baseline.environment == environment,
+                  baseline.fingerprint == (try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: baseline.summary))
             else { throw BridgeError.managerFailure(code: "registry-state-changed", detail: nil) }
             let current = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: environment)
             guard current.payload.effectiveRegistry == plan.payload.effectiveRegistry,
                   current.payload.userRegistry == plan.payload.userRegistry,
                   current.payload.projectRegistry == plan.payload.projectRegistry,
                   current.payload.globalRegistry == plan.payload.globalRegistry,
-                  baseline.fingerprint == (try registryFingerprint(environment: environment, managerDirectory: managerDirectory))
+                  baseline.fingerprint == (try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: baseline.summary))
             else { throw BridgeError.managerFailure(code: "registry-state-changed", detail: nil) }
+            _ = try await validatedDetectedEnvironment(baseline.summary, managerDirectory: managerDirectory)
         }
         return try await execute(plan, managerDirectory: managerDirectory, environment: environment)
     }
 
-    private func validateRegistryRequest(_ request: NodeActionRequest) throws {
+    private func normalizedRegistryRequest(_ request: NodeActionRequest) throws -> NodeActionRequest {
         switch request.action {
         case .setRegistry:
-            guard SourceConfiguration.registryURL(request.subject) != nil else { throw CatalogSourceError.invalidURL }
+            guard let url = SourceConfiguration.registryURL(request.subject) else { throw CatalogSourceError.invalidURL }
+            return .init(action: request.action, subject: url.absoluteString)
         case .setScopeRegistry:
             guard SourceConfiguration.validScope(request.subject), let value = request.value,
-                  SourceConfiguration.registryURL(value) != nil else { throw CatalogSourceError.invalidURL }
+                  let url = SourceConfiguration.registryURL(value) else { throw CatalogSourceError.invalidURL }
+            return .init(action: request.action, subject: request.subject, value: url.absoluteString)
         case .deleteScopeRegistry:
             guard SourceConfiguration.validScope(request.subject) else { throw CatalogSourceError.invalidURL }
         default: break
         }
+        return request
+    }
+
+    private func requiresDetectedNPM(_ request: NodeActionRequest) -> Bool {
+        request.action == .cleanup && ["npm-cache-verify", "npm-cache-clean", "node-gyp-cache", "orphan-bins"].contains(request.subject)
+    }
+
+    private func validatedDetectedEnvironment(_ summary: NodeSummary, managerDirectory: URL) async throws -> [String: String] {
+        guard [summary.nodePath, summary.npmPath, summary.globalPrefix, summary.globalRoot].allSatisfy({ $0.hasPrefix("/") }),
+              FileManager.default.isExecutableFile(atPath: summary.nodePath), FileManager.default.isExecutableFile(atPath: summary.npmPath)
+        else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
+        let environment = environmentResolver.environment(nodeExecutable: URL(filePath: summary.nodePath), npmExecutable: URL(filePath: summary.npmPath))
+        let current: NodeSummary = try await request("summary", managerDirectory: managerDirectory, environment: environment)
+        guard current.nodePath == summary.nodePath, current.npmPath == summary.npmPath,
+              current.nodeVersion == summary.nodeVersion, current.npmVersion == summary.npmVersion,
+              current.globalPrefix == summary.globalPrefix, current.globalRoot == summary.globalRoot
+        else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
+        return environment
     }
 
     private func executeProject(_ plan: NodeActionPlan, managerDirectory: URL, environment: [String: String]) async throws -> NodeOperationResult {
@@ -249,12 +309,27 @@ actor NodeManagerClient {
                                    exitCode: result.exitCode, status: detail == nil ? result.status : "unknown", logFile: result.logFile, detail: detail ?? result.detail, residues: result.residues)
     }
 
-    private func registryFingerprint(environment: [String: String], managerDirectory: URL) throws -> String {
-        guard let home = environment["HOME"] else { throw BridgeError.managerFailure(code: "registry-home-unavailable", detail: nil) }
-        var files = [URL(filePath: home).appending(path: ".npmrc"), managerDirectory.appending(path: ".npmrc")]
-        if let bin = environment["PATH"]?.split(separator: ":").first, bin.hasPrefix(home + "/.nvm/versions/node/") {
-            files.append(URL(filePath: String(bin)).deletingLastPathComponent().appending(path: "etc/npmrc"))
+    private func registryFingerprint(environment: [String: String], managerDirectory: URL, summary: NodeSummary) async throws -> String {
+        _ = try registryFileFingerprint(environment: environment, managerDirectory: managerDirectory)
+        var files = [URL(filePath: summary.globalPrefix).appending(path: "etc/npmrc")]
+        var cachePath = ""
+        for arguments in [["config", "get", "globalconfig"], ["config", "get", "userconfig"], ["prefix"], ["config", "get", "cache"]] {
+            let result = try await runner.run(ProcessRequest(executableURL: URL(filePath: summary.npmPath), arguments: arguments,
+                                                            environment: environment, currentDirectoryURL: managerDirectory, timeout: .seconds(20)))
+            let path = result.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard result.terminationStatus == 0, !result.standardOutputWasTruncated, !result.standardErrorWasTruncated,
+                  path.hasPrefix("/"), !path.contains("\n") else { throw BridgeError.managerFailure(code: "registry-state-unavailable", detail: nil) }
+            if arguments == ["config", "get", "cache"] { cachePath = path }
+            else { files.append(arguments == ["prefix"] ? URL(filePath: path).appending(path: ".npmrc") : URL(filePath: path)) }
         }
+        let destination = try packageDestination(summary)
+        let fingerprint = try registryFileFingerprint(environment: environment, managerDirectory: managerDirectory, additionalFiles: files)
+        return SHA256.hash(data: Data([fingerprint, destination.nodeExecutable, destination.npmExecutable, destination.globalPrefix, destination.globalRoot, cachePath].joined(separator: "\0").utf8)).description
+    }
+
+    private func registryFileFingerprint(environment: [String: String], managerDirectory: URL, additionalFiles: [URL] = []) throws -> String {
+        guard let home = environment["HOME"] else { throw BridgeError.managerFailure(code: "registry-home-unavailable", detail: nil) }
+        var files = [URL(filePath: home).appending(path: ".npmrc"), managerDirectory.appending(path: ".npmrc")] + additionalFiles
         var material = Data()
         try appendConfigurationFile(URL(filePath: home).appending(path: ".nvm/alias/default"), to: &material)
         var visited = Set<String>()
@@ -489,13 +564,19 @@ actor NodeManagerClient {
         return try await packageRegistry(specOrQuery, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory)
     }
 
-    func scopeRegistryLayers(_ scope: String, environment context: NodeEnvironmentContext, managerDirectory: URL) async throws -> NPMRegistryLayers {
+    func scopeRegistryLayers(_ scope: String, summary: NodeSummary, managerDirectory: URL) async throws -> NPMRegistryLayers {
         guard SourceConfiguration.validScope(scope) else { throw CatalogSourceError.invalidURL }
-        let validated = try await validatedPackageEnvironment(context, managerDirectory: managerDirectory)
+        let exact = try await validatedDetectedEnvironment(summary, managerDirectory: managerDirectory)
+        let fingerprint = try await registryFingerprint(environment: exact, managerDirectory: managerDirectory, summary: summary)
         let payload: NodeActionPlanPayload = try await request("plan", arguments: [NodeAction.deleteScopeRegistry.rawValue, scope],
-                                                             managerDirectory: managerDirectory, environment: validated.environment)
+                                                             managerDirectory: managerDirectory, environment: exact)
         guard let effective = payload.effectiveRegistry, let user = payload.userRegistry,
-              let project = payload.projectRegistry, let global = payload.globalRegistry else { throw BridgeError.invalidOutput("Registry layers unavailable") }
+              let project = payload.projectRegistry, let global = payload.globalRegistry,
+              [effective, user, project, global].allSatisfy({ $0 != "<unavailable>" })
+        else { throw BridgeError.managerFailure(code: "registry-state-unavailable", detail: nil) }
+        guard fingerprint == (try await registryFingerprint(environment: exact, managerDirectory: managerDirectory, summary: summary))
+        else { throw BridgeError.managerFailure(code: "registry-state-changed", detail: nil) }
+        _ = try await validatedDetectedEnvironment(summary, managerDirectory: managerDirectory)
         return .init(effective: effective, user: user, project: project, global: global)
     }
 
@@ -510,8 +591,8 @@ actor NodeManagerClient {
             let configured = result.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
             if configured != "undefined", configured != "null" { value = configured }
         }
-        guard let registryURL = URL(string: value) else { throw CatalogSourceError.invalidURL }
-        return try NPMRegistryClient(registryURL: registryURL).registryURL
+        guard let registryURL = SourceConfiguration.registryURL(value) else { throw CatalogSourceError.invalidURL }
+        return registryURL
     }
 
     func planRuntimeUninstall(_ identity: NodeRuntimeIdentity, managerDirectory: URL) async throws -> NodeActionPlan {
@@ -568,7 +649,7 @@ actor NodeManagerClient {
                     == URL(filePath: summary.nodePath).resolvingSymlinksInPath().path
             else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
         }
-        try validatePackageEntries(summary, installationURL: installationURL)
+        try validatePackageEntries(summary, installation: installation)
         return (environment, summary)
     }
 
@@ -586,19 +667,9 @@ actor NodeManagerClient {
         return installation
     }
 
-    private func validatePackageEntries(_ summary: NodeSummary, installationURL: URL) throws {
-        let bin = installationURL.appending(path: "bin", directoryHint: .isDirectory)
-        for (name, actualPath) in [("node", summary.nodePath), ("npm", summary.npmPath)] {
-            let entry = bin.appending(path: name)
-            let resolvedEntry = entry.resolvingSymlinksInPath()
-            guard actualPath.hasPrefix("/"),
-                  FileManager.default.isExecutableFile(atPath: entry.path),
-                  resolvedEntry.path.hasPrefix(installationURL.path + "/"),
-                  URL(filePath: actualPath).resolvingSymlinksInPath().path == resolvedEntry.path
-            else {
-                throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
-            }
-        }
+    private func validatePackageEntries(_ summary: NodeSummary, installation: NodeInstallation) throws {
+        guard NodeEnvironmentResolver.packageInstallation(summary: summary, installations: [installation]) != nil
+        else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
     }
 
     func request<Payload: Decodable & Sendable>(

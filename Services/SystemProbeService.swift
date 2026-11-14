@@ -64,8 +64,8 @@ actor SystemProbeService {
         try await requireHomebrewClient().search(query)
     }
 
-    func discoverHomebrew(_ query: String, kind: HomebrewPackageKind, limit: Int = 50) async throws -> [HomebrewPackage] {
-        try await requireHomebrewClient().discover(query, kind: kind, limit: limit)
+    func discoverHomebrew(_ query: String, kind: HomebrewPackageKind, limit: Int = 50, maximumConcurrentDetails: Int = 4) async throws -> HomebrewDiscoveryResult {
+        try await requireHomebrewClient().discover(query, kind: kind, limit: limit, maximumConcurrentDetails: maximumConcurrentDetails)
     }
 
     func diagnoseHomebrew() async throws -> HomebrewDiagnosticReport {

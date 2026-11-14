@@ -40,7 +40,7 @@ struct LibraryUninstallConfirmation: View {
                             Task { await uninstall.confirmUninstall() }
                         }
                         .tint(.red)
-                        .disabled(uninstall.isPreparing || plan == nil || uninstall.isExecuting)
+                        .disabled(uninstall.isPreparing || plan == nil || plan?.executableCount == 0 || uninstall.isExecuting)
                     }
                 }
                 .frame(height: 40)
@@ -141,6 +141,13 @@ struct LibraryUninstallConfirmation: View {
                 }
                 ForEach(plan.intent.items, id: \.self) { item in
                     Text(item.displayIdentifier).textSelection(.enabled)
+                    if case .homebrew(let identity) = item, identity.kind == .formula,
+                       let impact = plan.homebrewImpacts.first(where: { $0.targets == [identity] }), !impact.dependents.isEmpty {
+                        Text("Installed Formula Dependents").font(.headline)
+                        Text("These installed Formula packages use this software. Cask dependents are not listed. Homebrew checks the installed versions and may refuse removal.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        ForEach(impact.dependents, id: \.self) { Text($0).textSelection(.enabled) }
+                    }
                     ForEach(artifacts(for: item, plan: plan), id: \.self) {
                         Text($0).foregroundStyle(.secondary).textSelection(.enabled)
                     }

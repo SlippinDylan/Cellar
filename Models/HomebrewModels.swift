@@ -310,3 +310,10 @@ struct HomebrewActionResult: Sendable {
         return completedCount > 0 && completedCount < plan.targets.count
     }
 }
+
+struct HomebrewDiscoveryResult: Sendable {
+    let packages: [HomebrewPackage]
+    let failedDetailCount: Int
+
+    var isUnavailable: Bool { packages.isEmpty && failedDetailCount > 0 }
+}

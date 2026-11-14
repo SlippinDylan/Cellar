@@ -214,6 +214,12 @@ Node Manager 源码的受限清理契约使用可选 `cleanupItems` 保留逐项
 - Tap 移除在执行前复验关联安装项，存在阻塞项时拒绝。
 - 非零退出也可能部分改变状态，因此命令结果与 post-refresh 都保留。
 
+Discover 的 Homebrew 详情补全仅处理每来源已排序、去重并截取上限的匹配项。单类别最多四个详情任务；All 的 Formula/Cask 各最多两个，合计最多四个。任务组按完成补位，按原匹配顺序返回；单项详情失败保留同类别成功项并展示部分结果提示，全部详情失败与真实零匹配分别呈现不可用和空结果。取消继续传播并等待子任务结束，替换搜索仍等待旧任务收尾。
+
+Library 的 Formula 卸载确认展示计划中已有的已安装 Formula 依赖者；该列表不包括 Cask，也不等同于 Homebrew 对具体已安装版本的卸载拒绝判据。列表仍参与执行前 freshness 复验，标准 Homebrew 拒绝保留失败语义，不添加强制或递归移除。installed inventory 仍受每路 2 MiB capture 上限保护；超限时 packages section 失败，独立读取成功的配置与 Tap 保留，不能把截断输出当作完整清单。真实大型 inventory 容量尚未经本机验证。
+
+Homebrew 的 `.pkg` Cask 安装由 Homebrew 自身调用需要管理员权限的系统 installer；Cellar 不提供该流程的密码、TTY 或 sudo helper。此边界不同于通过信任检查后打开官方 `Homebrew.pkg` 的系统 Installer 引导。需要授权的 Cask 安装／卸载仍可能失败；残留清理的一次性授权不覆盖 Homebrew 安装器或卸载钩子。
+
 ### Homebrew setup
 
 Setup service 把职责拆开且可注入：Homebrew 官方 latest stable Release metadata client、bounded downloader、SHA-256 validator、package-signature validator、Gatekeeper assessor、临时文件 owner 与 system opener。metadata 必须给出精确 `Homebrew.pkg` 的有效官方 SHA-256；digest 缺失/无效/不匹配、package signature 无法完成或无效、Gatekeeper assessment 无法完成或失败时一律 fail closed，不打开 package，并返回具体原因与 Homebrew 官方网站链接。不得降级为 shell installer。

@@ -30,6 +30,10 @@ struct DiscoverView: View {
                         LabeledContent { Text("Search Unavailable") } label: { Text(source.cardTitle) }
                             .foregroundStyle(.secondary)
                     }
+                    ForEach(search.partialScopes, id: \.self) { source in
+                        LabeledContent { Text("Some search results could not be loaded.") } label: { Text(source.cardTitle) }
+                            .foregroundStyle(.secondary)
+                    }
                     if let error = installation.error { Label { Text(error.discoverMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
                     if installation.isSubmitting, let current = operationStore.currentOperation {
                         ProgressView { Text(current.context.stage.title) }

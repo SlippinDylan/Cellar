@@ -1,6 +1,165 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "These installed Formula packages use this software. Cask dependents are not listed. Homebrew checks the installed versions and may refuse removal." : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "These installed Formula packages use this software. Cask dependents are not listed. Homebrew checks the installed versions and may refuse removal."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这些已安装的 Formula 使用此软件。此处不列出依赖它的 Cask。Homebrew 会检查已安装版本，并可能拒绝卸载。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這些已安裝的 Formula 使用此軟體。此處不列出依賴它的 Cask。Homebrew 會檢查已安裝版本，並可能拒絕解除安裝。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "これらのインストール済み Formula はこのソフトウェアを使用します。依存する Cask は表示していません。Homebrew はインストール済みバージョンを確認し、削除を拒否する場合があります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 설치된 Formula 패키지는 이 소프트웨어를 사용합니다. 의존하는 Cask는 표시되지 않습니다. Homebrew는 설치된 버전을 확인하고 제거를 거부할 수 있습니다."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese installierten Formula-Pakete verwenden diese Software. Abhängige Casks werden nicht aufgeführt. Homebrew prüft die installierten Versionen und kann die Entfernung verweigern."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ces Formula installées utilisent ce logiciel. Les Cask dépendants ne sont pas répertoriés. Homebrew vérifie les versions installées et peut refuser la suppression."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estas Formula instaladas usan este software. No se muestran los Cask dependientes. Homebrew comprueba las versiones instaladas y puede rechazar la eliminación."
+          }
+        }
+      }
+    },
+    "Installed Formula Dependents" : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installed Formula Dependents"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "依赖此软件的已安装 Formula"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "依賴此軟體的已安裝 Formula"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このソフトウェアに依存するインストール済み Formula"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 소프트웨어에 의존하는 설치된 Formula"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Installierte abhängige Formula-Pakete"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formula installées dépendantes"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formula instaladas dependientes"
+          }
+        }
+      }
+    },
+    "Some search results could not be loaded." : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Some search results could not be loaded."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分搜索结果无法加载。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分搜尋結果無法載入。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "一部の検索結果を読み込めませんでした。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "일부 검색 결과를 불러오지 못했습니다."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einige Suchergebnisse konnten nicht geladen werden."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Certains résultats de recherche n’ont pas pu être chargés."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudieron cargar algunos resultados de búsqueda."
+          }
+        }
+      }
+    },
   "This Node installation is readable. npm package changes and search require a supported nvm installation.": {
     "localizations": {
       "en": {

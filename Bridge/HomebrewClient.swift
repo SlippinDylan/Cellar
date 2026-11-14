@@ -202,16 +202,54 @@ actor HomebrewClient {
             .sorted { $0.identity.name.localizedStandardCompare($1.identity.name) == .orderedAscending }.prefix(limit))
     }
 
-    func discover(_ query: String, kind: HomebrewPackageKind, limit: Int = 50) async throws -> [HomebrewPackage] {
+    func discover(_ query: String, kind: HomebrewPackageKind, limit: Int = 50,
+                  maximumConcurrentDetails: Int = 4) async throws -> HomebrewDiscoveryResult {
         let matches = try await search(query, kind: kind, limit: limit)
-        var packages: [HomebrewPackage] = []
-        // Enrich only bounded matches, without fetching the full catalog.
-        for match in matches {
-            try Task.checkCancellation()
-            packages.append(try await loadPackage(match.identity))
+        return try await Self.enrichDiscoveryMatches(matches, maximumConcurrentDetails: maximumConcurrentDetails) {
+            try await self.loadPackage($0)
         }
-        var seen = Set<HomebrewPackageIdentity>()
-        return packages.filter { seen.insert($0.identity).inserted }
+    }
+
+    static func enrichDiscoveryMatches(_ matches: [HomebrewSearchResult], maximumConcurrentDetails: Int,
+        load: @escaping @Sendable (HomebrewPackageIdentity) async throws -> HomebrewPackage) async throws -> HomebrewDiscoveryResult {
+        precondition((1...4).contains(maximumConcurrentDetails))
+        try Task.checkCancellation()
+        return try await withThrowingTaskGroup(of: (Int, HomebrewPackage?).self) { group in
+            func enqueue(_ index: Int) {
+                _ = group.addTaskUnlessCancelled {
+                    try Task.checkCancellation()
+                    do {
+                        let package = try await load(matches[index].identity)
+                        try Task.checkCancellation()
+                        return (index, package)
+                    } catch {
+                        if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                            throw CancellationError()
+                        }
+                        return (index, nil)
+                    }
+                }
+            }
+            var next = 0
+            while next < min(maximumConcurrentDetails, matches.count) {
+                enqueue(next)
+                next += 1
+            }
+            var packages: [Int: HomebrewPackage] = [:]
+            var failed = 0
+            for try await (index, package) in group {
+                try Task.checkCancellation()
+                if let package { packages[index] = package } else { failed += 1 }
+                if next < matches.count {
+                    enqueue(next)
+                    next += 1
+                }
+            }
+            try Task.checkCancellation()
+            var seen = Set<HomebrewPackageIdentity>()
+            let ordered = matches.indices.compactMap { packages[$0] }.filter { seen.insert($0.identity).inserted }
+            return HomebrewDiscoveryResult(packages: ordered, failedDetailCount: failed)
+        }
     }
 
     func loadPackage(_ identity: HomebrewPackageIdentity) async throws -> HomebrewPackage {

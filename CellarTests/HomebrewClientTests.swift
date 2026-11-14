@@ -770,13 +770,84 @@ final class HomebrewClientTests: XCTestCase {
         XCTAssertFalse(log.contains("info"))
     }
 
+    @MainActor
+    func testActiveLibraryConfirmationPreservesExactFormulaDependentsWithoutBlockingPlan() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let model = fixture.model(activityStore: ActivityStore())
+        let uninstall = LibraryUninstallModel(model: model, loadIconData: { _ in nil })
+        await uninstall.prepare(.homebrew(.init(name: "acme/tools/demo", kind: .formula)))
+        let confirmation = try XCTUnwrap(uninstall.confirmation)
+        XCTAssertEqual(confirmation.homebrewImpacts.first?.dependents, ["consumer"])
+        XCTAssertEqual(confirmation.homebrewImpacts.first?.targets, [.init(name: "acme/tools/demo", kind: .formula)])
+        XCTAssertEqual(confirmation.executableCount, 1)
+        XCTAssertFalse(try String(contentsOf: fixture.logURL, encoding: .utf8).contains("uninstall --formula"))
+        uninstall.dismissConfirmation()
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let view = try String(contentsOf: root.appending(path: "Features/Library/LibraryUninstallConfirmation.swift"), encoding: .utf8)
+        XCTAssertTrue(view.contains("ForEach(impact.dependents"))
+        XCTAssertTrue(view.contains("Installed Formula Dependents"))
+        XCTAssertTrue(view.contains("plan?.executableCount == 0"))
+    }
+
+    func testInventoryCaptureBoundaryFailsClosedAndPreservesIndependentSections() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let json = #"{"formulae":[{"name":"demo","full_name":"demo","versions":{"stable":"1"},"installed":[{"version":"1"}],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}"#
+        for overflow in [false, true] {
+            let size = ProcessRequest.defaultCaptureLimit + (overflow ? 1 : -1)
+            let content = json + String(repeating: " ", count: size - json.utf8.count)
+            try Data(content.utf8).write(to: fixture.directoryURL.appending(path: "inventory.json"))
+            let snapshot = try await fixture.client.loadSnapshot(includingOutdated: false)
+            XCTAssertEqual(snapshot.packages.count, overflow ? 0 : 1)
+            XCTAssertEqual(snapshot.sectionErrors[.packages] != nil, overflow)
+            XCTAssertNil(snapshot.sectionErrors[.configuration])
+            XCTAssertNil(snapshot.sectionErrors[.taps])
+            XCTAssertFalse(snapshot.taps.isEmpty)
+        }
+        let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertFalse(log.contains("uninstall"))
+        XCTAssertFalse(log.contains("install --"))
+    }
+
+    func testFormulaDependentDriftRefusesBeforeMutationAndStandardRefusalStaysFailed() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        let plan = try await fixture.client.planFormulaUninstall("demo")
+        XCTAssertTrue(plan.canExecute, "The uses graph is disclosure, not the uninstall refusal predicate")
+        try Data().write(to: fixture.directoryURL.appending(path: "dependents-changed"))
+        do { _ = try await fixture.client.execute(plan); XCTFail("Stale impact must fail") }
+        catch { guard case HomebrewClientError.stateChanged = error else { return XCTFail("Expected freshness rejection: \(error)") } }
+        var log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        XCTAssertFalse(log.contains("uninstall --formula"))
+        let fresh = try await fixture.client.planFormulaUninstall("demo")
+        try Data().write(to: fixture.directoryURL.appending(path: "dependency-refusal"))
+        let result = try await fixture.client.execute(fresh)
+        XCTAssertFalse(result.succeeded)
+        XCTAssertNotEqual(result.command.terminationStatus, 0)
+        XCTAssertTrue(result.command.standardError.contains("required by"))
+        XCTAssertNotNil(result.snapshot)
+        XCTAssertTrue(result.snapshot?.packages.contains { $0.identity.name == "acme/tools/demo" } == true)
+        log = try String(contentsOf: fixture.logURL, encoding: .utf8)
+        for forbidden in ["--force", "--ignore-dependencies", "--recursive", "autoremove", "cleanup"] { XCTAssertFalse(log.contains(forbidden)) }
+    }
+
+    func testDiscoveryPreservesSuccessWhenAnotherDetailFails() async throws {
+        let fixture = try FakeBrewFixture()
+        defer { fixture.remove() }
+        try Data("invalid JSON".utf8).write(to: fixture.directoryURL.appending(path: "new-metadata.json"))
+        let packages = try await fixture.client.discover("bounded", kind: .formula)
+        XCTAssertEqual(packages.failedDetailCount, 1)
+        XCTAssertEqual(packages.packages.map(\.identity), [.init(name: "batchpkg", kind: .formula)])
+    }
+
     func testDiscoveryOnlyEnrichesTheBoundedTypedMatches() async throws {
         let fixture = try FakeBrewFixture()
         defer { fixture.remove() }
         let matches = try await fixture.client.discover("bounded", kind: .formula, limit: 1)
-        XCTAssertEqual(matches.map(\.identity), [.init(name: "batchpkg", kind: .formula)])
-        XCTAssertEqual(matches.first?.currentVersion, "2.0.0")
-        XCTAssertEqual(matches.first?.description, "Batch formula")
+        XCTAssertEqual(matches.packages.map(\.identity), [.init(name: "batchpkg", kind: .formula)])
+        XCTAssertEqual(matches.packages.first?.currentVersion, "2.0.0")
+        XCTAssertEqual(matches.packages.first?.description, "Batch formula")
         let log = try String(contentsOf: fixture.logURL, encoding: .utf8)
         XCTAssertEqual(log.split(separator: "\n").count, 2)
         XCTAssertTrue(log.contains("search --formula -- bounded"))
@@ -1112,6 +1183,7 @@ struct FakeBrewFixture {
           "--caskroom") printf '%s\n' "$state_dir/Caskroom" ;;
           "config") printf '%s\n' 'HOMEBREW_VERSION: 5.0.0' 'CPU: arm64' ;;
           "info --json=v2 --installed")
+            if [ -f "$state_dir/inventory.json" ]; then /bin/cat "$state_dir/inventory.json"; exit 0; fi
             if [ -f "$state_dir/postflight-packages-fail" ] && { [ -f "$state_dir/formula-removed" ] || [ -f "$state_dir/cask-removed" ]; }; then
               printf '%s\n' 'installed package query unavailable' >&2
               exit 1
@@ -1199,7 +1271,9 @@ struct FakeBrewFixture {
           "info --json=v2 --formula aliaspkg"|"info --json=v2 --formula acme/tools/aliaspkg")
             printf '%s\n' '{"formulae":[{"name":"aliaspkg","full_name":"acme/tools/aliaspkg","tap":"acme/tools","desc":"Alias formula","homepage":null,"versions":{"stable":"1.0.0","head":null},"installed":[],"dependencies":[],"pinned":false,"deprecated":false,"disabled":false}],"casks":[]}'
             ;;
-          "uses --installed --formula acme/tools/demo") printf '%s\n' 'consumer' ;;
+          "uses --installed --formula acme/tools/demo")
+            if [ -f "$state_dir/dependents-changed" ]; then printf '%s\n' other-consumer; else printf '%s\n' consumer; fi
+            ;;
           "info --json=v2 --cask sample"|"info --json=v2 --cask old-sample"|"info --json=v2 --cask acme/apps/sample")
             if [ -f "$state_dir/current-cask-changed" ]; then
               printf '%s\n' '{"formulae":[],"casks":[{"token":"sample","old_tokens":["old-sample"],"full_token":"acme/apps/sample","tap":"acme/apps","name":["New Name"],"desc":null,"homepage":null,"version":"4.0","installed":"3.0","outdated":true,"artifacts":[{"app":["NewName.app"]},{"zap":[{"trash":["~/Library/Application Support/OnlyNewMetadata"]}]}]}]}'
@@ -1208,6 +1282,7 @@ struct FakeBrewFixture {
             printf '%s\n' '{"formulae":[],"casks":[{"token":"sample","old_tokens":["old-sample"],"full_token":"acme/apps/sample","tap":"acme/apps","name":["Sample"],"desc":null,"homepage":null,"version":"3.0","installed":"3.0","outdated":false,"artifacts":[{"app":["Sample.app"]},{"zap":[{"trash":["~/Library/Preferences/com.acme.sample.plist"]}]}]}]}'
             ;;
           "uninstall --formula acme/tools/demo")
+            if [ -f "$state_dir/dependency-refusal" ]; then printf '%s\n' 'required by other-consumer' >&2; exit 1; fi
             touch "$state_dir/formula-removed"
             printf '%s\n' 'completed'
             [ ! -f "$state_dir/uninstall-reports-failure" ] || exit 1

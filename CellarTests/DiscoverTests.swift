@@ -37,8 +37,9 @@ final class DiscoverTests: XCTestCase {
         let scopedRegistry = try XCTUnwrap(URL(string: "https://scoped.fixture/"))
         let base = DiscoverNPMContext(environment: environment, registryURL: registry)
         let resolved = DiscoverNPMContext(environment: environment, registryURL: scopedRegistry)
-        let dependencies = DiscoverSearchDependencies(homebrew: { _, kind, _ in
-            [DiscoverSearchFixture.package("one", kind: kind), DiscoverSearchFixture.package("two", kind: kind)]
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, kind, _, concurrency in
+            XCTAssertEqual(concurrency, 2)
+            return .init(packages: [DiscoverSearchFixture.package("one", kind: kind), DiscoverSearchFixture.package("two", kind: kind)], failedDetailCount: 0)
         }, npm: { _, context, _ in
             XCTAssertEqual(context, resolved)
             return ["one", "two"].map { name in
@@ -57,9 +58,9 @@ final class DiscoverTests: XCTestCase {
     }
 
     func testAllSearchKeepsSuccessfulSourceWhenOtherSourcesFailOrAreMissing() async {
-        let dependencies = DiscoverSearchDependencies(homebrew: { _, kind, _ in
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, kind, _, _ in
             if kind == .cask { throw CatalogSourceError.invalidResponse }
-            return [DiscoverSearchFixture.package("one", kind: kind)]
+            return .init(packages: [DiscoverSearchFixture.package("one", kind: kind)], failedDetailCount: 0)
         }, npm: { _, _, _ in XCTFail("Missing npm context must not issue a request"); return [] })
         let model = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
         await model.search("one", scope: .all, context: .init(homebrewAvailable: true, npm: nil))
@@ -69,6 +70,129 @@ final class DiscoverTests: XCTestCase {
         model.invalidate()
         XCTAssertTrue(model.unavailableScopes.isEmpty)
         XCTAssertTrue(model.results.isEmpty)
+    }
+
+    func testPartialHomebrewResultsDistinguishFailedDetailsFromEmptyAndResetWarnings() async {
+        let dependencies = DiscoverSearchDependencies(homebrew: { query, kind, _, concurrency in
+            XCTAssertEqual(concurrency, query == "all" ? 2 : 4)
+            if kind == .cask { return .init(packages: [], failedDetailCount: 2) }
+            return .init(packages: query == "empty" ? [] : [DiscoverSearchFixture.package("one", kind: kind)],
+                         failedDetailCount: query == "empty" ? 0 : 1)
+        }, npm: { _, context, _ in
+            [.init(identity: .init(name: "npm-one", environment: context.environment), version: "1", description: nil,
+                   websiteURL: nil, registryURL: context.registryURL)]
+        })
+        let store = OperationStore()
+        let model = DiscoverSearchModel(dependencies: dependencies, operationStore: store)
+        let context = DiscoverContext(homebrewAvailable: true, npm: .init(environment: environment, registryURL: CatalogWebsites.npmRegistry))
+        await model.search("partial", scope: .homebrewFormula, context: context)
+        XCTAssertEqual(model.state, .available)
+        XCTAssertEqual(model.partialScopes, [.homebrewFormula])
+        XCTAssertTrue(model.unavailableScopes.isEmpty)
+        await model.search("failed", scope: .homebrewCask, context: context)
+        XCTAssertEqual(model.state, .failed)
+        XCTAssertEqual(model.unavailableScopes, [.homebrewCask])
+        XCTAssertTrue(model.partialScopes.isEmpty)
+        await model.search("empty", scope: .homebrewFormula, context: context)
+        XCTAssertEqual(model.state, .empty)
+        XCTAssertTrue(model.unavailableScopes.isEmpty)
+        await model.search("all", scope: .all, context: context)
+        XCTAssertEqual(model.state, .available)
+        XCTAssertEqual(model.results.count, 2)
+        XCTAssertEqual(model.partialScopes, [.homebrewFormula])
+        XCTAssertEqual(model.unavailableScopes, [.homebrewCask])
+        model.invalidate()
+        XCTAssertTrue(model.partialScopes.isEmpty)
+        XCTAssertFalse(store.hasActiveOperations)
+    }
+
+    func testHomebrewDetailConcurrencyReplenishesOneSlotAndPreservesSearchOrder() async throws {
+        for capacity in [2, 4] {
+            let firstWave = expectation(description: "Initial bounded wave")
+            firstWave.expectedFulfillmentCount = capacity
+            let replenished = expectation(description: "One replacement")
+            let gate = DetailEnrichmentGate(capacity: capacity, first: { firstWave.fulfill() }, next: { replenished.fulfill() })
+            let matches = (0...capacity).map { HomebrewSearchResult(identity: .init(name: "item\($0)", kind: .formula)) }
+            let task = Task { try await HomebrewClient.enrichDiscoveryMatches(matches, maximumConcurrentDetails: capacity) {
+                await gate.load($0)
+            } }
+            await fulfillment(of: [firstWave], timeout: 3)
+            let initial = await gate.startedCount
+            XCTAssertEqual(initial, capacity)
+            await gate.release("item\(capacity - 1)")
+            await fulfillment(of: [replenished], timeout: 3)
+            await gate.releaseAll()
+            let result = try await task.value
+            XCTAssertEqual(result.packages.map(\.identity), matches.map(\.identity))
+            XCTAssertEqual(result.failedDetailCount, 0)
+            let peak = await gate.peak
+            XCTAssertEqual(peak, capacity)
+        }
+    }
+
+    func testAllHomebrewCategoriesShareFourDetailSlots() async {
+        let firstWave = expectation(description: "Two details per category")
+        firstWave.expectedFulfillmentCount = 4
+        let replacement = expectation(description: "Each category replenishes one slot")
+        replacement.expectedFulfillmentCount = 2
+        let gate = DetailEnrichmentGate(capacity: 4, first: { firstWave.fulfill() }, next: { replacement.fulfill() })
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, kind, _, capacity in
+            let prefix = kind == .formula ? "formula" : "cask"
+            let matches = (0...2).map { HomebrewSearchResult(identity: .init(name: "\(prefix)\($0)", kind: kind)) }
+            return try await HomebrewClient.enrichDiscoveryMatches(matches, maximumConcurrentDetails: capacity) {
+                await gate.load($0)
+            }
+        }, npm: { _, _, _ in [] })
+        let model = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
+        let search = Task { await model.search("all", scope: .all, context: .init(homebrewAvailable: true, npm: nil)) }
+        await fulfillment(of: [firstWave], timeout: 3)
+        let count = await gate.startedCount
+        XCTAssertEqual(count, 4)
+        await gate.release("formula0")
+        await gate.release("cask0")
+        await fulfillment(of: [replacement], timeout: 3)
+        await gate.releaseAll()
+        await search.value
+        let peak = await gate.peak
+        XCTAssertEqual(peak, 4)
+        XCTAssertEqual(model.results.map(\.identity), ["formula0", "formula1", "formula2"].map { .homebrew(.init(name: $0, kind: .formula)) }
+                       + ["cask0", "cask1", "cask2"].map { .homebrew(.init(name: $0, kind: .cask)) })
+    }
+
+    func testHomebrewEnrichmentDistinguishesAllFailedAndLegitimateEmpty() async throws {
+        let empty = try await HomebrewClient.enrichDiscoveryMatches([], maximumConcurrentDetails: 4) { _ in
+            XCTFail("Empty search should not enrich"); throw CatalogSourceError.invalidResponse
+        }
+        XCTAssertFalse(empty.isUnavailable)
+        XCTAssertEqual(empty.failedDetailCount, 0)
+        let failed = try await HomebrewClient.enrichDiscoveryMatches([.init(identity: .init(name: "one", kind: .formula))], maximumConcurrentDetails: 4) { _ in
+            throw CatalogSourceError.invalidResponse
+        }
+        XCTAssertTrue(failed.isUnavailable)
+        XCTAssertEqual(failed.failedDetailCount, 1)
+    }
+
+    func testCancellingHomebrewDetailsWaitsForChildrenAndDoesNotReplenish() async {
+        let started = expectation(description: "Four details running")
+        started.expectedFulfillmentCount = 4
+        let gate = DetailEnrichmentGate(capacity: 4, first: { started.fulfill() }, next: { XCTFail("Cancelled query replenished") })
+        let matches = (0...4).map { HomebrewSearchResult(identity: .init(name: "item\($0)", kind: .formula)) }
+        let task = Task { try await HomebrewClient.enrichDiscoveryMatches(matches, maximumConcurrentDetails: 4) {
+            await gate.load($0)
+        } }
+        await fulfillment(of: [started], timeout: 3)
+        task.cancel()
+        await gate.releaseAll()
+        do { _ = try await task.value; XCTFail("Cancellation must not become partial success") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        let count = await gate.startedCount
+        let active = await gate.active
+        XCTAssertEqual(count, 4)
+        XCTAssertEqual(active, 0)
+        do {
+            _ = try await HomebrewClient.enrichDiscoveryMatches([matches[0]], maximumConcurrentDetails: 4) { _ in throw URLError(.cancelled) }
+            XCTFail("Source cancellation must propagate")
+        } catch { XCTAssertTrue(error is CancellationError) }
     }
 
     func testBatchInputNormalizesUnicodeWhitespaceAndStableDeduplication() throws {
@@ -179,7 +303,7 @@ final class DiscoverTests: XCTestCase {
         let transport = FakeCatalogTransport(body: Data(#"{"objects":[{"package":{"name":"one","version":"2.0.0","description":"Registry fixture"}}],"total":1}"#.utf8))
         let registry = try XCTUnwrap(URL(string: "https://registry.fixture.invalid/custom"))
         let context = DiscoverNPMContext(environment: environment, registryURL: registry)
-        let dependencies = DiscoverSearchDependencies(homebrew: { _, _, _ in [] }, npm: { query, target, limit in
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, _, _, _ in .init(packages: [], failedDetailCount: 0) }, npm: { query, target, limit in
             try await NPMRegistryClient(registryURL: target.registryURL, http: .init(transport: transport)).search(query, environment: target.environment, limit: limit)
         })
         let model = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
@@ -313,7 +437,7 @@ final class DiscoverTests: XCTestCase {
     func testSearchResolvesScopedRegistryBeforeRequestAndAdvertisesActualSource() async {
         let scoped = CatalogWebsites.url(host: "scope.fixture.invalid", path: "/")
         let initial = DiscoverNPMContext(environment: environment, registryURL: CatalogWebsites.npmRegistry)
-        let dependencies = DiscoverSearchDependencies(homebrew: { _, _, _ in [] }, npm: { query, context, _ in
+        let dependencies = DiscoverSearchDependencies(homebrew: { _, _, _, _ in .init(packages: [], failedDetailCount: 0) }, npm: { query, context, _ in
             XCTAssertEqual(query, "@scope/one")
             XCTAssertEqual(context.registryURL, scoped)
             return [.init(identity: .init(name: query, environment: context.environment), version: "1.0.0", description: nil, websiteURL: nil, registryURL: context.registryURL)]
@@ -460,7 +584,7 @@ private actor DiscoverSearchFixture {
     private var count = 0
     private var limits: [Int] = []
     nonisolated var dependencies: DiscoverSearchDependencies {
-        .init(homebrew: { query, kind, limit in try await self.search(query, kind: kind, limit: limit) }, npm: { _, _, _ in [] })
+        .init(homebrew: { query, kind, limit, _ in .init(packages: try await self.search(query, kind: kind, limit: limit), failedDetailCount: 0) }, npm: { _, _, _ in [] })
     }
     func search(_ query: String, kind: HomebrewPackageKind, limit: Int) throws -> [HomebrewPackage] {
         count += 1
@@ -484,7 +608,7 @@ private actor DeferredDiscoverSearch {
     var continuation: CheckedContinuation<Void, Never>?
     init(onStart: @escaping @Sendable () -> Void) { self.onStart = onStart }
     nonisolated var dependencies: DiscoverSearchDependencies {
-        .init(homebrew: { query, kind, _ in await self.search(query, kind: kind) }, npm: { _, _, _ in [] })
+        .init(homebrew: { query, kind, _, _ in .init(packages: await self.search(query, kind: kind), failedDetailCount: 0) }, npm: { _, _, _ in [] })
     }
     func search(_ query: String, kind: HomebrewPackageKind) async -> [HomebrewPackage] {
         if query == "old" {
@@ -493,4 +617,42 @@ private actor DeferredDiscoverSearch {
         return [DiscoverSearchFixture.package(query, kind: kind)]
     }
     func finishOld() { continuation?.resume(); continuation = nil }
+}
+
+private actor DetailEnrichmentGate {
+    let capacity: Int
+    let first: @Sendable () -> Void
+    let next: @Sendable () -> Void
+    private var pending: [String: CheckedContinuation<Void, Never>] = [:]
+    private var released = false
+    private(set) var startedCount = 0
+    private(set) var active = 0
+    private(set) var peak = 0
+
+    init(capacity: Int, first: @escaping @Sendable () -> Void, next: @escaping @Sendable () -> Void) {
+        self.capacity = capacity
+        self.first = first
+        self.next = next
+    }
+
+    func load(_ identity: HomebrewPackageIdentity) async -> HomebrewPackage {
+        startedCount += 1
+        active += 1
+        peak = max(peak, active)
+        await withCheckedContinuation { continuation in
+            if released { continuation.resume() }
+            else { pending[identity.name] = continuation }
+            if startedCount <= capacity { first() } else { next() }
+        }
+        active -= 1
+        return DiscoverSearchFixture.package(identity.name, kind: identity.kind)
+    }
+
+    func release(_ name: String) { pending.removeValue(forKey: name)?.resume() }
+    func releaseAll() {
+        released = true
+        let continuations = Array(pending.values)
+        pending.removeAll()
+        for continuation in continuations { continuation.resume() }
+    }
 }

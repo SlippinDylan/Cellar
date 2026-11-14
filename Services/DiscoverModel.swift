@@ -1,11 +1,11 @@
 import Foundation
 
 struct DiscoverSearchDependencies: Sendable {
-    let homebrew: @Sendable (String, HomebrewPackageKind, Int) async throws -> [HomebrewPackage]
+    let homebrew: @Sendable (String, HomebrewPackageKind, Int, Int) async throws -> HomebrewDiscoveryResult
     let npm: @Sendable (String, DiscoverNPMContext, Int) async throws -> [NPMCatalogResult]
     let resolveNPM: @Sendable (String, DiscoverNPMContext) async throws -> DiscoverNPMContext
 
-    init(homebrew: @escaping @Sendable (String, HomebrewPackageKind, Int) async throws -> [HomebrewPackage],
+    init(homebrew: @escaping @Sendable (String, HomebrewPackageKind, Int, Int) async throws -> HomebrewDiscoveryResult,
          npm: @escaping @Sendable (String, DiscoverNPMContext, Int) async throws -> [NPMCatalogResult],
          resolveNPM: @escaping @Sendable (String, DiscoverNPMContext) async throws -> DiscoverNPMContext = { _, context in context }) {
         self.homebrew = homebrew
@@ -15,7 +15,7 @@ struct DiscoverSearchDependencies: Sendable {
 
     static func live(service: SystemProbeService) -> Self {
         let http = CatalogHTTPClient()
-        return Self(homebrew: { try await service.discoverHomebrew($0, kind: $1, limit: $2) },
+        return Self(homebrew: { try await service.discoverHomebrew($0, kind: $1, limit: $2, maximumConcurrentDetails: $3) },
                     npm: { query, context, limit in
             try await NPMRegistryClient(registryURL: context.registryURL, http: http).search(query, environment: context.environment, limit: limit)
         }, resolveNPM: { query, context in
@@ -29,6 +29,7 @@ final class DiscoverSearchModel: ObservableObject {
     @Published private(set) var state = DiscoverSearchState.idle
     @Published private(set) var results: [DiscoverResult] = []
     @Published private(set) var resultContext: DiscoverContext?
+    @Published private(set) var partialScopes: [CatalogProviderScope] = []
     @Published private(set) var unavailableScopes: [CatalogProviderScope] = []
     private let dependencies: DiscoverSearchDependencies
     private let operationStore: OperationStore
@@ -47,6 +48,7 @@ final class DiscoverSearchModel: ObservableObject {
         results = []
         resultContext = nil
         unavailableScopes = []
+        partialScopes = []
     }
 
     func search(_ query: String, scope: DiscoverSearchScope, context: DiscoverContext, limit: Int = 50) async {
@@ -55,6 +57,7 @@ final class DiscoverSearchModel: ObservableObject {
         results = []
         resultContext = nil
         unavailableScopes = []
+        partialScopes = []
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let previous = owner {
             previous.task.cancel()
@@ -93,19 +96,25 @@ final class DiscoverSearchModel: ObservableObject {
                      request: UUID, operationID: UUID) async {
         defer { operationStore.end(operationID) }
         do {
-            let (results, resolvedContext, unavailable) = try await operationStore.performCancellable(operationID: operationID) {
+            let (results, resolvedContext, unavailable, partial) = try await operationStore.performCancellable(operationID: operationID) {
                 let values: [DiscoverResult]
                 var effectiveContext = context
                 var unavailable: [CatalogProviderScope] = []
+                var partial: [CatalogProviderScope] = []
                 switch scope {
                 case .all:
                     let merged = try await self.searchAll(query, context: context, limit: limit)
                     values = merged.results
                     effectiveContext = merged.context
                     unavailable = merged.unavailable
+                    partial = merged.partial
                 case .homebrewFormula, .homebrewCask:
                     let kind: HomebrewPackageKind = scope == .homebrewFormula ? .formula : .cask
-                    values = try await self.dependencies.homebrew(query, kind, limit).prefix(limit).map(DiscoverResult.homebrew)
+                    let discovery = try await self.dependencies.homebrew(query, kind, limit, 4)
+                    values = discovery.packages.prefix(limit).map(DiscoverResult.homebrew)
+                    let source: CatalogProviderScope = kind == .formula ? .homebrewFormula : .homebrewCask
+                    if discovery.isUnavailable { unavailable = [source] }
+                    else if discovery.failedDetailCount > 0 { partial = [source] }
                 case .npm:
                     guard let base = context.npm else { preconditionFailure("npm search requires a validated context") }
                     let npm = try await self.dependencies.resolveNPM(query, base)
@@ -115,12 +124,13 @@ final class DiscoverSearchModel: ObservableObject {
                     values = try await self.dependencies.npm(query, npm, limit).prefix(limit).map(DiscoverResult.npm)
                 }
                 try Task.checkCancellation()
-                return (values, effectiveContext, unavailable)
+                return (values, effectiveContext, unavailable, partial)
             }
             guard latestRequest == request, !Task.isCancelled else { return }
             self.results = results
             resultContext = resolvedContext
             unavailableScopes = unavailable
+            partialScopes = partial
             state = results.isEmpty ? (unavailable.isEmpty ? .empty : .failed) : .available
         } catch {
             guard latestRequest == request else { return }
@@ -129,43 +139,48 @@ final class DiscoverSearchModel: ObservableObject {
     }
 
     private func searchAll(_ query: String, context: DiscoverContext, limit: Int) async throws
-        -> (results: [DiscoverResult], context: DiscoverContext, unavailable: [CatalogProviderScope]) {
+        -> (results: [DiscoverResult], context: DiscoverContext, unavailable: [CatalogProviderScope], partial: [CatalogProviderScope]) {
         let dependencies = dependencies
-        return try await withThrowingTaskGroup(of: (CatalogProviderScope, [DiscoverResult], DiscoverNPMContext?, Bool).self) { group in
+        return try await withThrowingTaskGroup(of: (CatalogProviderScope, [DiscoverResult], DiscoverNPMContext?, Bool, Bool).self) { group in
             for scope in CatalogProviderScope.allCases {
                 group.addTask {
                     do {
                         switch scope {
                         case .homebrewFormula, .homebrewCask:
-                            guard context.homebrewAvailable else { return (scope, [], nil, true) }
+                            guard context.homebrewAvailable else { return (scope, [], nil, true, false) }
                             let kind: HomebrewPackageKind = scope == .homebrewFormula ? .formula : .cask
-                            let packages = try await dependencies.homebrew(query, kind, limit)
-                            return (scope, packages.prefix(limit).map(DiscoverResult.homebrew), nil, false)
+                            // All runs both Homebrew categories concurrently, sharing a total budget of four.
+                            let discovery = try await dependencies.homebrew(query, kind, limit, 2)
+                            return (scope, discovery.packages.prefix(limit).map(DiscoverResult.homebrew), nil,
+                                    discovery.isUnavailable, !discovery.isUnavailable && discovery.failedDetailCount > 0)
                         case .npm:
-                            guard let base = context.npm else { return (scope, [], nil, true) }
+                            guard let base = context.npm else { return (scope, [], nil, true, false) }
                             let npm = try await dependencies.resolveNPM(query, base)
                             let packages = try await dependencies.npm(query, npm, limit)
-                            return (scope, packages.prefix(limit).map(DiscoverResult.npm), npm, false)
+                            return (scope, packages.prefix(limit).map(DiscoverResult.npm), npm, false, false)
                         }
                     } catch {
                         if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
                             throw CancellationError()
                         }
-                        return (scope, [], nil, true)
+                        return (scope, [], nil, true, false)
                     }
                 }
             }
             var results: [CatalogProviderScope: [DiscoverResult]] = [:]
             var unavailable: [CatalogProviderScope] = []
+            var partial: [CatalogProviderScope] = []
             var effectiveContext = context
-            for try await (scope, packages, npm, failed) in group {
+            for try await (scope, packages, npm, failed, incomplete) in group {
                 results[scope] = packages
                 if failed { unavailable.append(scope) }
+                if incomplete { partial.append(scope) }
                 if let npm { effectiveContext = .init(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true) }
             }
             try Task.checkCancellation()
             return (CatalogProviderScope.allCases.flatMap { results[$0, default: []] }, effectiveContext,
-                    CatalogProviderScope.allCases.filter { unavailable.contains($0) })
+                    CatalogProviderScope.allCases.filter { unavailable.contains($0) },
+                    CatalogProviderScope.allCases.filter { partial.contains($0) })
         }
     }
 }

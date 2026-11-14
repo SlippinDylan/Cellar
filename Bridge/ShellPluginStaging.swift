@@ -64,11 +64,72 @@ final class ShellPluginStaging {
 
     func cleanup() throws {
         guard ownsStaging() else { throw Self.failure }
-        // removefileat is anchored to the owned directory; clone symlinks are unlinked,
-        // not followed. No cleanup path ever names the final plugin destination.
-        if removefileat(staging, "repository", nil, removefile_flags_t(REMOVEFILE_RECURSIVE)) != 0, errno != ENOENT { throw Self.failure }
+        // Stay relative to retained descriptors even if an ancestor is renamed.
+        // Cancellation must not skip cleanup of this owned, unpublished clone.
+        var repository = stat()
+        if fstatat(staging, "repository", &repository, AT_SYMLINK_NOFOLLOW) == 0 {
+            try removeRepositoryEntry(parent: staging, name: "repository", expected: repository, depth: 0)
+        } else if errno != ENOENT {
+            throw Self.cleanupFailure(operation: "fstatat", name: "repository")
+        }
         guard unlinkat(staging, ".cellar-owner", 0) == 0,
               unlinkat(parent, name, AT_REMOVEDIR) == 0 else { throw Self.failure }
+    }
+
+    private func removeRepositoryEntry(parent: Int32, name: String, expected: stat, depth: Int) throws {
+        guard depth < 256 else { throw POSIXError(.ELOOP) }
+        guard expected.st_dev == metadata.st_dev else { throw POSIXError(.EXDEV) }
+        if expected.st_mode & S_IFMT == S_IFDIR {
+            let descriptor = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+            guard descriptor >= 0 else { throw Self.cleanupFailure(operation: "openat", name: name) }
+            defer { close(descriptor) }
+            var opened = stat()
+            guard fstat(descriptor, &opened) == 0 else { throw Self.cleanupFailure(operation: "fstat", name: name) }
+            guard Self.sameIdentity(opened, expected) else { throw Self.failure }
+            let duplicate = dup(descriptor)
+            guard duplicate >= 0 else { throw Self.cleanupFailure(operation: "dup", name: name) }
+            guard let directory = fdopendir(duplicate) else {
+                let error = Self.cleanupFailure(operation: "fdopendir", name: name)
+                close(duplicate)
+                throw error
+            }
+            defer { closedir(directory) }
+            while true {
+                errno = 0
+                guard let record = readdir(directory) else {
+                    guard errno == 0 else { throw Self.cleanupFailure(operation: "readdir", name: name) }
+                    break
+                }
+                let child = withUnsafePointer(to: &record.pointee.d_name) {
+                    $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+                }
+                if child == "." || child == ".." { continue }
+                var value = stat()
+                guard fstatat(descriptor, child, &value, AT_SYMLINK_NOFOLLOW) == 0 else {
+                    throw Self.cleanupFailure(operation: "fstatat", name: child)
+                }
+                try removeRepositoryEntry(parent: descriptor, name: child, expected: value, depth: depth + 1)
+            }
+        }
+        var current = stat()
+        guard fstatat(parent, name, &current, AT_SYMLINK_NOFOLLOW) == 0 else {
+            throw Self.cleanupFailure(operation: "fstatat", name: name)
+        }
+        guard Self.sameIdentity(current, expected) else { throw Self.failure }
+        guard unlinkat(parent, name, expected.st_mode & S_IFMT == S_IFDIR ? AT_REMOVEDIR : 0) == 0 else {
+            throw Self.cleanupFailure(operation: "unlinkat", name: name)
+        }
+    }
+
+    private static func sameIdentity(_ current: stat, _ expected: stat) -> Bool {
+        current.st_dev == expected.st_dev && current.st_ino == expected.st_ino
+            && current.st_mode & S_IFMT == expected.st_mode & S_IFMT
+    }
+
+    private static func cleanupFailure(operation: String, name: String) -> POSIXError {
+        let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+        let reason = POSIXError(code).localizedDescription
+        return POSIXError(code, userInfo: [NSLocalizedDescriptionKey: "Plugin staging \(operation) (\(name)): \(reason)"])
     }
 
     private func ownsStaging() -> Bool {

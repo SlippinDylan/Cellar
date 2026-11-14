@@ -455,6 +455,121 @@ final class ShellManagerClientTests: XCTestCase {
         }
     }
 
+    func testPluginStagingCleanupRemovesNestedCloneAndLinksWithoutFollowingTargets() throws {
+        for repositoryIsLink in [false, true] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+            let repository = staging.directory.appending(path: "repository")
+            let outside = fixture.root.appending(path: "outside-directory")
+            try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: false)
+            let sentinel = outside.appending(path: "sentinel")
+            try Data("external".utf8).write(to: sentinel)
+            if repositoryIsLink {
+                try FileManager.default.createSymbolicLink(at: repository, withDestinationURL: outside)
+            } else {
+                let nested = repository.appending(path: "first/second")
+                try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+                try Data("plugin".utf8).write(to: nested.appending(path: "plugin.zsh"))
+                try Data("root".utf8).write(to: repository.appending(path: "README"))
+                try FileManager.default.createSymbolicLink(at: nested.appending(path: "external"), withDestinationURL: outside)
+                try FileManager.default.createSymbolicLink(at: nested.appending(path: "dangling"), withDestinationURL: fixture.root.appending(path: "missing"))
+            }
+            try staging.cleanup()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staging.directory.path))
+            XCTAssertEqual(try Data(contentsOf: sentinel), Data("external".utf8))
+        }
+    }
+
+    func testPluginStagingCleanupUsesRetainedParentAfterAncestorRenameAndReplacement() throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+        try FileManager.default.createDirectory(at: staging.directory.appending(path: "repository/nested"), withIntermediateDirectories: true)
+        let parent = staging.directory.deletingLastPathComponent()
+        let moved = fixture.root.appending(path: "moved-plugins")
+        try FileManager.default.moveItem(at: parent, to: moved)
+        let outside = fixture.root.appending(path: "replacement-plugins")
+        let replacement = outside.appending(path: staging.directory.lastPathComponent)
+        try FileManager.default.createDirectory(at: replacement.appending(path: "repository"), withIntermediateDirectories: true)
+        try Data(staging.token.utf8).write(to: replacement.appending(path: ".cellar-owner"))
+        let sentinel = replacement.appending(path: "repository/sentinel")
+        try Data("external".utf8).write(to: sentinel)
+        try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: outside)
+        // This verifies descriptor anchoring, not a race inside removefileat.
+        try staging.cleanup()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: moved.appending(path: staging.directory.lastPathComponent).path))
+        XCTAssertEqual(try Data(contentsOf: sentinel), Data("external".utf8))
+        XCTAssertEqual(try Data(contentsOf: replacement.appending(path: ".cellar-owner")), Data(staging.token.utf8))
+        XCTAssertEqual(try FileManager.default.destinationOfSymbolicLink(atPath: parent.path), outside.path)
+    }
+
+    func testPluginStagingCleanupRejectsReplacedStagingInodeEvenWithMatchingMarker() throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+        let originalRepository = staging.directory.appending(path: "repository")
+        try FileManager.default.createDirectory(at: originalRepository, withIntermediateDirectories: false)
+        try Data("owned".utf8).write(to: originalRepository.appending(path: "sentinel"))
+        let moved = staging.directory.deletingLastPathComponent().appending(path: "moved-staging")
+        try FileManager.default.moveItem(at: staging.directory, to: moved)
+        try FileManager.default.createDirectory(at: originalRepository, withIntermediateDirectories: true)
+        try Data(staging.token.utf8).write(to: staging.directory.appending(path: ".cellar-owner"))
+        let replacementSentinel = originalRepository.appending(path: "sentinel")
+        try Data("replacement".utf8).write(to: replacementSentinel)
+        XCTAssertThrowsError(try staging.cleanup())
+        XCTAssertEqual(try Data(contentsOf: replacementSentinel), Data("replacement".utf8))
+        XCTAssertEqual(try Data(contentsOf: moved.appending(path: "repository/sentinel")), Data("owned".utf8))
+    }
+
+    func testPluginStagingCleanupRejectsExcessiveDepthAndRetainsOwnershipMarker() throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+        var deepest = staging.directory.appending(path: "repository")
+        try FileManager.default.createDirectory(at: deepest, withIntermediateDirectories: false)
+        for _ in 0..<256 {
+            deepest.append(path: "d")
+            try FileManager.default.createDirectory(at: deepest, withIntermediateDirectories: false)
+        }
+        XCTAssertThrowsError(try staging.cleanup()) { error in
+            XCTAssertEqual((error as? POSIXError)?.code, .ELOOP)
+        }
+        XCTAssertEqual(try Data(contentsOf: staging.directory.appending(path: ".cellar-owner")), Data(staging.token.utf8))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: deepest.path))
+    }
+
+    func testPluginStagingCleanupSyscallFailurePreservesCallerVisibleContextAndPOSIXReason() throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+        let unreadable = staging.directory.appending(path: "repository/unreadable-node")
+        try FileManager.default.createDirectory(at: unreadable, withIntermediateDirectories: true)
+        XCTAssertEqual(chmod(unreadable.path, 0), 0)
+        defer { XCTAssertEqual(chmod(unreadable.path, 0o700), 0) }
+        XCTAssertThrowsError(try staging.cleanup()) { error in
+            XCTAssertEqual((error as? POSIXError)?.code, .EACCES)
+            // executePlugin preserves cleanup errors through localizedDescription.
+            XCTAssertTrue(error.localizedDescription.contains("openat"))
+            XCTAssertTrue(error.localizedDescription.contains("unreadable-node"))
+            XCTAssertTrue(error.localizedDescription.contains(POSIXError(.EACCES).localizedDescription))
+        }
+        XCTAssertEqual(try Data(contentsOf: staging.directory.appending(path: ".cellar-owner")), Data(staging.token.utf8))
+    }
+
+    func testPluginStagingCleanupStillRunsInCancelledTask() async throws {
+        try await Task {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let staging = try ShellPluginStaging(home: fixture.homeDirectory)
+            try FileManager.default.createDirectory(at: staging.directory.appending(path: "repository/nested"), withIntermediateDirectories: true)
+            withUnsafeCurrentTask { $0?.cancel() }
+            XCTAssertTrue(Task.isCancelled)
+            try staging.cleanup()
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staging.directory.path))
+        }.value
+    }
+
     func testPluginStagingPublishesAtomicallyAndRejectsRedirectedParentsOrMarkerDrift() throws {
         let fixture = try ShellManagerFixture()
         defer { fixture.remove() }

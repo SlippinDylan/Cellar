@@ -1,8 +1,8 @@
 # Manager Snapshot
 
-- Node source commit: `8aaa85dd2cd832ae6553aede87f9c48dab78b4f5`（25 个生产白名单文件）
+- Node source commit: `586d960040ddf82bb31b4a30f6668a474391e492`（25 个生产白名单文件）
 - Homebrew / frozen Zsh source commit: `1c9d71b3fbec98034b397d76babe47e459ad83f6`（19 个冻结生产文件）
-- Snapshot version: `8aaa85d-app5`
+- Snapshot version: `586d960-app6`
 - Generated: 2026-11-14
 
 `node-manager` follows `scripts/node-manager/app-bundle-manifest.txt`.
@@ -37,3 +37,12 @@ in this resource tree and must keep the interactive source file byte-identical.
 实际查询或文件读取失败返回失败响应，成功的显式空配置值保留。Homebrew、交互式
 Zsh 与现有 Cellar-owned Zsh adapters 的来源及内容不变。新 runtime 目录防止复用
 旧 `075464e-app4` 运行副本；不迁移或删除旧版本目录。
+
+`app6`（2026-11-14）按生产白名单从已审查 Node source commit
+`586d960040ddf82bb31b4a30f6668a474391e492` 同步全部 25 项，实际变化只涉及
+`lib/json_cli.sh`、`lib/json_common.sh` 和 `lib/json_execute.sh`。确认后的日志清理
+统一走标准 execute gate，创建真实执行日志并返回完整 operation 结果；清理失败保留
+真实操作标识、退出状态与日志，供 App 复查已确认候选并保留部分完成或未知结果。
+独立 `logs-cleanup [keep-count]` 的既有响应与 gate 语义不变。Homebrew、交互式 Zsh
+与现有 Cellar-owned Zsh adapters 的来源及内容不变。新 runtime 目录防止复用
+旧 `8aaa85d-app5` 运行副本；不迁移或删除旧版本目录。

@@ -168,10 +168,10 @@ private final class SourceNodeManagerFixture {
                         managerSnapshot: .init(version: "fixture", location: root.path, nodeAvailable: true, homebrewAvailable: false, shellAvailable: false))
     }
 
-    func logInventory() throws -> URL {
+    func logInventory(count: Int = 105) throws -> URL {
         let logs = manager.appending(path: ".runtime/logs")
         try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
-        for index in 0..<105 {
+        for index in 0..<count {
             let path = logs.appending(path: "fixture.log.\(index)")
             try Data("log".utf8).write(to: path)
             try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 10_000 - Double(index))], ofItemAtPath: path.path)
@@ -192,7 +192,20 @@ private final class SourceNodeManagerFixture {
 extension NodeManagerContractTests {
     @MainActor
     func testActualSourceLogsThroughAppModelWithoutNodeKeepExactRetentionAndOneUse() async throws {
-        let fixture = try SourceNodeManagerFixture()
+        try await checkLogRetentionWithoutUsableNode(managerSource: nil, count: 105)
+    }
+
+    @MainActor
+    func testBundledLogsThroughAppModelWithoutNodeKeepExactBoundaryRetentionAndOneUse() async throws {
+        let source = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Managers/node-manager")
+        for count in [99, 100, 105] {
+            try await checkLogRetentionWithoutUsableNode(managerSource: source, count: count)
+        }
+    }
+
+    @MainActor
+    private func checkLogRetentionWithoutUsableNode(managerSource: URL?, count: Int) async throws {
+        let fixture = try SourceNodeManagerFixture(managerSource: managerSource)
         // Keep executable barriers so the production resolver cannot fall back to real tools.
         for name in ["node", "npm"] {
             try fixture.tool(name, "#!/bin/sh\nprintf '%s|%s\\n' \"$0\" \"$*\" >> \"$HOME/unavailable-tool-calls\"\nexit 127\n")
@@ -202,10 +215,10 @@ extension NodeManagerContractTests {
         catch { model.applyNodeReadResult(.failure(error)) }
         XCTAssertNil(model.node)
         XCTAssertTrue(model.nodeRefreshFailed)
-        let logs = try fixture.logInventory()
+        let logs = try fixture.logInventory(count: count)
         await model.prepareNodeAction(NodeMaintenanceAction.logs.request)
         let plan = try XCTUnwrap(model.nodePlan)
-        XCTAssertEqual(plan.maintenanceCandidates, (99..<105).map { logs.appending(path: "fixture.log.\($0)").path })
+        XCTAssertEqual(plan.maintenanceCandidates, (99..<count).map { logs.appending(path: "fixture.log.\($0)").path })
         await model.executeNodePlan(confirmed: plan)
         let result = try XCTUnwrap(model.nodeActionResult)
         XCTAssertEqual(result.operation.action, "cleanup")
@@ -221,7 +234,7 @@ extension NodeManagerContractTests {
         let remaining = try FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil)
         XCTAssertEqual(remaining.count, 100, "99 original logs and the genuine execution log remain")
         XCTAssertTrue(FileManager.default.fileExists(atPath: result.operation.logFile))
-        for index in 0..<105 {
+        for index in 0..<count {
             XCTAssertEqual(FileManager.default.fileExists(atPath: logs.appending(path: "fixture.log.\(index)").path), index < 99)
         }
         await model.executeNodePlan(confirmed: plan)
@@ -231,8 +244,19 @@ extension NodeManagerContractTests {
 
     @MainActor
     func testActualSourceLogDeletionFailureRetainsObservedChangesAndGenuineOperation() async throws {
+        try await checkLogDeletionFailure(managerSource: nil)
+    }
+
+    @MainActor
+    func testBundledLogDeletionFailureRetainsObservedChangesAndGenuineOperation() async throws {
+        let source = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Managers/node-manager")
+        try await checkLogDeletionFailure(managerSource: source)
+    }
+
+    @MainActor
+    private func checkLogDeletionFailure(managerSource: URL?) async throws {
         for failedIndex in [99, 101] {
-            let fixture = try SourceNodeManagerFixture()
+            let fixture = try SourceNodeManagerFixture(managerSource: managerSource)
             for name in ["node", "npm"] { try fixture.tool(name, "#!/bin/sh\nexit 41\n") }
             try fixture.tool("rm", """
             #!/bin/bash

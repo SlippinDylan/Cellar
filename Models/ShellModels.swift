@@ -69,4 +69,40 @@ struct ShellActionResult: Sendable {
     let operation: ShellOperationResult
     let snapshot: ShellStatus?
     let postflightError: String?
+    var executionOutcome: ActivityStatus? = nil
+}
+
+// Failure evidence is not proof that an operation completed or changed anything.
+struct ShellExecutionFailure: LocalizedError {
+    let operation: ShellOperationResult?
+    let cause: any Error
+    var outcome: ActivityStatus = .unknown
+    var movedPaths: [String] = []
+    var verificationError: String? = nil
+    var errorDescription: String? { cause.localizedDescription }
+    var diagnosticDetail: String {
+        var details = [cause.localizedDescription]
+        if let operation {
+            details += [operation.operationId, "exitCode=\(operation.exitCode)", operation.status, operation.logFile, operation.backupPath]
+        }
+        details += movedPaths
+        if let verificationError { details.append(verificationError) }
+        return details.joined(separator: "\n")
+    }
+    var reason: ActivityItemReason { outcome == .unknown ? .stateUnavailable : .init(error: cause) }
+}
+
+struct ShellExecutionErrorPayload: Decodable, Sendable {
+    let code: String
+    let operation: ShellOperationResult
+
+    init(from decoder: any Decoder) throws {
+        enum CodingKeys: CodingKey { case code }
+        code = try decoder.container(keyedBy: CodingKeys.self).decode(String.self, forKey: .code)
+        operation = try ShellOperationResult(from: decoder)
+    }
+}
+
+struct ShellExecutionErrorEnvelope: Decodable, Sendable {
+    let error: ShellExecutionErrorPayload
 }

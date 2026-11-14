@@ -74,21 +74,33 @@ extension AppModel {
             recordShellSummary(plan, id: activityID, status: operation.status == "ok" ? postflightError == nil ? .succeeded : .partiallySucceeded : operation.status == "partial" ? .partiallySucceeded : .failed,
                                reason: postflightError != nil ? .stateUnavailable : nil)
         } catch {
-            shellOperationError = failureMessage(error)
+            let evidence = error as? ShellExecutionFailure
+            let outcome = evidence?.outcome ?? (error is CancellationError ? .cancelled : ActivityStatus.failed)
+            let reason = outcome == .unknown ? ActivityItemReason.stateUnavailable : ActivityItemReason(error: evidence?.cause ?? error)
+            shellOperationError = String(localized: reason.message)
             let refresh = Task { try await service.loadShell(snapshot: managers) }
+            var refreshedShell: ShellStatus?
+            var refreshError: String?
             do {
-                applyShellReadResult(.success(try await refresh.value))
+                let snapshot = try await refresh.value
+                refreshedShell = snapshot
+                applyShellReadResult(.success(snapshot))
                 refreshedAt = Date()
             } catch {
+                refreshError = error.localizedDescription
                 applyShellReadResult(.failure(error))
             }
+            if let operation = evidence?.operation {
+                shellActionResult = .init(plan: plan, operation: operation, snapshot: refreshedShell, postflightError: refreshError, executionOutcome: outcome)
+            }
+            let diagnostic = [evidence?.diagnosticDetail ?? error.localizedDescription, refreshError ?? ""].joined(separator: "\n")
             finishActivity(
                 activityID,
                 title: plan.activityTitle,
-                outcome: .failed,
-                detail: error.localizedDescription
+                outcome: outcome == .partiallySucceeded ? .partiallySucceeded : outcome == .cancelled ? .cancelled : .failed,
+                detail: diagnostic
             )
-            recordShellSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : .failed, reason: .init(error: error))
+            recordShellSummary(plan, id: activityID, status: outcome, reason: reason)
         }
     }
 
@@ -128,7 +140,8 @@ private extension ShellActionPlan {
 
 private extension ShellActionResult {
     var activityDetail: String {
-        var parts = ["状态 \(operation.status)", "退出状态 \(operation.exitCode)"]
+        var parts = ["状态 \(operation.status)", "退出状态 \(operation.exitCode)", operation.operationId, operation.logFile]
+        if let detail = operation.detail { parts.append(detail) }
         if !operation.backupPath.isEmpty {
             parts.append("备份：\(operation.backupPath)")
         }

@@ -55,6 +55,8 @@
 
 进程组回收依赖受支持命令不主动调用 `setsid` 或 `setpgrp` 脱离 App 创建的组。Cellar 自带 Manager 和当前允许的 brew/npm/nvm/zsh 调用不以守护进程方式运行；未来接入会主动脱离会话的外部工具时，需要另行设计 helper 或服务生命周期，不能沿用当前命令协议。
 
+Shell 执行失败证据依据：[Apple `terminationStatus`](https://developer.apple.com/documentation/foundation/process/terminationstatus) 表示可执行程序返回的实际状态，具体含义由该程序定义，非零状态不能证明没有副作用；[Apple `JSONDecoder.decode`](https://developer.apple.com/documentation/foundation/jsondecoder/decode(_:from:)) 对无效 JSON 或不匹配字段抛错。项目据此只在匹配的 Shell execute 边界解码 App-owned adapter 的 `action-failed` 完整字段，并独立核对 tidy 的实际移动结果。adapter 外层退出 1 与内部动作退出码分别保留语义，不把二者要求为同一个数值；中断没有响应时不合成退出码。此为 Cellar 的实现规则，不是 Apple 对 Shell 操作原子性或回滚的保证。
+
 ## Homebrew 查询与写操作
 
 本轮以 Homebrew 官方 manpage 和环境变量文档为命令契约来源。App 不把既有交互式 Homebrew Manager 的菜单输出视为 API。

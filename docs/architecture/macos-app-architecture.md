@@ -274,6 +274,8 @@ Zsh tidy 位于环境 > 终端的维护区域，只移动确认列出的受限�
 
 插件、主题与 tidy 的受管块必须位于唯一有效的 Oh My Zsh 初始化之前。Bridge 先验证冻结 writer 的精确输出，再通过普通文件/no-follow/身份复验边界迁移受管块并执行语法检查；不增加或复制 source。接受 `source $ZSH/oh-my-zsh.sh`、双引号包围路径的 `$ZSH`/`${ZSH}` 形式和 `. "$ZSH/oh-my-zsh.sh"`；初始化之前只接受注释、空行及完整单行赋值。缺失、重复、条件执行、动态 loader 或其他歧义布局在写入前拒绝。原备份、精确回滚和 tidy 已移动文件的 partial 语义保留。
 
+Shell execute 的非零 `action-failed` 仅在 schema、command、action、subject、失败状态和完整执行字段匹配时保留为强类型失败证据；snapshot、plan 和预检错误继续抛出。操作标识、真实退出码、日志和备份不表示修改成功。tidy 在执行前保存确认候选的文件身份，失败或内部中断后只读核对源与批准目的地；确认移动至少一项才报告部分完成，确认候选与配置未变则报告失败，无法确认则保留 unknown。取消或超时没有完整响应时不虚构 operationId 或退出码。配置 Apply 保留之前完成项和当前失败项的执行证据；精确恢复与插件 staging 的归属保护不变。执行、复查及反馈期间保留任务登记；路径与错误详情只进入当前会话诊断，不进入文件日志摘要。
+
 ## 进程、网络与文件边界
 
 `ProcessRunner` 继续为每个请求创建独立进程组，并明确 executable、arguments、environment、working directory、stdin/stdout/stderr、deadline 和每路 2 MiB 输出上限。取消/超时先发送 `SIGTERM`，500 ms 宽限后向仍存活的专属组发送 `SIGKILL`。不使用 `bash -c`。

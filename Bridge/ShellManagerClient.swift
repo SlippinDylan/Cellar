@@ -1,20 +1,27 @@
+import Darwin
 import Foundation
 
 actor ShellManagerClient {
     private let runner: ProcessRunner
     private let environmentResolver: ShellEnvironmentResolver
-    private let validateTidySyntax: @Sendable (URL, URL) async throws -> Int32
+    private let executionTimeout: Duration
+    private let beforePluginPublication: @Sendable () async -> Void
+    private let validateSyntax: @Sendable (URL, URL) async throws -> Int32
     private var consumedConfigurations = Set<UUID>()
     private var tidyConfirmations: [UUID: (candidates: [String], file: ShellConfigurationFile)] = [:]
 
     init(
         runner: ProcessRunner,
         environmentResolver: ShellEnvironmentResolver = ShellEnvironmentResolver(),
-        validateTidySyntax: (@Sendable (URL, URL) async throws -> Int32)? = nil
+        executionTimeout: Duration = .seconds(1_800),
+        beforePluginPublication: @escaping @Sendable () async -> Void = {},
+        validateSyntax: (@Sendable (URL, URL) async throws -> Int32)? = nil
     ) {
         self.runner = runner
         self.environmentResolver = environmentResolver
-        self.validateTidySyntax = validateTidySyntax ?? { configuration, directory in
+        self.executionTimeout = executionTimeout
+        self.beforePluginPublication = beforePluginPublication
+        self.validateSyntax = validateSyntax ?? { configuration, directory in
             try Task.checkCancellation()
             return try await runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", configuration.path],
                                                        environment: environmentResolver.environment(), currentDirectoryURL: directory, timeout: .seconds(30))).terminationStatus
@@ -153,12 +160,18 @@ actor ShellManagerClient {
             }
             return .init(operations: operations, failure: nil, stepOutcomes: outcomes)
         } catch {
+            let evidence = error as? ShellExecutionFailure
+            if let operation = evidence?.operation { operations.append(operation) }
             let cancelled = error is CancellationError || Task.isCancelled
             if let index = activeStep {
-                outcomes[index] = .init(step: outcomes[index].step, status: outcomes[index].status == .succeeded ? .partiallySucceeded : cancelled ? .cancelled : .failed)
+                outcomes[index] = .init(step: outcomes[index].step, status: evidence?.outcome.itemStatus ?? (outcomes[index].status == .succeeded ? .partiallySucceeded : cancelled ? .cancelled : .failed))
             }
-            if cancelled { outcomes = outcomes.map { $0.status == .unknown ? .init(step: $0.step, status: .cancelled) : $0 } }
-            return .init(operations: operations, failure: error.localizedDescription, wasCancelled: cancelled, stepOutcomes: outcomes, failureReason: .init(error: error))
+            if cancelled {
+                outcomes = outcomes.enumerated().map { index, outcome in
+                    outcome.status == .unknown && index != activeStep ? .init(step: outcome.step, status: .cancelled) : outcome
+                }
+            }
+            return .init(operations: operations, failure: evidence?.diagnosticDetail ?? error.localizedDescription, wasCancelled: cancelled, stepOutcomes: outcomes, failureReason: evidence?.reason ?? .init(error: error))
         }
     }
 
@@ -275,18 +288,44 @@ actor ShellManagerClient {
         environment["SHELL_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
         let original = [.setPlugins, .switchTheme].contains(plan.request.action) ? try ShellConfigurationFile.read(at: zshrcURL) : nil
         if let original { _ = try Self.expectedConfiguration(original.contents, request: plan.request) }
+        var completed: ShellOperationResult?
         do {
             let operation: ShellOperationResult = try await request(
                 "execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
-                managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800)
+                managerDirectory: managerDirectory, environment: environment, timeout: executionTimeout, execution: plan.request
             )
+            completed = operation
             if let original { try await finishConfiguration(original: original, request: plan.request, managerDirectory: managerDirectory) }
             return operation
         } catch {
-            if let original,
-               (try regularZshrcContents()) == (try Self.adapterConfiguration(original.contents, request: plan.request)) {
-                try await finishConfiguration(original: original, request: plan.request, managerDirectory: managerDirectory)
+            var evidence = (error as? ShellExecutionFailure) ?? completed.map { ShellExecutionFailure(operation: $0, cause: error) }
+            if original != nil, Self.isExecutionInterruption(error) { evidence = .init(operation: nil, cause: error) }
+            if case BridgeError.managerFailure(code: "shell-syntax-restored", detail: _) = error {
+                evidence?.outcome = .failed
+            } else if let original, evidence != nil {
+                do {
+                    if completed == nil, (try regularZshrcContents()) == (try Self.adapterConfiguration(original.contents, request: plan.request)) {
+                        try await finishConfiguration(original: original, request: plan.request, managerDirectory: managerDirectory)
+                        evidence?.outcome = .partiallySucceeded
+                    } else if original.matches(try ShellConfigurationFile.read(at: zshrcURL)) {
+                        evidence?.outcome = error is CancellationError ? .cancelled : .failed
+                    }
+                } catch {
+                    if var evidence {
+                        evidence.verificationError = error.localizedDescription
+                        // A verified restore retains the writer's new inode, not the original inode.
+                        if case BridgeError.managerFailure(code: "shell-syntax-restored", detail: _) = error {
+                            evidence.outcome = .failed
+                        } else {
+                            do { evidence.outcome = original.matches(try ShellConfigurationFile.read(at: zshrcURL)) ? .failed : .unknown }
+                            catch { evidence.verificationError = [evidence.verificationError ?? "", error.localizedDescription].joined(separator: "\n") }
+                        }
+                        throw evidence
+                    }
+                    throw error
+                }
             }
+            if let evidence { throw evidence }
             throw error
         }
     }
@@ -306,14 +345,29 @@ actor ShellManagerClient {
         environment["SHELL_MANAGER_PLUGIN_OWNER"] = staging.token
         environment["SHELL_MANAGER_PLUGIN_IDENTITY"] = staging.identity
         let operation: ShellOperationResult
+        var cloned: ShellOperationResult?
         do {
             operation = try await request("execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
-                managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
+                managerDirectory: managerDirectory, environment: environment, timeout: executionTimeout, execution: plan.request)
+            cloned = operation
+            await beforePluginPublication()
             try Task.checkCancellation()
             guard original.matches(try ShellConfigurationFile.read(at: zshrcURL)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
             try staging.publish(name: url.lastPathComponent)
         } catch {
-            try staging.cleanup()
+            let evidence = (error as? ShellExecutionFailure) ?? cloned.map { ShellExecutionFailure(operation: $0, cause: error) }
+            do { try staging.cleanup() }
+            catch {
+                if var evidence {
+                    evidence.verificationError = error.localizedDescription
+                    throw evidence
+                }
+                throw error
+            }
+            if var evidence {
+                evidence.outcome = evidence.cause is CancellationError ? .cancelled : .failed
+                throw evidence
+            }
             throw error
         }
         do {
@@ -327,7 +381,7 @@ actor ShellManagerClient {
         } catch {
             // The cloned plugin is already published; never delete it or claim rollback.
             return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
-                         logFile: operation.logFile, backupPath: operation.backupPath, detail: error.localizedDescription)
+                         logFile: operation.logFile, backupPath: operation.backupPath, detail: (error as? ShellExecutionFailure)?.diagnosticDetail ?? error.localizedDescription)
         }
     }
 
@@ -343,15 +397,16 @@ actor ShellManagerClient {
     private func finishConfiguration(original: ShellConfigurationFile, request: ShellActionRequest, managerDirectory: URL) async throws {
         let relocated = try relocateConfiguration(original: original, request: request)
         // Completing validation/rollback is mandatory even when the adapter was cancelled.
-        let validation = Task {
-            try await self.runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/zsh"), arguments: ["-n", self.zshrcURL.path],
-                environment: self.environmentResolver.environment(), currentDirectoryURL: managerDirectory, timeout: .seconds(30)))
-        }
-        let valid: Bool
-        do { valid = try await validation.value.terminationStatus == 0 } catch { valid = false }
-        guard valid else {
+        let validation = Task { try await self.validateSyntax(self.zshrcURL, managerDirectory) }
+        let validationFailure: (any Error)?
+        do {
+            let exitCode = try await validation.value
+            validationFailure = exitCode == 0 ? nil : BridgeError.managerFailure(code: "shell-syntax-invalid", detail: "exitCode=\(exitCode)")
+        } catch { validationFailure = error }
+        if let validationFailure {
             try original.restore(at: zshrcURL, replacing: relocated.contents, matching: relocated)
-            throw BridgeError.managerFailure(code: "shell-syntax-restored", detail: String(localized: "Shell syntax validation failed. The previous configuration was restored."))
+            let detail = [String(localized: "Shell syntax validation failed. The previous configuration was restored."), validationFailure.localizedDescription].joined(separator: "\n")
+            throw BridgeError.managerFailure(code: "shell-syntax-restored", detail: detail)
         }
         guard relocated.matches(try ShellConfigurationFile.read(at: zshrcURL)) else { throw BridgeError.managerFailure(code: "shell-restore-state-changed", detail: nil) }
     }
@@ -360,25 +415,81 @@ actor ShellManagerClient {
         let expected = try Self.expectedConfiguration(original.contents, request: plan.request)
         var environment = environmentResolver.environment()
         environment["SHELL_MANAGER_ALLOW_JSON_EXECUTE"] = "1"
-        let operation: ShellOperationResult = try await request("execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
-                                                               managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
+        let files = try plan.candidates.map { path in (URL(filePath: path), try TidyFileIdentity.read(at: URL(filePath: path))) }
+        let operation: ShellOperationResult
+        do {
+            operation = try await request("execute", arguments: [plan.request.action.rawValue, plan.request.subject, plan.payload.planToken],
+                                         managerDirectory: managerDirectory, environment: environment, timeout: executionTimeout, execution: plan.request)
+        } catch {
+            // Only actual execution failures and interruptions can have postflight changes.
+            let interrupted = Self.isExecutionInterruption(error)
+            guard error is ShellExecutionFailure || interrupted else { throw error }
+            throw observeTidyFailure((error as? ShellExecutionFailure) ?? .init(operation: nil, cause: error), files: files, original: original)
+        }
         do {
             let current = try relocateConfiguration(original: original, request: plan.request)
-            let validationFailed: Bool
-            do { validationFailed = try await validateTidySyntax(zshrcURL, managerDirectory) != 0 }
-            catch { validationFailed = true }
-            if validationFailed {
+            let validationFailure: (any Error)?
+            do {
+                let exitCode = try await validateSyntax(zshrcURL, managerDirectory)
+                validationFailure = exitCode == 0 ? nil : BridgeError.managerFailure(code: "shell-syntax-invalid", detail: "exitCode=\(exitCode)")
+            } catch { validationFailure = error }
+            if let validationFailure {
                 try original.restore(at: zshrcURL, replacing: expected, matching: current)
+                var failure = observeTidyFailure(.init(operation: operation, cause: validationFailure), files: files, original: original, configurationRestored: true)
+                failure.verificationError = String(localized: "Shell syntax validation failed. The previous configuration was restored.")
+                guard failure.outcome == .partiallySucceeded else { throw failure }
                 return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
-                             logFile: operation.logFile, backupPath: operation.backupPath,
-                             detail: String(localized: "Zsh files were moved, but syntax validation failed. The previous shell configuration and attributes were restored."))
+                             logFile: operation.logFile, backupPath: operation.backupPath, detail: failure.diagnosticDetail)
             }
             return operation
         } catch {
+            if error is ShellExecutionFailure { throw error }
+            let failure = observeTidyFailure(.init(operation: operation, cause: error), files: files, original: original)
+            guard failure.outcome == .partiallySucceeded else { throw failure }
             return .init(operationId: operation.operationId, action: operation.action, subject: operation.subject, status: "partial", exitCode: operation.exitCode,
-                         logFile: operation.logFile, backupPath: operation.backupPath,
-                         detail: String(localized: "Zsh files may have moved, but the shell configuration changed unexpectedly. It was not overwritten. Review diagnostics before trying again."))
+                         logFile: operation.logFile, backupPath: operation.backupPath, detail: failure.diagnosticDetail)
         }
+    }
+
+    private func observeTidyFailure(_ failure: ShellExecutionFailure, files: [(URL, TidyFileIdentity)], original: ShellConfigurationFile,
+                                    configurationRestored: Bool = false) -> ShellExecutionFailure {
+        var evidence = failure
+        var moved = false
+        var unchanged = true
+        for (source, identity) in files {
+            let directory = source.lastPathComponent.hasPrefix(".zcompdump") ? ".zsh" : ".zsh/backups"
+            let destination = source.deletingLastPathComponent().appending(path: directory).appending(path: source.lastPathComponent)
+            do {
+                let before = try TidyFileIdentity.readIfPresent(at: source)
+                try TidyFileIdentity.validateDestination(home: source.deletingLastPathComponent(), backups: directory == ".zsh/backups")
+                let after = try TidyFileIdentity.readIfPresent(at: destination)
+                if before == nil, after == identity {
+                    moved = true
+                    evidence.movedPaths.append(destination.path)
+                }
+                if before != identity || after != nil { unchanged = false }
+            } catch {
+                unchanged = false
+                evidence.verificationError = error.localizedDescription
+            }
+        }
+        do {
+            let current = try ShellConfigurationFile.read(at: zshrcURL)
+            unchanged = unchanged && (configurationRestored ? current.contents == original.contents : original.matches(current))
+        } catch {
+            unchanged = false
+            evidence.verificationError = error.localizedDescription
+        }
+        if moved { evidence.outcome = .partiallySucceeded }
+        else if unchanged { evidence.outcome = failure.cause is CancellationError ? .cancelled : .failed }
+        else { evidence.outcome = .unknown }
+        return evidence
+    }
+
+    private static func isExecutionInterruption(_ error: any Error) -> Bool {
+        if error is CancellationError { return true }
+        if case BridgeError.processTimedOut = error { return true }
+        return false
     }
 
     private func request<Payload: Decodable & Sendable>(
@@ -386,7 +497,8 @@ actor ShellManagerClient {
         arguments: [String] = [],
         managerDirectory: URL,
         environment: [String: String],
-        timeout: Duration? = .seconds(300)
+        timeout: Duration? = .seconds(300),
+        execution: ShellActionRequest? = nil
     ) async throws -> Payload {
         let adapter = managerDirectory.appending(path: "app-json.sh")
         guard FileManager.default.isExecutableFile(atPath: adapter.path) else {
@@ -412,6 +524,19 @@ actor ShellManagerClient {
         guard envelope.schemaVersion == 1 else {
             throw BridgeError.unsupportedSchema(envelope.schemaVersion)
         }
+        if let execution, command == "execute", envelope.command == "execute", !envelope.ok,
+           envelope.data == nil, result.terminationStatus != 0, envelope.error?.code == "action-failed" {
+            let evidence: ShellExecutionErrorEnvelope
+            do { evidence = try JSONDecoder().decode(ShellExecutionErrorEnvelope.self, from: result.standardOutput) }
+            catch { throw BridgeError.invalidOutput(error.localizedDescription) }
+            let operation = evidence.error.operation
+            guard operation.action == execution.action.rawValue, operation.subject == execution.subject,
+                  operation.status == "failed", operation.exitCode > 0,
+                  !operation.operationId.isEmpty, !operation.logFile.isEmpty else {
+                throw BridgeError.invalidOutput("Shell execution evidence does not match the request")
+            }
+            throw ShellExecutionFailure(operation: operation, cause: BridgeError.managerFailure(code: evidence.error.code, detail: envelope.error?.message))
+        }
         guard result.terminationStatus == 0, envelope.ok, let payload = envelope.data else {
             throw BridgeError.managerFailure(
                 code: envelope.error?.code ?? "exit-\(result.terminationStatus)",
@@ -425,5 +550,36 @@ actor ShellManagerClient {
 private extension String {
     var nilIfBlank: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+    }
+}
+
+private struct TidyFileIdentity: Equatable {
+    let device: dev_t
+    let inode: ino_t
+
+    static func validateDestination(home: URL, backups: Bool) throws {
+        for path in backups ? [".zsh", ".zsh/backups"] : [".zsh"] {
+            var metadata = stat()
+            guard lstat(home.appending(path: path).path, &metadata) == 0 else {
+                if errno == ENOENT { continue }
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            guard metadata.st_mode & S_IFMT == S_IFDIR else { throw BridgeError.managerFailure(code: "tidy-unsafe-destination", detail: nil) }
+        }
+    }
+
+    static func read(at url: URL) throws -> Self {
+        guard let identity = try readIfPresent(at: url) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+        return identity
+    }
+
+    static func readIfPresent(at url: URL) throws -> Self? {
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0 else {
+            if errno == ENOENT { return nil }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard metadata.st_mode & S_IFMT == S_IFREG else { throw BridgeError.managerFailure(code: "tidy-nonregular-candidate", detail: nil) }
+        return Self(device: metadata.st_dev, inode: metadata.st_ino)
     }
 }

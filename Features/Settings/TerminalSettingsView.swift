@@ -104,9 +104,6 @@ struct TerminalSettingsView: View {
             if let result = model.terminalConfigurationResult {
                 SettingsSection(title: "Plugins and Theme") {
                     Label(result.status == .succeeded ? LocalizedStringResource("Terminal Changes Applied") : LocalizedStringResource("Terminal Changes Incomplete"), systemImage: "info.circle")
-                    ForEach(Array(result.operations.enumerated()), id: \.offset) { _, operation in
-                        Text(operation.action == ShellAction.setPlugins.rawValue ? LocalizedStringResource("Plugin Selection Saved") : LocalizedStringResource("Theme Saved"))
-                    }
                     ForEach(Array(result.stepOutcomes.enumerated()), id: \.offset) { _, outcome in
                         Label { Text(outcome.step.title); Text(outcome.status.activityTitle) } icon: { Image(systemName: outcome.status.systemImage) }
                     }

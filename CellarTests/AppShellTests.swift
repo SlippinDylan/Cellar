@@ -236,6 +236,16 @@ final class AppShellTests: XCTestCase {
         XCTAssertFalse(model.operationStore.hasActiveOperations)
     }
 
+    func testActiveTerminalResultUsesVerifiedStepOutcomesInsteadOfOperationPresence() throws {
+        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let terminal = try String(contentsOf: root.appending(path: "Features/Settings/TerminalSettingsView.swift"), encoding: .utf8)
+        XCTAssertTrue(terminal.contains("result.stepOutcomes.enumerated()"))
+        XCTAssertTrue(terminal.contains("outcome.status.activityTitle"))
+        XCTAssertFalse(terminal.contains("result.operations.enumerated()"))
+        XCTAssertFalse(terminal.contains("Plugin Selection Saved"))
+        XCTAssertFalse(terminal.contains("Theme Saved"))
+    }
+
     func testSceneAndMenuUseMainWindowSettingsAndSharedIntents() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let scene = try String(contentsOf: root.appending(path: "CellarApp.swift"), encoding: .utf8)

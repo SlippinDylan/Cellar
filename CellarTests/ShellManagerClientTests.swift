@@ -3,6 +3,435 @@ import XCTest
 @testable import Cellar
 
 final class ShellManagerClientTests: XCTestCase {
+    @MainActor
+    func testRealAdapterTidyNonzeroPreservesMovedFilesAndSharedPartialEvidence() async throws {
+        for failFirst in [false, true] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let completion = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+            let backup = fixture.homeDirectory.appending(path: ".zshrc.backup-fixture")
+            try Data("completion".utf8).write(to: completion)
+            try Data("historical".utf8).write(to: backup)
+            let original = try Data(contentsOf: fixture.zshrcURL)
+            try fixture.injectAdapterFunctions("""
+            mv() {
+                if [ "$1" = "$HOME/\(failFirst ? ".zcompdump-fixture" : ".zshrc.backup-fixture")" ]; then return 77; fi
+                /bin/mv "$@"
+            }
+            """)
+            let store = ActivityStore()
+            let model = fixture.model(activityStore: store)
+            await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
+            let plan = try XCTUnwrap(model.shellPlan)
+            await model.executeShellPlan(confirmed: plan)
+            let result = try XCTUnwrap(model.shellActionResult)
+            XCTAssertEqual(result.operation.status, "failed")
+            XCTAssertEqual(result.operation.exitCode, 1)
+            XCTAssertFalse(result.operation.operationId.isEmpty)
+            XCTAssertFalse(result.operation.logFile.isEmpty)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: result.operation.logFile))
+            XCTAssertEqual(result.executionOutcome, failFirst ? .failed : .partiallySucceeded)
+            XCTAssertEqual(store.summaries.first?.status, failFirst ? .failed : .partiallySucceeded)
+            XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.status, failFirst ? .failed : .partiallySucceeded)
+            XCTAssertEqual(FileManager.default.fileExists(atPath: completion.path), failFirst)
+            XCTAssertEqual(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path), !failFirst)
+            XCTAssertEqual(try Data(contentsOf: backup), Data("historical".utf8))
+            XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+            XCTAssertNotNil(model.shellOperationError)
+            let diagnostics = try XCTUnwrap(model.activityDiagnostics.records.first)
+            XCTAssertTrue(diagnostics.detail.contains(result.operation.logFile))
+            let summaryJSON = String(decoding: try JSONEncoder().encode(store.summaries), as: UTF8.self)
+            XCTAssertFalse(summaryJSON.contains(fixture.root.path))
+            XCTAssertFalse(summaryJSON.contains(result.operation.operationId))
+            XCTAssertFalse(model.operationStore.hasActiveOperations)
+        }
+    }
+
+    @MainActor
+    func testRealAdapterConfigurationFailureKeepsPreviousStepAndActualBackup() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        try fixture.injectAdapterFunctions("""
+        original_switch_theme=$(declare -f switch_theme)
+        eval "${original_switch_theme/switch_theme/fixture_switch_theme}"
+        switch_theme() { fixture_switch_theme "$@" || return; return 73; }
+        """)
+        let plan = try await fixture.client.planConfiguration(plugins: ["git", "example"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
+        let store = ActivityStore()
+        let model = fixture.model(activityStore: store)
+        model.terminalConfigurationPlan = plan
+        await model.executeTerminalConfiguration(plan)
+        let result = try XCTUnwrap(model.terminalConfigurationResult)
+        XCTAssertEqual(store.summaries.first?.status, .partiallySucceeded)
+        XCTAssertEqual(store.summaries.first?.itemOutcomes.map(\.status), [.succeeded, .partiallySucceeded])
+        XCTAssertEqual(result.status, .partiallySucceeded)
+        XCTAssertNotNil(result.failure)
+        XCTAssertEqual(result.operations.count, 2)
+        XCTAssertEqual(result.stepOutcomes.map(\.status), [.succeeded, .partiallySucceeded])
+        let failure = try XCTUnwrap(result.operations.last)
+        XCTAssertEqual(failure.status, "failed")
+        XCTAssertEqual(failure.exitCode, 73)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: failure.logFile))
+        XCTAssertFalse(failure.backupPath.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: failure.backupPath))
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), plan.expectedContents.last)
+    }
+
+    func testMalformedOrMismatchedShellFailureCannotBecomeExecutionEvidence() async throws {
+        let errors = [
+            "{\"code\":\"action-failed\",\"operationId\":\"id\",\"action\":\"tidy\",\"subject\":\"zsh-files\",\"status\":\"failed\",\"exitCode\":1,\"logFile\":\"log\"}",
+            "{\"code\":\"action-failed\",\"operationId\":\"id\",\"action\":\"switch-theme\",\"subject\":\"zsh-files\",\"status\":\"failed\",\"exitCode\":1,\"logFile\":\"log\",\"backupPath\":\"\"}",
+            "{\"code\":\"action-failed\",\"operationId\":\"id\",\"action\":\"tidy\",\"subject\":\"wrong\",\"status\":\"failed\",\"exitCode\":1,\"logFile\":\"log\",\"backupPath\":\"\"}",
+            "{\"code\":\"action-failed\",\"operationId\":\"id\",\"action\":\"tidy\",\"subject\":\"zsh-files\",\"status\":\"failed\",\"exitCode\":0,\"logFile\":\"log\",\"backupPath\":\"\"}"
+        ]
+        for payload in errors {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            try fixture.injectAdapterFunctions("run_zsh_tidy_flow() { return 1; }\noperation_error_json() { printf '%s' '\(payload)'; }")
+            let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+            do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Invalid evidence must throw") }
+            catch is ShellExecutionFailure { XCTFail("Invalid evidence must never be recovered") }
+            catch BridgeError.invalidOutput { }
+        }
+    }
+
+    func testRealAdapterPreflightRefusalHasNoExecutionEvidence() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        try fixture.injectAdapterFunctions("require_fresh_plan() { return 1; }")
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Preflight must refuse") }
+        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-stale") }
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.managerDirectory.appending(path: ".runtime/logs").path))
+    }
+
+    @MainActor
+    func testRealAdapterTimeoutAfterMoveKeepsObservedPartialWithoutInventingExecutionFields() async throws {
+        let fixture = try ShellManagerFixture(executionTimeout: .seconds(2))
+        defer { fixture.remove() }
+        let completion = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+        try Data("completion".utf8).write(to: completion)
+        let block = fixture.root.appending(path: "blocked-move")
+        XCTAssertEqual(mkfifo(block.path, 0o600), 0)
+        try fixture.injectAdapterFunctions("""
+        mv() {
+            /bin/mv "$@" || return
+            if [ "$1" = "$HOME/.zcompdump-fixture" ]; then read -r fixture_input < '\(block.path)'; fi
+        }
+        """)
+        let store = ActivityStore()
+        let model = fixture.model(activityStore: store)
+        await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
+        await model.executeShellPlan(confirmed: try XCTUnwrap(model.shellPlan))
+        XCTAssertNil(model.shellActionResult)
+        XCTAssertEqual(store.summaries.first?.status, .partiallySucceeded)
+        XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.status, .partiallySucceeded)
+        XCTAssertNotNil(model.shellOperationError)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: completion.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path))
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+    }
+
+    func testTidyFailureWithUnverifiableDestinationStaysUnknown() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let completion = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+        try Data("completion".utf8).write(to: completion)
+        try fixture.injectAdapterFunctions("""
+        mv() {
+            /bin/mv "$@" || return
+            /bin/mv "$HOME/.zsh" "$HOME/moved-zsh"
+            /bin/ln -s "$HOME/moved-zsh" "$HOME/.zsh"
+            return 77
+        }
+        """)
+        let plan = try await fixture.client.plan(.init(action: .tidy, subject: "zsh-files"), managerDirectory: fixture.managerDirectory)
+        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Failure must retain unknown verification") }
+        catch let failure as ShellExecutionFailure {
+            XCTAssertEqual(failure.outcome, .unknown)
+            XCTAssertNotNil(failure.verificationError)
+            XCTAssertEqual(failure.operation?.exitCode, 1)
+            XCTAssertTrue(failure.movedPaths.isEmpty)
+        }
+    }
+
+    func testInstallFailuresKeepEvidenceWithoutTreatingDirectoriesOrBackupsAsCompletion() async throws {
+        for action in [ShellAction.installOhMyZsh, .switchTheme, .installPlugin] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            let subject: String
+            let functions: String
+            switch action {
+            case .installOhMyZsh:
+                try FileManager.default.removeItem(at: fixture.homeDirectory.appending(path: ".oh-my-zsh"))
+                subject = ""
+                functions = "install_omz_once() { /bin/mkdir -p \"$HOME/.oh-my-zsh\"; return 72; }"
+            case .switchTheme:
+                subject = "agnoster"
+                functions = "switch_theme() { backup_zshrc || return; return 72; }"
+            case .installPlugin:
+                subject = "https://github.com/fixture/newplugin"
+                functions = "install_plugin_once() { /bin/mkdir \"$SHELL_MANAGER_PLUGIN_STAGING/repository\"; return 72; }"
+            default: return XCTFail("Unexpected fixture action")
+            }
+            try fixture.injectAdapterFunctions(functions)
+            let plan = try await fixture.client.plan(.init(action: action, subject: subject), managerDirectory: fixture.managerDirectory)
+            do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Execution must fail") }
+            catch let failure as ShellExecutionFailure {
+                XCTAssertEqual(failure.operation?.exitCode, 72)
+                XCTAssertEqual(failure.outcome, action == .installOhMyZsh ? .unknown : .failed)
+                let operation = try XCTUnwrap(failure.operation)
+                XCTAssertTrue(FileManager.default.fileExists(atPath: operation.logFile))
+                if action == .switchTheme {
+                    XCTAssertFalse(operation.backupPath.isEmpty)
+                    XCTAssertTrue(FileManager.default.fileExists(atPath: operation.backupPath))
+                }
+                if action == .installPlugin {
+                    let parent = fixture.homeDirectory.appending(path: ".oh-my-zsh/custom/plugins")
+                    XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: parent.path).contains { $0.hasPrefix(".cellar-plugin-") })
+                    XCTAssertFalse(FileManager.default.fileExists(atPath: parent.appending(path: "newplugin").path))
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func testRealAdapterCancellationAfterMoveKeepsObservedPartialAndReapsProcess() async throws {
+        let fixture = try ShellManagerFixture(executionTimeout: .seconds(5))
+        defer { fixture.remove() }
+        let completion = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
+        try Data("completion".utf8).write(to: completion)
+        let block = fixture.root.appending(path: "block")
+        let notification = fixture.root.appending(path: "started")
+        let pidFile = fixture.root.appending(path: "worker.pid")
+        try Data().write(to: notification)
+        XCTAssertEqual(mkfifo(block.path, 0o600), 0)
+        let descriptor = open(notification.path, O_EVTONLY | O_CLOEXEC)
+        let queue = kqueue()
+        defer { close(descriptor); close(queue) }
+        var registration = kevent()
+        registration.ident = UInt(descriptor)
+        registration.filter = Int16(EVFILT_VNODE)
+        registration.flags = UInt16(EV_ADD | EV_ONESHOT)
+        registration.fflags = UInt32(NOTE_WRITE | NOTE_EXTEND)
+        XCTAssertEqual(kevent(queue, &registration, 1, nil, 0, nil), 0)
+        try fixture.injectAdapterFunctions("""
+        mv() {
+            /bin/mv "$@" || return
+            printf '%s' "$$" > '\(pidFile.path)'
+            printf ready >> '\(notification.path)'
+            read -r fixture_input < '\(block.path)'
+        }
+        """)
+        let store = ActivityStore()
+        let model = fixture.model(activityStore: store)
+        await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
+        let plan = try XCTUnwrap(model.shellPlan)
+        let owner = Task { await model.executeShellPlan(confirmed: plan) }
+        let ready = await Task.detached {
+            var event = kevent()
+            var deadline = timespec(tv_sec: 3, tv_nsec: 0)
+            return kevent(queue, nil, 0, &event, 1, &deadline) == 1
+        }.value
+        XCTAssertTrue(ready)
+        XCTAssertTrue(model.operationStore.hasActiveOperations)
+        owner.cancel()
+        await owner.value
+        XCTAssertEqual(store.summaries.first?.status, .partiallySucceeded)
+        XCTAssertEqual(store.summaries.first?.reason, .cancelledByUser)
+        XCTAssertNil(model.shellActionResult)
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path))
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+        XCTAssertEqual(kill(pid, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
+    }
+
+    func testSuccessfulAdapterEvidenceSurvivesConfigurationPostflightFailure() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let adapter = fixture.managerDirectory.appending(path: "app-json.sh")
+        let original = fixture.managerDirectory.appending(path: "app-json-real.sh")
+        try FileManager.default.copyItem(at: adapter, to: original)
+        let outside = fixture.root.appending(path: "outside")
+        let contents = Data("# externally redirected file\n".utf8)
+        try contents.write(to: outside)
+        try Data("""
+        #!/bin/bash
+        /bin/bash '\(original.path)' "$@"
+        fixture_result=$?
+        if [ "$2" = execute ]; then
+            /bin/rm "$HOME/.zshrc"
+            /bin/ln -s '\(outside.path)' "$HOME/.zshrc"
+        fi
+        exit "$fixture_result"
+        """.utf8).write(to: adapter)
+        let plan = try await fixture.client.plan(.init(action: .switchTheme, subject: "agnoster"), managerDirectory: fixture.managerDirectory)
+        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Postflight must refuse redirected file") }
+        catch let failure as ShellExecutionFailure {
+            XCTAssertEqual(failure.operation?.status, "ok")
+            XCTAssertEqual(failure.operation?.exitCode, 0)
+            XCTAssertEqual(failure.outcome, .unknown)
+            XCTAssertNotNil(failure.verificationError)
+            let operation = try XCTUnwrap(failure.operation)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: operation.backupPath))
+        }
+        XCTAssertEqual(try Data(contentsOf: outside), contents)
+    }
+
+    @MainActor
+    func testConfigurationUnchangedFailureKeepsEvidenceWithoutSavedOutcome() async throws {
+        let fixture = try ShellManagerFixture()
+        defer { fixture.remove() }
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        try fixture.injectAdapterFunctions("switch_theme() { backup_zshrc || return; return 72; }")
+        let configuration = try await fixture.client.planConfiguration(plugins: ["git"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
+        let store = ActivityStore()
+        let model = fixture.model(activityStore: store)
+        model.terminalConfigurationPlan = configuration
+        await model.executeTerminalConfiguration(configuration)
+        let result = try XCTUnwrap(model.terminalConfigurationResult)
+        XCTAssertEqual(result.operations.count, 1)
+        XCTAssertEqual(result.operations.first?.status, "failed")
+        XCTAssertEqual(result.operations.first?.exitCode, 72)
+        XCTAssertEqual(result.stepOutcomes.map(\.status), [.failed])
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(store.summaries.first?.status, .failed)
+        XCTAssertEqual(store.summaries.first?.itemOutcomes.map(\.status), [.failed])
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        let operation = try XCTUnwrap(result.operations.first)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: operation.backupPath))
+        let diagnostic = try XCTUnwrap(model.activityDiagnostics.records.first { $0.id == configuration.id })
+        XCTAssertTrue(diagnostic.detail.contains(operation.operationId))
+        XCTAssertTrue(diagnostic.detail.contains(DiagnosticText.sanitized(operation.backupPath)))
+    }
+
+    @MainActor
+    func testSuccessfulAdapterThenSwiftSyntaxFailureRetainsVerifiedRestoreAndFailedStep() async throws {
+        let fixture = try ShellManagerFixture(validateSyntax: { _, _ in 91 })
+        defer { fixture.remove() }
+        try FileManager.default.setAttributes([.posixPermissions: 0o640], ofItemAtPath: fixture.zshrcURL.path)
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        let attributes = try FileManager.default.attributesOfItem(atPath: fixture.zshrcURL.path)
+        let configuration = try await fixture.client.planConfiguration(plugins: ["git"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
+        let store = ActivityStore()
+        let model = fixture.model(activityStore: store)
+        model.terminalConfigurationPlan = configuration
+        await model.executeTerminalConfiguration(configuration)
+        let result = try XCTUnwrap(model.terminalConfigurationResult)
+        XCTAssertEqual(result.status, .failed)
+        XCTAssertEqual(result.stepOutcomes.map(\.status), [.failed])
+        XCTAssertEqual(store.summaries.first?.status, .failed)
+        let operation = try XCTUnwrap(result.operations.first)
+        XCTAssertEqual(operation.status, "ok")
+        XCTAssertEqual(operation.exitCode, 0)
+        XCTAssertFalse(operation.operationId.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: operation.backupPath))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: operation.logFile))
+        XCTAssertTrue(result.failure?.contains("shell-syntax-restored") == true)
+        XCTAssertTrue(result.failure?.contains("exitCode=91") == true)
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        let restored = try FileManager.default.attributesOfItem(atPath: fixture.zshrcURL.path)
+        for key in [FileAttributeKey.posixPermissions, .ownerAccountID, .groupOwnerAccountID] {
+            XCTAssertEqual(restored[key] as? NSNumber, attributes[key] as? NSNumber)
+        }
+        for key in [FileAttributeKey.creationDate, .modificationDate] { XCTAssertEqual(restored[key] as? Date, attributes[key] as? Date) }
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+    }
+
+    @MainActor
+    func testConfigurationCancellationBeforeWritePreservesPriorStepsAndCancelledItem() async throws {
+        for priorStep in [false, true] {
+            let fixture = try ShellManagerFixture(executionTimeout: .seconds(5))
+            defer { fixture.remove() }
+            let block = fixture.root.appending(path: "block")
+            let notification = fixture.root.appending(path: "started")
+            try Data().write(to: notification)
+            XCTAssertEqual(mkfifo(block.path, 0o600), 0)
+            let descriptor = open(notification.path, O_EVTONLY | O_CLOEXEC)
+            let queue = kqueue()
+            defer { close(descriptor); close(queue) }
+            var registration = kevent()
+            registration.ident = UInt(descriptor)
+            registration.filter = Int16(EVFILT_VNODE)
+            registration.flags = UInt16(EV_ADD | EV_ONESHOT)
+            registration.fflags = UInt32(NOTE_WRITE | NOTE_EXTEND)
+            XCTAssertEqual(kevent(queue, &registration, 1, nil, 0, nil), 0)
+            try fixture.injectAdapterFunctions("""
+            switch_theme() {
+                printf ready >> '\(notification.path)'
+                read -r fixture_input < '\(block.path)'
+                return 1
+            }
+            """)
+            let configuration = try await fixture.client.planConfiguration(plugins: priorStep ? ["git", "example"] : ["git"], theme: "agnoster", managerDirectory: fixture.managerDirectory)
+            let store = ActivityStore()
+            let model = fixture.model(activityStore: store)
+            model.terminalConfigurationPlan = configuration
+            let owner = Task { await model.executeTerminalConfiguration(configuration) }
+            let ready = await Task.detached {
+                var event = kevent()
+                var deadline = timespec(tv_sec: 3, tv_nsec: 0)
+                return kevent(queue, nil, 0, &event, 1, &deadline) == 1
+            }.value
+            XCTAssertTrue(ready)
+            XCTAssertTrue(model.operationStore.hasActiveOperations)
+            owner.cancel()
+            await owner.value
+            let result = try XCTUnwrap(model.terminalConfigurationResult)
+            XCTAssertTrue(result.wasCancelled)
+            XCTAssertEqual(result.operations.count, priorStep ? 1 : 0)
+            XCTAssertEqual(result.stepOutcomes.map(\.status), priorStep ? [.succeeded, .cancelled] : [.cancelled])
+            XCTAssertEqual(result.status, priorStep ? .partiallySucceeded : .cancelled)
+            XCTAssertEqual(store.summaries.first?.status, result.status)
+            XCTAssertEqual(store.summaries.first?.itemOutcomes.last?.status, .cancelled)
+            XCTAssertEqual(store.summaries.first?.reason, .cancelledByUser)
+            XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), priorStep ? configuration.expectedContents[0] : configuration.originalContents)
+            XCTAssertFalse(model.operationStore.hasActiveOperations)
+        }
+    }
+
+    @MainActor
+    func testPluginCancellationAfterSuccessfulCloneDoesNotPublishOrBecomeFailure() async throws {
+        let arrived = expectation(description: "actual clone evidence received before publication")
+        let publication = AsyncStream<Void>.makeStream()
+        defer { publication.continuation.finish() }
+        let fixture = try ShellManagerFixture(beforePluginPublication: {
+            arrived.fulfill()
+            for await _ in publication.stream { break }
+        })
+        defer { fixture.remove() }
+        let original = try Data(contentsOf: fixture.zshrcURL)
+        try fixture.injectAdapterFunctions("install_plugin_once() { /bin/mkdir \"$SHELL_MANAGER_PLUGIN_STAGING/repository\"; }")
+        let store = ActivityStore()
+        let model = fixture.model(activityStore: store)
+        await model.prepareShellAction(.init(action: .installPlugin, subject: "https://github.com/fixture/cancelled"))
+        let plan = try XCTUnwrap(model.shellPlan)
+        let owner = Task { await model.executeShellPlan(confirmed: plan) }
+        let ready = await XCTWaiter.fulfillment(of: [arrived], timeout: 3)
+        XCTAssertEqual(ready, .completed)
+        XCTAssertTrue(model.operationStore.hasActiveOperations)
+        owner.cancel()
+        publication.continuation.finish()
+        await owner.value
+        let result = try XCTUnwrap(model.shellActionResult)
+        XCTAssertEqual(result.operation.status, "ok")
+        XCTAssertEqual(result.operation.exitCode, 0)
+        XCTAssertFalse(result.operation.operationId.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.operation.logFile))
+        XCTAssertEqual(result.executionOutcome, .cancelled)
+        XCTAssertEqual(store.summaries.first?.status, .cancelled)
+        XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.status, .cancelled)
+        XCTAssertEqual(store.summaries.first?.reason, .cancelledByUser)
+        let parent = fixture.homeDirectory.appending(path: ".oh-my-zsh/custom/plugins")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: parent.appending(path: "cancelled").path))
+        XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: parent.path).contains { $0.hasPrefix(".cellar-plugin-") })
+        XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+    }
+
     func testPluginPublishNeverReplacesExternalDestinationAndCleanupDoesNotFollowLinks() throws {
         for kind in ["directory", "symlink", "file"] {
             let fixture = try ShellManagerFixture()
@@ -78,7 +507,12 @@ final class ShellManagerClientTests: XCTestCase {
             try Data(script.utf8).write(to: module)
             let plan = try await fixture.client.plan(.init(action: .installPlugin, subject: "https://github.com/example/raced"), managerDirectory: fixture.managerDirectory)
             do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory); XCTFail("Clone failure or occupied publish must fail") }
-            catch { }
+            catch let failure as ShellExecutionFailure {
+                XCTAssertEqual(failure.operation?.status, cloneExit == 0 ? "ok" : "failed")
+                XCTAssertEqual(failure.outcome, .failed)
+                let operation = try XCTUnwrap(failure.operation)
+                XCTAssertTrue(FileManager.default.fileExists(atPath: operation.logFile))
+            }
             let parent = fixture.homeDirectory.appending(path: ".oh-my-zsh/custom/plugins")
             XCTAssertEqual(try String(contentsOf: parent.appending(path: "raced/owner"), encoding: .utf8), "external")
             XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: parent.path).contains { $0.hasPrefix(".cellar-plugin-") })
@@ -118,7 +552,7 @@ final class ShellManagerClientTests: XCTestCase {
     }
 
     func testTidyValidationRunFailureRestoresSafelyAndReturnsPartial() async throws {
-        let fixture = try ShellManagerFixture(validateTidySyntax: { _, _ in throw CocoaError(.fileReadNoSuchFile) })
+        let fixture = try ShellManagerFixture(validateSyntax: { _, _ in throw CocoaError(.fileReadNoSuchFile) })
         defer { fixture.remove() }
         let original = try Data(contentsOf: fixture.zshrcURL)
         let cache = fixture.homeDirectory.appending(path: ".zcompdump-fixture")
@@ -154,7 +588,7 @@ final class ShellManagerClientTests: XCTestCase {
         registration.fflags = UInt32(NOTE_WRITE | NOTE_EXTEND)
         XCTAssertEqual(kevent(queue, &registration, 1, nil, 0, nil), 0)
         let runner = ProcessRunner()
-        let fixture = try ShellManagerFixture(validateTidySyntax: { _, directory in
+        let fixture = try ShellManagerFixture(validateSyntax: { _, directory in
             try await runner.run(ProcessRequest(executableURL: URL(filePath: "/bin/bash"), arguments: [script.path],
                                                 environment: ShellEnvironmentResolver(homeDirectory: root).environment(), currentDirectoryURL: directory,
                                                 timeout: .seconds(5))).terminationStatus
@@ -277,20 +711,26 @@ final class ShellManagerClientTests: XCTestCase {
     }
 
     @MainActor
-    func testTidySyntaxFailurePublishesPartialResultAndActivity() async throws {
-        let fixture = try ShellManagerFixture()
-        defer { fixture.remove() }
-        try Data("\nif then\n".utf8).append(to: fixture.zshrcURL)
-        let store = ActivityStore()
-        let model = fixture.model(activityStore: store)
-        await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
-        let plan = try XCTUnwrap(model.shellPlan)
-        await model.executeShellPlan(confirmed: plan)
-        XCTAssertEqual(model.shellActionResult?.operation.status, "partial")
-        XCTAssertNotNil(model.shellOperationError)
-        XCTAssertEqual(store.summaries.first?.status, .partiallySucceeded)
-        XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.status, .partiallySucceeded)
-        XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.shellStep, .tidy)
+    func testTidySyntaxFailureReportsPartialOnlyWhenFilesActuallyMoved() async throws {
+        for hasCandidate in [false, true] {
+            let fixture = try ShellManagerFixture()
+            defer { fixture.remove() }
+            try Data("\nif then\n".utf8).append(to: fixture.zshrcURL)
+            let original = try Data(contentsOf: fixture.zshrcURL)
+            if hasCandidate { try Data("cache".utf8).write(to: fixture.homeDirectory.appending(path: ".zcompdump-fixture")) }
+            let store = ActivityStore()
+            let model = fixture.model(activityStore: store)
+            await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files"))
+            let plan = try XCTUnwrap(model.shellPlan)
+            await model.executeShellPlan(confirmed: plan)
+            XCTAssertEqual(model.shellActionResult?.operation.status, hasCandidate ? "partial" : "ok")
+            XCTAssertNotNil(model.shellOperationError)
+            XCTAssertEqual(store.summaries.first?.status, hasCandidate ? .partiallySucceeded : .failed)
+            XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.status, hasCandidate ? .partiallySucceeded : .failed)
+            XCTAssertEqual(store.summaries.first?.itemOutcomes.first?.shellStep, .tidy)
+            XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
+            XCTAssertEqual(FileManager.default.fileExists(atPath: fixture.homeDirectory.appending(path: ".zsh/.zcompdump-fixture").path), hasCandidate)
+        }
     }
 
     func testTidyRefusesSymlinkDriftBeforeExecutionAndAfterAdapterResult() async throws {
@@ -382,7 +822,13 @@ final class ShellManagerClientTests: XCTestCase {
         do {
             _ = try await fixture.client.execute(plan, managerDirectory: fixture.managerDirectory)
             XCTFail("Syntax failure must fail and restore")
-        } catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "shell-syntax-restored") }
+        } catch let failure as ShellExecutionFailure {
+            guard case BridgeError.managerFailure(let code, _) = failure.cause else { return XCTFail("Expected syntax failure") }
+            XCTAssertEqual(code, "action-failed")
+            XCTAssertTrue(failure.verificationError?.contains("restored") == true)
+            XCTAssertEqual(failure.operation?.status, "failed")
+            XCTAssertEqual(failure.outcome, .failed)
+        }
         XCTAssertEqual(try Data(contentsOf: fixture.zshrcURL), original)
         let backups = try FileManager.default.contentsOfDirectory(atPath: fixture.homeDirectory.path).filter { $0.hasPrefix(".zshrc.bak.") }
         XCTAssertFalse(backups.isEmpty)
@@ -554,7 +1000,7 @@ private struct ShellManagerFixture {
     let zshrcURL: URL
     let client: ShellManagerClient
 
-    init(validateTidySyntax: (@Sendable (URL, URL) async throws -> Int32)? = nil) throws {
+    init(executionTimeout: Duration = .seconds(1_800), beforePluginPublication: @escaping @Sendable () async -> Void = {}, validateSyntax: (@Sendable (URL, URL) async throws -> Int32)? = nil) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "CellarShellManagerTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         homeDirectory = root.appending(path: "home", directoryHint: .isDirectory)
@@ -584,8 +1030,15 @@ private struct ShellManagerFixture {
             environmentResolver: ShellEnvironmentResolver(
                 homeDirectory: homeDirectory,
                 temporaryDirectory: root
-            ), validateTidySyntax: validateTidySyntax
+            ), executionTimeout: executionTimeout, beforePluginPublication: beforePluginPublication, validateSyntax: validateSyntax
         )
+    }
+
+    func injectAdapterFunctions(_ functions: String) throws {
+        let adapter = managerDirectory.appending(path: "app-json.sh")
+        let script = try String(contentsOf: adapter, encoding: .utf8)
+        let source = "source \"$SCRIPT_DIR/lib/app_json_execute.sh\""
+        try Data(script.replacingOccurrences(of: source, with: source + "\n" + functions).utf8).write(to: adapter)
     }
 
     func remove() {

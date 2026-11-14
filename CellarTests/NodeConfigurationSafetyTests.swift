@@ -3,6 +3,164 @@ import XCTest
 @testable import Cellar
 
 final class NodeConfigurationSafetyTests: XCTestCase {
+    @MainActor
+    func testAppModelIndependentProjectSurvivesMissingAndLaterFailedCoreRead() async throws {
+        for retained in [false, true] {
+            let fixture = try NodeConfigurationFixture()
+            defer { fixture.remove() }
+            let model = try fixture.model()
+            if retained {
+                model.applyNodeReadResult(.success(try await fixture.client.loadSnapshot(managerDirectory: fixture.root)))
+            } else {
+                try FileManager.default.removeItem(at: fixture.root.appending(path: "bin"))
+            }
+            try Data().write(to: fixture.root.appending(path: "core-failure"))
+            do { _ = try await fixture.client.loadSnapshot(managerDirectory: fixture.root); XCTFail("Core read must fail") }
+            catch { model.applyNodeReadResult(.failure(error)) }
+            XCTAssertEqual(model.node != nil, retained)
+            let project = fixture.root.appending(path: "project")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            await model.prepareNodeAction(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"))
+            let plan = try XCTUnwrap(model.nodePlan)
+            XCTAssertTrue(model.nodeActionIsAvailable(NodeMaintenanceAction.logs.request))
+            for action in NodeMaintenanceAction.allCases where action != .logs {
+                XCTAssertFalse(model.nodeActionIsAvailable(action.request))
+            }
+            XCTAssertTrue(plan.canExecute)
+            XCTAssertFalse(try fixture.calls().contains("execute|1"))
+            await model.executeNodePlan(confirmed: plan)
+            let result = try XCTUnwrap(model.nodeActionResult)
+            XCTAssertEqual(result.operation.batchItemStatus, .succeeded)
+            XCTAssertNil(result.postflightError, "An unrelated failed npm read is not project verification")
+            XCTAssertNil(model.nodeOperationError)
+            XCTAssertEqual(try String(contentsOf: project.appending(path: ".nvmrc"), encoding: .utf8), "v24.0.0\n")
+            XCTAssertTrue(model.nodeRefreshFailed)
+            XCTAssertNil(model.nodePackageEnvironment)
+            XCTAssertEqual(model.activityStore?.summaries.first?.status, .succeeded)
+            let calls = try fixture.calls()
+            await model.executeNodePlan(confirmed: plan)
+            XCTAssertEqual(try fixture.calls(), calls, "Confirmation is consumed once")
+            for request in [NodeActionRequest(action: .installPackage, subject: "package"),
+                            .init(action: .setRegistry, subject: "https://registry.example.test/"), NodeMaintenanceAction.verify.request,
+                            NodeMaintenanceAction.npmCache.request] {
+                await model.prepareNodeAction(request)
+                XCTAssertNil(model.nodePlan)
+                XCTAssertNotNil(model.nodeOperationError)
+            }
+            XCTAssertEqual(try fixture.calls(), calls, "Unavailable core never authorizes dependent planning")
+        }
+    }
+
+    @MainActor
+    func testAppModelProjectStillRejectsChangedFileDirectoryAndUnverifiedWriteWithoutNode() async throws {
+        for change in ["file", "directory", "wrong-project-version"] {
+            let fixture = try NodeConfigurationFixture()
+            defer { fixture.remove() }
+            let model = try fixture.model()
+            try Data().write(to: fixture.root.appending(path: "core-failure"))
+            model.applyNodeReadResult(.failure(BridgeError.managerFailure(code: "no-npm", detail: nil)))
+            let project = fixture.root.appending(path: "project")
+            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            await model.prepareNodeAction(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"))
+            let plan = try XCTUnwrap(model.nodePlan)
+            switch change {
+            case "file": try Data("v22.0.0\n".utf8).write(to: project.appending(path: ".nvmrc"))
+            case "directory":
+                try FileManager.default.moveItem(at: project, to: fixture.root.appending(path: "old-project"))
+                try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+            default: try Data().write(to: fixture.root.appending(path: change))
+            }
+            await model.executeNodePlan(confirmed: plan)
+            XCTAssertTrue(model.nodeRefreshFailed)
+            XCTAssertNotNil(model.nodeOperationError)
+            if change == "wrong-project-version" {
+                XCTAssertEqual(model.nodeActionResult?.operation.batchItemStatus, .unknown)
+                XCTAssertEqual(model.nodeActionResult?.operation.detail, "project-verification-unavailable")
+                XCTAssertEqual(model.activityStore?.summaries.first?.status, .unknown)
+            } else {
+                XCTAssertNil(model.nodeActionResult)
+                XCTAssertFalse(try fixture.calls().contains("execute|1"))
+            }
+        }
+    }
+
+    @MainActor
+    func testAppModelLogCandidateLimitPreservesEveryConfirmedOutcomeOrRefusesBeforeWrite() async throws {
+        for count in [1099, 1100] {
+            let fixture = try NodeConfigurationFixture()
+            defer { fixture.remove() }
+            let model = try fixture.model()
+            try Data().write(to: fixture.root.appending(path: "core-failure"))
+            model.applyNodeReadResult(.failure(BridgeError.managerFailure(code: "no-npm", detail: nil)))
+            let logs = fixture.root.appending(path: ".runtime/logs")
+            try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+            for index in 0..<count {
+                let file = logs.appending(path: "fixture.log.\(index)")
+                try Data("log".utf8).write(to: file)
+                try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 10_000 - Double(index))], ofItemAtPath: file.path)
+            }
+            await model.prepareNodeAction(NodeMaintenanceAction.logs.request)
+            if count == 1100 {
+                XCTAssertTrue(model.nodePlan == nil, "An oversized inventory must not publish a confirmation")
+                XCTAssertNotNil(model.nodeOperationError)
+                XCTAssertNil(model.nodeActionResult)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "calls.log").path), "An oversized inventory is refused before adapter planning or execution")
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil).count, count)
+            } else {
+                let plan = try XCTUnwrap(model.nodePlan)
+                XCTAssertEqual(plan.maintenanceCandidates.count, 1000)
+                await model.executeNodePlan(confirmed: plan)
+                let result = try XCTUnwrap(model.nodeActionResult)
+                XCTAssertEqual(result.operation.cleanupItems?.count, 1000)
+                XCTAssertEqual(model.activityStore?.summaries.first?.cleanupItems?.count, 1000)
+                XCTAssertEqual(model.activityStore?.summaries.first?.status, .partiallySucceeded)
+            }
+        }
+    }
+
+    @MainActor
+    func testAppModelLogMaintenanceUsesOwnPostflightWithoutNode() async throws {
+        for mode in ["removed", "retained", "replaced", "unreadable", "empty-unreadable", "changed-before-execute"] {
+            let fixture = try NodeConfigurationFixture()
+            defer { fixture.remove() }
+            let model = try fixture.model()
+            try Data().write(to: fixture.root.appending(path: "core-failure"))
+            if mode != "removed" { try Data().write(to: fixture.root.appending(path: mode == "empty-unreadable" ? "unreadable" : mode)) }
+            model.applyNodeReadResult(.failure(BridgeError.managerFailure(code: "no-npm", detail: nil)))
+            let logs = fixture.root.appending(path: ".runtime/logs")
+            try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+            for index in 0..<(mode == "empty-unreadable" ? 0 : 105) {
+                let file = logs.appending(path: "fixture.log.\(index)")
+                try Data("log".utf8).write(to: file)
+                try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 10_000 - Double(index))], ofItemAtPath: file.path)
+            }
+            await model.prepareNodeAction(NodeMaintenanceAction.logs.request)
+            let plan = try XCTUnwrap(model.nodePlan)
+            XCTAssertEqual(plan.maintenanceCandidates.count, mode == "empty-unreadable" ? 0 : 6)
+            if mode == "changed-before-execute" { try Data("changed".utf8).write(to: logs.appending(path: "new.log.new")) }
+            await model.executeNodePlan(confirmed: plan)
+            XCTAssertTrue(model.nodeRefreshFailed)
+            XCTAssertNil(model.node)
+            if mode == "changed-before-execute" {
+                XCTAssertNil(model.nodeActionResult)
+                XCTAssertNotNil(model.nodeOperationError)
+                XCTAssertFalse(try fixture.calls().contains("execute|1"))
+            } else {
+                let result = try XCTUnwrap(model.nodeActionResult)
+                XCTAssertNil(result.postflightError)
+                XCTAssertEqual(result.operation.batchItemStatus, mode == "removed" ? .succeeded : mode == "replaced" ? .partiallySucceeded : .unknown)
+                XCTAssertEqual(model.activityStore?.summaries.first?.status, mode == "removed" ? .succeeded : mode == "replaced" ? .partiallySucceeded : .unknown)
+                if mode == "removed" {
+                    for candidate in plan.maintenanceCandidates { XCTAssertFalse(FileManager.default.fileExists(atPath: candidate)) }
+                    XCTAssertNil(model.nodeOperationError)
+                } else {
+                    XCTAssertNotNil(model.nodeOperationError)
+                    XCTAssertEqual(result.operation.detail, mode.contains("unreadable") ? "log-verification-unavailable" : "log-candidates-remain")
+                }
+            }
+        }
+    }
+
     func testProjectConfirmationKeepsOriginalExpiryAndFailedVerificationIsUnknown() async throws {
         for expired in [true, false] {
             let fixture = try NodeConfigurationFixture()
@@ -278,6 +436,15 @@ private struct NodeConfigurationFixture {
         case "$2" in
           summary)
             printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"%s/bin/node","npmPath":"%s/bin/npm","nodeVersion":"v24.0.0","npmVersion":"11.0.0","nvmLoaded":false,"globalPrefix":"%s/prefix","globalRoot":"%s/prefix/lib/node_modules","registry":"https://registry.example.test/"}}\n' "$HOME" "$HOME" "$HOME" "$HOME" ;;
+          packages)
+            if [ -f "$HOME/core-failure" ]; then
+              printf '%s\n' '{"ok":false,"schemaVersion":1,"command":"packages","error":{"code":"no-npm"}}'
+              exit 1
+            fi
+            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{}}}' ;;
+          config) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"config","data":{"registry":"https://registry.example.test/","cache":"","prefix":"","userRegistry":"","projectRegistry":"","globalRegistry":""}}' ;;
+          logs) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"logs","data":[]}' ;;
+          outdated) printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"outdated","data":{}}' ;;
           plan)
             if [ "$3" = project-nvmrc ] && [ -f "$HOME/replace-during-plan" ]; then
               /bin/mv "$4" "$HOME/project-during-plan"
@@ -295,6 +462,18 @@ private struct NodeConfigurationFixture {
                 /bin/ln -s "$HOME/other" "$4"
               fi
             fi
+            if [ "$3" = cleanup ] && [ "$4" = logs ]; then
+              if [ ! -f "$HOME/retained" ]; then
+                for index in 99 100 101 102 103 104; do /bin/rm "$HOME/.runtime/logs/fixture.log.$index"; done
+              fi
+              if [ -f "$HOME/replaced" ]; then
+                /bin/ln -s "$HOME/other" "$HOME/.runtime/logs/fixture.log.104"
+              fi
+              if [ -f "$HOME/unreadable" ]; then
+                /bin/mv "$HOME/.runtime/logs" "$HOME/.runtime/old-logs"
+                printf 'not a directory' > "$HOME/.runtime/logs"
+              fi
+            fi
             printf '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fixture","action":"%s","subject":"%s","exitCode":0,"status":"ok","logFile":""}}\n' "$3" "$4"
             ;;
           *) exit 2 ;;
@@ -302,6 +481,22 @@ private struct NodeConfigurationFixture {
         """#
         try Data(script.utf8).write(to: root.appending(path: "main.sh"))
         client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: NodeEnvironmentResolver(homeDirectory: root))
+    }
+    @MainActor
+    func model() throws -> AppModel {
+        let directory = root.appending(path: "node-manager")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: directory.appending(path: "main.sh"), withDestinationURL: root.appending(path: "main.sh"))
+        // Keep the actual bridge log inventory and fake adapter on the same temporary root.
+        try FileManager.default.createDirectory(at: root.appending(path: ".runtime"), withIntermediateDirectories: true)
+        try FileManager.default.moveItem(at: root.appending(path: ".runtime"), to: directory.appending(path: ".runtime"))
+        try FileManager.default.createSymbolicLink(at: root.appending(path: ".runtime"), withDestinationURL: directory.appending(path: ".runtime"))
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: root)
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root), nodeClient: client,
+                                         shellClient: ShellManagerClient(runner: runner, environmentResolver: .init(homeDirectory: root)), environmentResolver: resolver)
+        return AppModel(service: service, operationStore: OperationStore(), activityStore: ActivityStore(),
+                        managerSnapshot: .init(version: "fixture", location: root.path, nodeAvailable: true, homebrewAvailable: false, shellAvailable: false))
     }
     func calls() throws -> String { try String(contentsOf: root.appending(path: "calls.log"), encoding: .utf8) }
     func remove() { try? FileManager.default.removeItem(at: root) }

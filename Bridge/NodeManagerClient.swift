@@ -213,6 +213,29 @@ actor NodeManagerClient {
         }
         if plan.request.action == .cleanup, plan.request.subject == NodeMaintenanceAction.logs.rawValue {
             guard let state = logConfirmations.removeValue(forKey: plan.id), state == (try NodeLogMaintenanceState.read(managerDirectory: managerDirectory)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
+            let result = try await execute(plan, managerDirectory: managerDirectory, environment: environment)
+            guard result.action == NodeAction.cleanup.rawValue, result.subject == plan.request.subject, !result.operationId.isEmpty else {
+                throw BridgeError.invalidOutput("Log cleanup result does not match the confirmed operation")
+            }
+            let detail: String?
+            let items: [NodeCleanupItem]
+            do {
+                _ = try NodeLogMaintenanceState.read(managerDirectory: managerDirectory)
+                // Include replaced files and symlinks, not only regular log entries.
+                let remaining = try FileManager.default.contentsOfDirectory(at: managerDirectory.appending(path: ".runtime/logs"), includingPropertiesForKeys: nil)
+                let paths = Set(remaining.map(\.path))
+                items = state.candidates.map { path in
+                    paths.contains(path) ? .init(path: path, status: .unknown, reason: .cleanupFailed)
+                        : .init(path: path, status: .removed, reason: .removed)
+                }
+                detail = items.contains { $0.status == .unknown } ? "log-candidates-remain" : nil
+            } catch {
+                items = state.candidates.map { .init(path: $0, status: .unknown, reason: .cleanupFailed) }
+                detail = "log-verification-unavailable"
+            }
+            return NodeOperationResult(operationId: result.operationId, action: result.action, subject: result.subject,
+                                       exitCode: result.exitCode, status: detail == nil ? result.status : "unknown",
+                                       logFile: result.logFile, detail: detail ?? result.detail, residues: result.residues, cleanupItems: items.isEmpty ? nil : items)
         }
         if [.setDefaultNode, .uninstallNode].contains(plan.request.action) {
             guard let baseline = configurationConfirmations.removeValue(forKey: plan.id), baseline.environment == environment,
@@ -406,12 +429,23 @@ actor NodeManagerClient {
         if plan.request.action == .writeProjectNVMRC {
             environment["NODE_MANAGER_ALLOW_PROJECT_WRITE"] = "1"
         }
-        if plan.request.action == .cleanup, ["npm-cache-clean", "node-gyp-cache", "orphan-bins", "nvm-old-versions"].contains(plan.request.subject) {
+        if plan.request.action == .cleanup, ["npm-cache-clean", "node-gyp-cache", "orphan-bins", "nvm-old-versions", "logs"].contains(plan.request.subject) {
             let result = try await runManager("execute", arguments: try executeArguments(for: plan),
                                               managerDirectory: managerDirectory, environment: environment, timeout: .seconds(1_800))
             let envelope: ManagerEnvelope<NodeOperationResult> = try decodeEnvelope(result)
             guard envelope.command == "execute", envelope.ok || envelope.data == nil else {
                 throw BridgeError.invalidOutput("Cleanup response has an invalid envelope")
+            }
+            if plan.request.subject == "logs" {
+                if !envelope.ok, let error = envelope.error, error.code == "logs-cleanup-failed", let operation = error.cleanupOperation {
+                    let logDirectory = managerDirectory.appending(path: ".runtime/logs").resolvingSymlinksInPath().path
+                    guard result.terminationStatus == operation.exitCode,
+                          URL(filePath: operation.logFile).deletingLastPathComponent().resolvingSymlinksInPath().path == logDirectory else {
+                        throw BridgeError.invalidOutput("Log cleanup failure does not match its process and log directory")
+                    }
+                    return operation
+                }
+                return try requireSuccess(envelope, result: result)
             }
             if !envelope.ok, result.terminationStatus != 0,
                let error = envelope.error, error.code == "cleanup-incomplete", let operation = error.cleanupOperation {

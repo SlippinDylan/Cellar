@@ -34,11 +34,7 @@ run_json_command() {
             output="$(render_action_plan_json "${1:-}" "${2:-}" "${3:-}")" || command_exit=$?
             ;;
         execute)
-            if [ "${1:-}" = "cleanup" ] && [ "${2:-}" = "logs" ]; then
-                output="$(render_logs_cleanup_json "${3:-100}")" || command_exit=$?
-            else
-                output="$(render_execute_json "${1:-}" "${2:-}" "${3:-}")" || command_exit=$?
-            fi
+            output="$(render_execute_json "${1:-}" "${2:-}" "${3:-}")" || command_exit=$?
             ;;
         status)
             output="$(render_status_json)" || command_exit=$?

@@ -44,7 +44,7 @@ Usage:
   npm-global-manager.sh --json execute node-uninstall <version>
   npm-global-manager.sh --json plan cleanup <target>
   npm-global-manager.sh --json execute cleanup <target> [plan-token]
-  npm-global-manager.sh --json execute cleanup logs [keep-count]
+  npm-global-manager.sh --json execute cleanup logs
   npm-global-manager.sh --json plan project-nvmrc <project-path> <version>
   npm-global-manager.sh --json execute project-nvmrc <project-path> <version>
   npm-global-manager.sh --json status
@@ -62,7 +62,7 @@ Options:
 
 Notes:
   JSON execute requires NODE_MANAGER_ALLOW_JSON_EXECUTE=1 after app-side confirmation.
-  execute cleanup logs proxies to logs-cleanup and does not require NODE_MANAGER_ALLOW_JSON_EXECUTE.
+  execute cleanup logs uses the confirmed execute contract; standalone logs-cleanup retains its legacy response.
   node-install also accepts --lts, lowercase --lts=<line>, lts/*, and lowercase lts/<line>.
   node-use changes only the execute process; use node-default for persistent selection.
   project-nvmrc execute also requires NODE_MANAGER_ALLOW_PROJECT_WRITE=1 because it writes outside scripts/node-manager.

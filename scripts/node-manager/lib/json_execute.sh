@@ -814,6 +814,10 @@ render_execute_json() {
                 render_simple_execute_result_json "$action" "$normalized_subject" "$log_file" "ok" 0
                 return 0
             fi
+            if [ "$action" = cleanup ] && [ "$subject" = logs ]; then
+                json_print_business_error_with_operation '{"code":"logs-cleanup-failed"}' "$action" "$subject" "$log_file" "$exit_code"
+                return 1
+            fi
             render_simple_execute_result_json "$action" "$normalized_subject" "$log_file" "failed" "$exit_code"
             return 1
             ;;

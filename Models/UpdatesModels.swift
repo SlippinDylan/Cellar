@@ -71,7 +71,13 @@ enum UpdatesCatalog {
         for item in items where !scopes.contains(item.scope) { scopes.append(item.scope) }
         // Keep the established 100-item typed boundary without dropping visible targets.
         return scopes.flatMap { scope in
-            let group = items.filter { $0.scope == scope }
+            let scoped = items.filter { $0.scope == scope }
+            func isNPMItself(_ item: BatchItem) -> Bool {
+                if case .npm(let identity) = item { return identity.name == "npm" }
+                return false
+            }
+            // Updating npm changes the context for every remaining chunk in this environment.
+            let group = scoped.filter { !isNPMItself($0) } + scoped.filter(isNPMItself)
             return stride(from: 0, to: group.count, by: 100).map { start in
                 guard let intent = BatchIntent(operation: .update, items: Array(group[start..<min(start + 100, group.count)])) else {
                     preconditionFailure("Update cards retain unique typed identities")

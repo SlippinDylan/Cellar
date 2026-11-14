@@ -157,6 +157,28 @@ private final class SourceNodeManagerFixture {
         return path
     }
 
+    @MainActor
+    func model() throws -> AppModel {
+        try FileManager.default.createSymbolicLink(at: root.appending(path: "node-manager"), withDestinationURL: manager)
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: root)
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root), nodeClient: client,
+                                         shellClient: ShellManagerClient(runner: runner, environmentResolver: .init(homeDirectory: root)), environmentResolver: resolver)
+        return AppModel(service: service, operationStore: OperationStore(), activityStore: ActivityStore(),
+                        managerSnapshot: .init(version: "fixture", location: root.path, nodeAvailable: true, homebrewAvailable: false, shellAvailable: false))
+    }
+
+    func logInventory() throws -> URL {
+        let logs = manager.appending(path: ".runtime/logs")
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        for index in 0..<105 {
+            let path = logs.appending(path: "fixture.log.\(index)")
+            try Data("log".utf8).write(to: path)
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSince1970: 10_000 - Double(index))], ofItemAtPath: path.path)
+        }
+        return logs
+    }
+
     func plan(_ target: String) async throws -> NodeActionPlan {
         try await client.plan(.init(action: .cleanup, subject: target), managerDirectory: manager)
     }
@@ -168,6 +190,121 @@ private final class SourceNodeManagerFixture {
 }
 
 extension NodeManagerContractTests {
+    @MainActor
+    func testActualSourceLogsThroughAppModelWithoutNodeKeepExactRetentionAndOneUse() async throws {
+        let fixture = try SourceNodeManagerFixture()
+        // Keep executable barriers so the production resolver cannot fall back to real tools.
+        for name in ["node", "npm"] {
+            try fixture.tool(name, "#!/bin/sh\nprintf '%s|%s\\n' \"$0\" \"$*\" >> \"$HOME/unavailable-tool-calls\"\nexit 127\n")
+        }
+        let model = try fixture.model()
+        do { _ = try await fixture.client.loadSnapshot(managerDirectory: fixture.manager); XCTFail("No npm must fail the actual core read") }
+        catch { model.applyNodeReadResult(.failure(error)) }
+        XCTAssertNil(model.node)
+        XCTAssertTrue(model.nodeRefreshFailed)
+        let logs = try fixture.logInventory()
+        await model.prepareNodeAction(NodeMaintenanceAction.logs.request)
+        let plan = try XCTUnwrap(model.nodePlan)
+        XCTAssertEqual(plan.maintenanceCandidates, (99..<105).map { logs.appending(path: "fixture.log.\($0)").path })
+        await model.executeNodePlan(confirmed: plan)
+        let result = try XCTUnwrap(model.nodeActionResult)
+        XCTAssertEqual(result.operation.action, "cleanup")
+        XCTAssertEqual(result.operation.subject, "logs")
+        XCTAssertFalse(result.operation.operationId.isEmpty)
+        XCTAssertEqual(result.operation.exitCode, 0)
+        XCTAssertEqual(result.operation.batchItemStatus, .succeeded)
+        XCTAssertNil(result.postflightError)
+        XCTAssertNil(model.nodeOperationError)
+        XCTAssertTrue(model.nodeRefreshFailed)
+        XCTAssertNil(model.node)
+        XCTAssertEqual(model.activityStore?.summaries.first?.status, .succeeded)
+        let remaining = try FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil)
+        XCTAssertEqual(remaining.count, 100, "99 original logs and the genuine execution log remain")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: result.operation.logFile))
+        for index in 0..<105 {
+            XCTAssertEqual(FileManager.default.fileExists(atPath: logs.appending(path: "fixture.log.\(index)").path), index < 99)
+        }
+        await model.executeNodePlan(confirmed: plan)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil).count, 100)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fixture.root.appending(path: "unavailable-tool-calls").path))
+    }
+
+    @MainActor
+    func testActualSourceLogDeletionFailureRetainsObservedChangesAndGenuineOperation() async throws {
+        for failedIndex in [99, 101] {
+            let fixture = try SourceNodeManagerFixture()
+            for name in ["node", "npm"] { try fixture.tool(name, "#!/bin/sh\nexit 41\n") }
+            try fixture.tool("rm", """
+            #!/bin/bash
+            last="${@: -1}"
+            if [ "${last##*/}" = "fixture.log.\(failedIndex)" ]; then exit 19; fi
+            exec /bin/rm "$@"
+            """)
+            let model = try fixture.model()
+            do { _ = try await fixture.client.loadSnapshot(managerDirectory: fixture.manager); XCTFail("Broken npm must fail core read") }
+            catch { model.applyNodeReadResult(.failure(error)) }
+            _ = try fixture.logInventory()
+            await model.prepareNodeAction(NodeMaintenanceAction.logs.request)
+            let plan = try XCTUnwrap(model.nodePlan)
+            await model.executeNodePlan(confirmed: plan)
+            let result = try XCTUnwrap(model.nodeActionResult, "Actual failed cleanup must retain operation evidence")
+            XCTAssertEqual(result.operation.action, "cleanup")
+            XCTAssertEqual(result.operation.subject, "logs")
+            XCTAssertFalse(result.operation.operationId.isEmpty)
+            XCTAssertEqual(result.operation.exitCode, 1, "The real cleanup helper reports failure as1")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: result.operation.logFile))
+            let items = try XCTUnwrap(result.operation.cleanupItems)
+            XCTAssertEqual(items.map(\.path), plan.maintenanceCandidates)
+            XCTAssertEqual(items.map(\.status), (99..<105).map { $0 < failedIndex ? .removed : .unknown })
+            XCTAssertEqual(result.operation.batchItemStatus, failedIndex == 99 ? .unknown : .partiallySucceeded)
+            XCTAssertEqual(model.activityStore?.summaries.first?.status, failedIndex == 99 ? .unknown : .partiallySucceeded)
+            XCTAssertNil(result.postflightError)
+            XCTAssertNotNil(model.nodeOperationError)
+            XCTAssertTrue(model.nodeRefreshFailed)
+        }
+    }
+
+    func testLogFailureRecoveryRejectsMissingAndMismatchedOperationEvidence() throws {
+        let original: [String: Any] = ["code": "logs-cleanup-failed", "operationId": "real-operation", "action": "cleanup", "subject": "logs", "exitCode": 1, "status": "failed", "logFile": "/fixture/log"]
+        let legacy = Data(#"{"ok":false,"schemaVersion":1,"command":"logs-cleanup","error":{"code":"logs-cleanup-failed"}}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(ManagerEnvelope<NodeOperationResult>.self, from: legacy).error?.cleanupOperation)
+        let invalidChanges: [[String: Any]] = [["action": "install"], ["subject": "npm-cache-clean"], ["exitCode": 0], ["status": "ok"], ["operationId": ""], ["logFile": ""]]
+        for changes in invalidChanges {
+            let error = original.merging(changes) { _, new in new }
+            let data = try JSONSerialization.data(withJSONObject: ["ok": false, "schemaVersion": 1, "command": "execute", "error": error])
+            do {
+                let decoded = try JSONDecoder().decode(ManagerEnvelope<NodeOperationResult>.self, from: data)
+                XCTAssertNil(decoded.error?.cleanupOperation, "Mismatched or incomplete evidence cannot be recovered")
+            } catch is DecodingError { }
+        }
+        for key in ["operationId", "exitCode", "logFile", "subject"] {
+            var error = original
+            error.removeValue(forKey: key)
+            let data = try JSONSerialization.data(withJSONObject: ["ok": false, "schemaVersion": 1, "command": "execute", "error": error])
+            do {
+                let decoded = try JSONDecoder().decode(ManagerEnvelope<NodeOperationResult>.self, from: data)
+                XCTAssertNil(decoded.error?.cleanupOperation, "Mismatched or incomplete evidence cannot be recovered")
+            } catch is DecodingError { }
+        }
+    }
+
+    func testActualSourceLogsExecuteRequiresGateAndLeavesStandaloneLegacyCommandIntact() async throws {
+        let fixture = try SourceNodeManagerFixture()
+        let logs = try fixture.logInventory()
+        var environment = fixture.environment
+        environment["NODE_MANAGER_ALLOW_JSON_EXECUTE"] = "0"
+        let request = ProcessRequest(executableURL: URL(filePath: "/bin/bash"), arguments: [fixture.manager.appending(path: "main.sh").path, "--json", "execute", "cleanup", "logs", "100"], environment: environment, currentDirectoryURL: fixture.manager, timeout: .seconds(20))
+        let refused = try await ProcessRunner().run(request)
+        XCTAssertNotEqual(refused.terminationStatus, 0)
+        XCTAssertTrue(refused.outputText.contains("json-execute-disabled"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil).count, 105)
+        let legacy = try await ProcessRunner().run(.init(executableURL: URL(filePath: "/bin/bash"), arguments: [fixture.manager.appending(path: "main.sh").path, "--json", "logs-cleanup", "100"], environment: environment, currentDirectoryURL: fixture.manager, timeout: .seconds(20)))
+        XCTAssertEqual(legacy.terminationStatus, 0)
+        XCTAssertTrue(legacy.outputText.contains("logs-cleanup"))
+        XCTAssertFalse(legacy.outputText.contains("operationId"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(at: logs, includingPropertiesForKeys: nil).count, 100)
+    }
+
     func testBundledAdapterPreservesOwnedCleanupPartialResultsAndForeignLinks() async throws {
         let bundled = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Managers/node-manager")
         let fixture = try SourceNodeManagerFixture(managerSource: bundled)

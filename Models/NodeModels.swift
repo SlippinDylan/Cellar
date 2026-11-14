@@ -39,7 +39,17 @@ struct ManagerErrorPayload: Decodable, Error, Sendable {
         subject = try values.decodeIfPresent(String.self, forKey: .subject)
         logFile = try values.decodeIfPresent(String.self, forKey: .logFile)
         causeCode = try values.decodeIfPresent(String.self, forKey: .causeCode)
-        cleanupOperation = code == "cleanup-incomplete" ? try NodeOperationResult(from: decoder) : nil
+        if code == "logs-cleanup-failed", action == NodeAction.cleanup.rawValue, subject == "logs" {
+            let operation = try NodeOperationResult(from: decoder)
+            guard operation.action == NodeAction.cleanup.rawValue, operation.subject == "logs",
+                  operation.exitCode > 0, operation.status == "failed", !operation.operationId.isEmpty,
+                  operation.logFile.hasPrefix("/"), !operation.logFile.contains("\0"), operation.cleanupItems == nil else {
+                throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "Log cleanup failure requires its exact operation evidence"))
+            }
+            cleanupOperation = operation
+        } else {
+            cleanupOperation = code == "cleanup-incomplete" ? try NodeOperationResult(from: decoder) : nil
+        }
     }
 }
 
@@ -316,7 +326,7 @@ struct NodeOperationResult: Decodable, Sendable {
             if cleanupItems.contains(where: { $0.status == .partial }) { return .partiallySucceeded }
             let removed = cleanupItems.contains { $0.status == .removed }
             let incomplete = cleanupItems.contains { $0.status != .removed }
-            if removed && incomplete { return .partiallySucceeded }
+            if removed && (incomplete || subject == "logs" && exitCode != 0) { return .partiallySucceeded }
             if cleanupItems.contains(where: { $0.status == .unknown }) { return .unknown }
             return exitCode == 0 && status == "ok" && !incomplete ? .succeeded : .failed
         }
@@ -325,6 +335,7 @@ struct NodeOperationResult: Decodable, Sendable {
         }
         guard exitCode == 0 else { return .failed }
         if [NodeAction.installPackage.rawValue, NodeAction.updatePackage.rawValue, NodeAction.writeProjectNVMRC.rawValue].contains(action), status == "unknown" { return .unknown }
+        if action == NodeAction.cleanup.rawValue, subject == "logs", status == "unknown" { return .unknown }
         if status == "ok" { return .succeeded }
         if action == NodeAction.uninstallPackage.rawValue, status == "warn", detail == "residue-detected" {
             return .partiallySucceeded

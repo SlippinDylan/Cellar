@@ -240,7 +240,7 @@ Command Line Tools service 只检测状态并执行 Apple 文档规定的 `xcode
 
 环境的 Node.js 页面区分当前检测到的 Node/npm 与 nvm 管理的安装列表；前者以无卡片次要文字保留真实版本作为操作上下文，完整可执行路径移至 Settings > 环境信息，不以路径猜测 provider 归属，后者为空不表示整机没有 Node。nvm 状态及官方安装指引放在同一页面，未检查与缺失分开表达；Cellar 不执行远端安装脚本。用户主动打开版本安装后，从官方 Node 发布索引读取最多 100 个支持 macOS arm64 的具体版本，与 npm Registry 查询分离；读取中、失败与空结果分别呈现。恢复 nvm default 会先确认它能解析到已安装版本，Cellar 会话选择不改变现有终端。
 
-项目版本作为 Node.js 内的小节，只读取用户通过系统目录选择器选择的项目；提供已安装版本选择并保留手动输入。写入确认继续绑定 `.nvmrc`、`package.json`、nvm default 与受控环境，执行前复验并消费一次；保存只写项目声明，不自动安装或切换 Node。npm 软件源页仅以无卡片上下文保留目标 Node 版本与实际生效 Registry；默认 Registry 的用户／项目／全局配置层详情集中到 Settings > 环境信息，scope 查询结果仍保留各层以解释修改影响。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。Node 的 npm 缓存校验位于维护 > 检查；npm 下载缓存、node-gyp 构建缓存、失效 npm 链接、未使用 Node 版本和 Manager 日志清理位于维护 > 清理；日志维护列出精确旧日志候选，确认后目录清单变化会拒绝执行。
+项目版本作为 Node.js 内的小节，只读取用户通过系统目录选择器选择的项目；提供已安装版本选择并保留手动输入。写入确认继续绑定 `.nvmrc`、`package.json`、nvm default 与受控环境，执行前复验并消费一次；保存只写项目声明，不自动安装或切换 Node。npm 软件源页仅以无卡片上下文保留目标 Node 版本与实际生效 Registry；默认 Registry 的用户／项目／全局配置层详情集中到 Settings > 环境信息，scope 查询结果仍保留各层以解释修改影响。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。Node 的 npm 缓存校验位于维护 > 检查；npm 下载缓存、node-gyp 构建缓存、失效 npm 链接、未使用 Node 版本和 Manager 日志清理位于维护 > 清理；日志维护列出精确旧日志候选，超过 1000 项时在准备阶段拒绝，不截断结果；确认后目录清单变化会拒绝执行。项目声明与 Manager 日志维护不依赖完整 Node/npm 读取成功；各自以项目文件或日志候选的实际复查判定结果，独立的 Node 刷新失败仍保留为环境不可用。
 
 Node 配置指纹通过 `O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开普通文件，读取前后核对 metadata、路径与 inode；`.nvmrc`/alias 上限 4 KiB，npm 配置上限 64 KiB，`package.json` 上限 1 MiB。FIFO、设备、目录、符号链接、超限、替换和读取期间变化均拒绝，文件描述符在所有路径关闭。Registry 包含默认安装的 global config 及显式引用的 userconfig/globalconfig/prefix 配置，引用集合最多 16 个文件。
 
@@ -253,7 +253,7 @@ npm 目录能力只针对全局包：
 - Library 安装项及更新目标的 identity 包含当前受控 Node environment；
 - Discover 使用用户选择/有效 Registry 的有界 search client；
 - install/update/uninstall 只在目标身份绑定的 Node 环境执行；
-- Registry 管理位于环境 > Homebrew Tap，Node 版本与项目版本位于环境 > Node.js；
+- Registry 管理位于环境 > npm Registry，Node 版本与项目版本位于环境 > Node.js；
 - current/wanted/latest 不能比较时产生 `unknown`，不得猜测或自动降级。
 
 ### Node 包能力与 Registry 精确环境

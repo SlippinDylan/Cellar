@@ -31,6 +31,10 @@ struct NodeLogMaintenanceState: Equatable, Sendable {
             }
             files.append(.init(path: file.path, modified: modified, size: size, inode: inode))
         }
+        // Keep every confirmed candidate representable in the bounded session result.
+        guard files.count <= 99 + 1000 else {
+            throw BridgeError.managerFailure(code: "log-candidates-limit", detail: nil)
+        }
         files.sort { $0.modified == $1.modified ? $0.path < $1.path : $0.modified > $1.modified }
         if files.count > 99, files[98].modified == files[99].modified {
             throw BridgeError.managerFailure(code: "log-order-ambiguous", detail: nil)

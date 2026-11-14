@@ -103,7 +103,8 @@ extension AppModel {
             } catch {
                 applyNodeReadResult(.failure(error), includingOutdated: true)
                 refreshedSnapshot = nil
-                postflightError = error.localizedDescription
+                // Project and log writes carry their own verified result from the bridge.
+                postflightError = plan.request.isIndependentOfNodeSnapshot ? nil : error.localizedDescription
             }
             let result = NodeActionResult(
                 plan: plan,
@@ -159,12 +160,14 @@ extension AppModel {
         nodeOperationError = nil
     }
 
-    private func nodeActionIsAvailable(_ request: NodeActionRequest) -> Bool {
-        // Selecting an explicit runtime remains available to recover a failed session read.
+    func nodeActionIsAvailable(_ request: NodeActionRequest) -> Bool {
+        guard managers?.nodeAvailable == true else { return false }
         if [.installPackage, .updatePackage, .uninstallPackage].contains(request.action) {
             return nodePackageEnvironment != nil
         }
-        return !nodeRefreshFailed || [.installNode, .useNode].contains(request.action)
+        // Explicit runtime selection can recover a failed read; project/log plans do not use npm.
+        if request.isIndependentOfNodeSnapshot || [.installNode, .useNode].contains(request.action) { return true }
+        return node != nil && !nodeRefreshFailed
     }
 
     private func updatePreferredNodeVersion(after plan: NodeActionPlan) {
@@ -243,7 +246,7 @@ private extension NodeActionResult {
         }
         if let postflightError {
             parts.append("复查失败：\(postflightError)")
-        } else {
+        } else if snapshot != nil {
             parts.append("已重新读取 Node 状态")
         }
         return parts.joined(separator: "；")
@@ -253,5 +256,11 @@ private extension NodeActionResult {
 private extension String {
     var nonblank: String? {
         trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self
+    }
+}
+
+private extension NodeActionRequest {
+    var isIndependentOfNodeSnapshot: Bool {
+        action == .writeProjectNVMRC || action == .cleanup && subject == NodeMaintenanceAction.logs.rawValue
     }
 }

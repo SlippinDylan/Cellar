@@ -4,6 +4,42 @@ import XCTest
 
 @MainActor
 final class BatchOperationCoordinatorTests: XCTestCase {
+    func testUpdateAllMovesNPMAfterEveryChunkWithinItsExactEnvironment() async throws {
+        let other = NodeEnvironmentContext(identifier: "/other/node", nodeVersion: "v24.0.0", npmVersion: environment.npmVersion)
+        let contexts = [environment, other]
+        let ordinary = (0..<101).map { "package-\($0)" }
+        let cards = try contexts.flatMap { context in
+            try (["npm"] + ordinary).map { name in
+                try XCTUnwrap(CatalogCardState(identity: .npm(.init(name: name, environment: context)), displayName: name,
+                                 description: nil, currentVersion: "1.0.0", availableVersion: "2.0.0",
+                                 versionStatus: .behind, websiteURL: nil, progress: .idle, primaryAction: .update))
+            }
+        }
+        let intents = UpdatesCatalog.intents(for: cards)
+        XCTAssertEqual(intents.map { $0.items.count }, [100, 2, 100, 2])
+        for context in contexts {
+            XCTAssertEqual(intents.filter { $0.scope == .npm(context) }.flatMap(\.items).map(\.displayIdentifier), ordinary + ["npm"])
+        }
+        let provider = FakeBatchProvider(versionSensitiveNPM: true)
+        let coordinator = BatchOperationCoordinator(provider: provider, operationStore: OperationStore())
+        let plan = try await coordinator.prepareUpdates(intents)
+        let preview = plan.groups.flatMap { $0.intent.items }
+        XCTAssertEqual(preview.count, 204)
+        XCTAssertEqual(Set(preview).count, 204)
+        XCTAssertEqual(plan.executableCount, 204)
+        let result = try await coordinator.executeUpdates(plan)
+        let executed = await provider.executedNames()
+        XCTAssertEqual(executed, (ordinary + ["npm"]) + (ordinary + ["npm"]))
+        XCTAssertEqual(result.groups.flatMap { $0.outcome.itemOutcomes.map(\.item) }, preview)
+        XCTAssertTrue(result.groups.flatMap { $0.outcome.itemOutcomes }.allSatisfy { $0.status == .succeeded })
+        let refreshes = await provider.refreshCount()
+        XCTAssertEqual(refreshes, 2, "Reconcile once per exact environment after all its chunks")
+        for group in result.groups {
+            guard case .npm(let snapshot) = group.refreshedState else { return XCTFail("Expected refreshed npm state") }
+            XCTAssertEqual(snapshot.summary.npmVersion, "2.0.0")
+        }
+    }
+
     func testNPMItselfRunsLastIncludingExplicitVersionAndPreviewMatchesResults() async throws {
         for selfName in ["npm", "npm@2.0.0"] {
             let provider = FakeBatchProvider()
@@ -560,6 +596,8 @@ actor FakeBatchProvider: BatchOperationProviding {
     let onPlan: @Sendable () -> Void
     let pausedRenewalName: String?
     let onRenewal: @Sendable () -> Void
+    let versionSensitiveNPM: Bool
+    var npmVersions: [String: String] = [:]
     var renewedNames: [String] = []
     var plannedNames: [String] = []
     var destination = "/fake"
@@ -590,7 +628,8 @@ actor FakeBatchProvider: BatchOperationProviding {
          alreadyInstalledNames: Set<String> = [], registries: [String: URL] = [:], changeDestinationAfterName: String? = nil,
          pausedPlanName: String? = nil, onPlan: @escaping @Sendable () -> Void = {}, changeDestinationAfterPlanName: String? = nil,
          homebrewRefreshSnapshot: HomebrewSnapshot? = nil, npmRefreshSnapshot: NodeSnapshot? = nil, failureCode: String? = nil,
-         caskRemoval: CaskRemovalPlan? = nil, pausedRenewalName: String? = nil, onRenewal: @escaping @Sendable () -> Void = {}) {
+         caskRemoval: CaskRemovalPlan? = nil, pausedRenewalName: String? = nil, onRenewal: @escaping @Sendable () -> Void = {}, versionSensitiveNPM: Bool = false) {
+        self.versionSensitiveNPM = versionSensitiveNPM
         self.failingNames = failingNames
         self.failureCode = failureCode
         self.refreshFails = refreshFails
@@ -692,6 +731,7 @@ actor FakeBatchProvider: BatchOperationProviding {
     }
 
     func planNPM(_ identity: NPMPackageIdentity, operation: BatchOperation) async throws -> NodeActionPlan {
+        if versionSensitiveNPM, let current = npmVersions[identity.environment.identifier], current != identity.environment.npmVersion { throw Failure.provider }
         plannedNames.append(identity.name)
         if identity.name == pausedPlanName {
             let stream = AsyncStream<Void> { _ in onPlan() }
@@ -718,6 +758,7 @@ actor FakeBatchProvider: BatchOperationProviding {
     }
 
     func executeNPM(_ plan: NodeActionPlan, environment: NodeEnvironmentContext) async throws -> NodeOperationResult {
+        if versionSensitiveNPM, let current = npmVersions[environment.identifier], current != environment.npmVersion { throw Failure.provider }
         if let bound = plan.confirmedPackageDestination, bound.globalRoot != destination { throw Failure.provider }
         names.append(plan.request.subject)
         specs.append(plan.exactInstallSpec ?? plan.exactUpdateSpec ?? plan.request.subject)
@@ -741,6 +782,7 @@ actor FakeBatchProvider: BatchOperationProviding {
             guard let result = envelope.data else { throw Failure.provider }
             return result
         }
+        if versionSensitiveNPM, plan.payload.packageName == "npm" { npmVersions[environment.identifier] = plan.payload.targetVersion }
         return NodeOperationResult(operationId: UUID().uuidString, action: plan.request.action.rawValue,
                                    subject: plan.request.subject, exitCode: 0, status: "ok",
                                    logFile: "/private/secret-path", detail: "TOKEN=secret stdout", residues: nil)
@@ -759,7 +801,7 @@ actor FakeBatchProvider: BatchOperationProviding {
         if let snapshot = npmRefreshSnapshot { return snapshot }
         return NodeSnapshot(
             summary: .init(nodePath: environment.identifier, npmPath: URL(filePath: environment.identifier).deletingLastPathComponent().appending(path: "npm").path, nodeVersion: environment.nodeVersion,
-                           npmVersion: environment.npmVersion, nvmLoaded: false, globalPrefix: "/fake",
+                           npmVersion: npmVersions[environment.identifier] ?? environment.npmVersion, nvmLoaded: false, globalPrefix: "/fake",
                            globalRoot: "/fake", registry: "https://registry.npmjs.org"),
             configuration: .init(registry: "", cache: "", prefix: "", userRegistry: "", projectRegistry: "", globalRegistry: ""),
             packages: [], installations: [.init(version: environment.nodeVersion, directory: URL(filePath: environment.identifier).deletingLastPathComponent().deletingLastPathComponent().path, isActive: true, isDefault: true)], managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil, packageEnvironment: environment

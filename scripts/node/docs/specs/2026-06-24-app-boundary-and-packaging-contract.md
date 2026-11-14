@@ -31,7 +31,7 @@ JSON 契约通过 `plan project-nvmrc <project-path> <version>` 暴露该能力�
 
 `plan cleanup <target>` 对 `npm-cache-clean`、`node-gyp-cache`、`orphan-bins`、`nvm-old-versions` 返回 `planToken`，它绑定计划时看到的清理候选状态。App 应把该值原样传给 `execute cleanup <target> <plan-token>`；如果候选状态已经变化，执行返回 `plan-stale`，且不会开始清理。
 
-只读的 `npm-cache-verify` 不需要令牌。`execute cleanup logs [keep-count]` 保留历史代理语义，第三个参数是日志保留数量，不是计划令牌。
+只读的 `npm-cache-verify` 不需要令牌。`execute cleanup logs` 走标准确认执行契约并返回真实 operation 结果，创建本次执行日志后保留最近 100 份日志；独立的 `logs-cleanup [keep-count]` 保留原有响应与自定义保留数量。
 
 为兼容既有调用方，当前仍允许不带令牌的 `execute cleanup <target>`。是否在未来版本强制 App 必须传令牌，属于尚未裁决的公共契约变更。
 
@@ -41,7 +41,7 @@ JSON 契约通过 `plan project-nvmrc <project-path> <version>` 暴露该能力�
 
 ## JSON execute 开关
 
-大多数 `--json execute` 命令都要求 App 在完成确认后设置 `NODE_MANAGER_ALLOW_JSON_EXECUTE=1`。兼容命令 `execute cleanup logs` 是唯一例外：它代理到 `logs-cleanup`，只处理 `scripts/node-manager/.runtime/logs`，不要求该环境变量。
+所有 `--json execute` 命令（包括 `execute cleanup logs`）都要求 App 在完成确认后设置 `NODE_MANAGER_ALLOW_JSON_EXECUTE=1`。独立的兼容命令 `logs-cleanup [keep-count]` 只处理 Manager 自身的 `.runtime/logs`，继续保留原有无 gate 契约。
 
 ## 测试隔离
 

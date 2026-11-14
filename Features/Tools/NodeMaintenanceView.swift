@@ -49,7 +49,7 @@ struct NodeMaintenanceView: View {
                         } label: {
                             Text(action == .verify ? LocalizedStringResource("Verify npm Cache") : LocalizedStringResource("Review…"))
                         }
-                        .disabled(model.node == nil || model.isBusy)
+                        .disabled(model.isBusy || !model.nodeActionIsAvailable(action.request))
                         .fixedSize()
                         .accessibilityLabel(Text(action.title))
                         .accessibilityHint(Text(action.detail))

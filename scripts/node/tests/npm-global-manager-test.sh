@@ -4331,30 +4331,37 @@ test_json_renderers_handle_missing_arguments() {
     assert_valid_json_document "missing execute action is parseable" "$output"
 }
 
-test_json_cleanup_logs_execute_is_logs_cleanup_proxy() {
+test_json_cleanup_logs_execute_uses_standard_operation_contract() {
     local output=""
 
     output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=0 run_in_subshell "run_json_command execute cleanup logs" || true)"
-    assert_contains "cleanup logs execute proxies to logs-cleanup without execute gate" '"action":"logs-cleanup"' "$output"
-    assert_contains "cleanup logs execute proxy succeeds" '"ok":true' "$output"
-    assert_valid_json_document "cleanup logs execute proxy is parseable" "$output"
+    assert_contains "cleanup logs execute requires the confirmed write gate" '"code":"json-execute-disabled"' "$output"
+    assert_contains "ungated cleanup logs fails" '"ok":false' "$output"
+    assert_valid_json_document "ungated cleanup logs response is parseable" "$output"
 
     output="$(run_in_subshell "run_json_command plan cleanup logs" || true)"
     assert_not_contains "cleanup logs plan does not advertise an incompatible plan token" '"planToken":' "$output"
 
-    output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=0 run_in_subshell "run_json_command execute cleanup logs 7" || true)"
-    assert_contains "cleanup logs preserves the legacy keep-count argument" '"kept":7' "$output"
+    output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=1 run_in_subshell "run_json_command execute cleanup logs" || true)"
+    assert_contains "confirmed cleanup logs returns its actual action" '"action":"cleanup"' "$output"
+    assert_contains "confirmed cleanup logs returns its actual subject" '"subject":"logs"' "$output"
+    assert_contains "confirmed cleanup logs has a genuine operation identifier" '"operationId":' "$output"
+    assert_contains "confirmed cleanup logs has a genuine execution log" '"logFile":' "$output"
+    assert_valid_json_document "confirmed cleanup logs operation is parseable" "$output"
+
+    output="$(NODE_MANAGER_ALLOW_JSON_EXECUTE=0 run_in_subshell "run_json_command logs-cleanup 7" || true)"
+    assert_contains "standalone legacy cleanup preserves its keep-count argument" '"kept":7' "$output"
 }
 
-test_cleanup_logs_execute_gate_exception_is_documented() {
+test_cleanup_logs_execute_contract_is_documented() {
     local help_output=""
     local spec_output=""
 
     help_output="$(run_in_subshell "render_help" || true)"
-    assert_contains "help documents cleanup logs execute gate exception" "execute cleanup logs proxies to logs-cleanup and does not require NODE_MANAGER_ALLOW_JSON_EXECUTE" "$help_output"
+    assert_contains "help documents standard confirmed cleanup logs" "execute cleanup logs uses the confirmed execute contract" "$help_output"
 
     spec_output="$(sed -n '1,220p' "$NODE_DIR/docs/specs/2026-06-24-app-boundary-and-packaging-contract.md")"
-    assert_contains "app boundary spec documents cleanup logs execute gate exception" "execute cleanup logs" "$spec_output"
+    assert_contains "app boundary spec documents cleanup logs execute contract" "execute cleanup logs" "$spec_output"
 }
 
 test_hermetic_mocks_are_available() {
@@ -5042,8 +5049,8 @@ main() {
     test_json_node_plan_does_not_source_nvm
     test_json_dangerous_plans_include_impact_scope
     test_json_renderers_handle_missing_arguments
-    test_json_cleanup_logs_execute_is_logs_cleanup_proxy
-    test_cleanup_logs_execute_gate_exception_is_documented
+    test_json_cleanup_logs_execute_uses_standard_operation_contract
+    test_cleanup_logs_execute_contract_is_documented
     test_json_update_latest_verifies_latest_version
     test_json_execute_uninstall_uses_safe_action_layer
     test_json_uninstall_reports_residue_without_deleting_it

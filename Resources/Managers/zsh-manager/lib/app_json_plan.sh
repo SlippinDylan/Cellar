@@ -37,12 +37,24 @@ render_shell_plan_json() {
                 printf '{"code":"invalid-theme-name"}'
                 return 1
             }
-            target_path="$OMZ_DIR/themes/$subject.zsh-theme"
-            if [ ! -f "$target_path" ]; then executable=false; blocked_reason="theme-not-installed"; fi
+            if target_path="$(theme_file_path "$subject")"; then
+                :
+            else
+                target_path="$OMZ_DIR/themes/$subject.zsh-theme"
+                executable=false
+                blocked_reason="theme-not-installed"
+            fi
             ;;
         tidy)
             subject="zsh-files"
-            target_path="$ZSH_TIDY_DIR"
+            target_path="$HOME/.zsh/backups"
+            if [ -L "$HOME/.zshenv" ]; then
+                executable=false
+                blocked_reason="zshenv-is-symlink"
+            elif [ -e "$HOME/.zshenv" ] && [ ! -f "$HOME/.zshenv" ]; then
+                executable=false
+                blocked_reason="zshenv-not-regular-file"
+            fi
             ;;
         *)
             printf '{"code":"unsupported-action"}'

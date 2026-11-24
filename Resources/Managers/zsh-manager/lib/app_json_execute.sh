@@ -29,18 +29,16 @@ install_plugin_once() {
 
 set_plugin_selection() {
     local csv="$1"
-    local old_ifs="$IFS"
+    local raw_names=()
     local names=()
     local name=""
     local plugin_line=""
-    IFS=','
-    # Intentional splitting of the validated comma-separated selection.
-    for name in $csv; do
+    IFS=',' read -r -a raw_names <<< "$csv"
+    for name in "${raw_names[@]+"${raw_names[@]}"}"; do
         if ! array_contains_exact "$name" "${names[@]+"${names[@]}"}"; then
             append_to_array names "$name"
         fi
     done
-    IFS="$old_ifs"
     if ! array_contains_exact git "${names[@]+"${names[@]}"}"; then
         append_to_array names git
     fi
@@ -66,7 +64,7 @@ validate_shell_execute_request() {
             validate_plugin_list "$subject"
             ;;
         switch-theme)
-            validate_simple_name "$subject" && [ -f "$OMZ_DIR/themes/$subject.zsh-theme" ]
+            theme_file_path "$subject" >/dev/null
             ;;
         tidy)
             [ "$subject" = "zsh-files" ]

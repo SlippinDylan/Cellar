@@ -1,6 +1,112 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "The shell environment file must be a regular .zshenv file. Symbolic links are not changed." : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The shell environment file must be a regular .zshenv file. Symbolic links are not changed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shell 环境文件必须是普通 .zshenv 文件，不会修改符号链接。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Shell 環境檔案必須是一般 .zshenv 檔案，不會修改符號連結。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "シェル環境ファイルは通常の .zshenv ファイルである必要があります。シンボリックリンクは変更されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "셸 환경 파일은 일반 .zshenv 파일이어야 합니다. 심볼릭 링크는 변경되지 않습니다."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Shell-Umgebungsdatei muss eine reguläre .zshenv-Datei sein. Symbolische Links werden nicht geändert."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fichier d’environnement du shell doit être un fichier .zshenv standard. Les liens symboliques ne sont pas modifiés."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El archivo de entorno del shell debe ser un archivo .zshenv normal. Los enlaces simbólicos no se modifican."
+          }
+        }
+      }
+    },
+    "Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into ~/.zsh/backups." : {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into ~/.zsh/backups."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将 ZSH_COMPDUMP 配置写入 ~/.zshenv（指向 ~/.cache/zsh），清理旧位置的 zcompdump 缓存，并将历史备份移至 ~/.zsh/backups。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將 ZSH_COMPDUMP 設定寫入 ~/.zshenv（指向 ~/.cache/zsh），清理舊位置的 zcompdump 快取，並將歷史備份移至 ~/.zsh/backups。"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZSH_COMPDUMP を ~/.zshenv（~/.cache/zsh）に設定し、古い zcompdump キャッシュを削除して、過去のバックアップを ~/.zsh/backups へ移動します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ZSH_COMPDUMP를 ~/.zshenv(~/.cache/zsh)에 저장하고, 오래된 zcompdump 캐시를 정리하며, 이전 백업을 ~/.zsh/backups로 이동합니다."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speichert ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), bereinigt veraltete zcompdump-Caches und verschiebt ältere Backups nach ~/.zsh/backups."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistre ZSH_COMPDUMP dans ~/.zshenv (~/.cache/zsh), nettoie les anciens caches zcompdump et déplace les sauvegardes historiques vers ~/.zsh/backups."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guarda ZSH_COMPDUMP en ~/.zshenv (~/.cache/zsh), limpia las cachés antiguas de zcompdump y mueve las copias de seguridad anteriores a ~/.zsh/backups."
+          }
+        }
+      }
+    },
     "Unknown" : {
       "extractionState": "manual",
       "localizations": {

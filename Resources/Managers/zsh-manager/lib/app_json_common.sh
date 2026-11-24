@@ -85,30 +85,49 @@ validate_plugin_url() {
     validate_simple_name "$(derive_plugin_name_from_url "$1")"
 }
 
+theme_file_path() {
+    local subject="${1:-}"
+    validate_simple_name "$subject" || return 1
+    if [ -f "$OMZ_DIR/themes/$subject.zsh-theme" ]; then
+        printf '%s' "$OMZ_DIR/themes/$subject.zsh-theme"
+        return 0
+    fi
+    if [ -f "$OMZ_DIR/custom/themes/$subject.zsh-theme" ]; then
+        printf '%s' "$OMZ_DIR/custom/themes/$subject.zsh-theme"
+        return 0
+    fi
+    return 1
+}
+
 validate_plugin_list() {
     local csv="${1:-}"
+    local items=()
     local item=""
-    local old_ifs="$IFS"
-    IFS=','
-    for item in $csv; do
-        IFS="$old_ifs"
+    IFS=',' read -r -a items <<< "$csv"
+    for item in "${items[@]+"${items[@]}"}"; do
         validate_simple_name "$item" || return 1
         should_keep_plugin_enabled "$item" || return 1
-        IFS=','
     done
-    IFS="$old_ifs"
 }
 
 config_fingerprint() {
     local action="$1"
     local subject="${2:-}"
     local zshrc_digest="missing"
+    local zshenv_digest="missing"
+    local zshenv_path="$HOME/.zshenv"
     local state=""
 
     if [ -f "$ZSHRC_PATH" ]; then
         zshrc_digest="$(/sbin/md5 -q "$ZSHRC_PATH" 2>/dev/null || printf unreadable)"
     elif [ -e "$ZSHRC_PATH" ]; then
         zshrc_digest="unsupported"
+    fi
+
+    if [ -f "$zshenv_path" ]; then
+        zshenv_digest="$(/sbin/md5 -q "$zshenv_path" 2>/dev/null || printf unreadable)"
+    elif [ -e "$zshenv_path" ]; then
+        zshenv_digest="unsupported"
     fi
 
     case "$action" in
@@ -120,9 +139,14 @@ config_fingerprint() {
             ;;
         set-plugins|switch-theme) state="$zshrc_digest" ;;
         tidy)
-            state="$zshrc_digest|$(find "$HOME" -maxdepth 1 -type f \
-                \( -name '.zcompdump*' -o -name '.zshrc.backup-*' -o -name '.zshrc.backup.*' -o -name '.zshrc.bak.*' -o -name '.zprofile.bak' \) \
-                -print 2>/dev/null | LC_ALL=C sort | /sbin/md5 2>/dev/null || true)"
+            state="$zshenv_digest|$zshrc_digest|$({
+                find "$HOME" -maxdepth 1 -type f \
+                    \( -name '.zcompdump*' -o -name '.zshrc.backup-*' -o -name '.zshrc.backup.*' -o -name '.zprofile.bak' -o -name '.zprofile.backup-*' -o -name '.zprofile.backup.*' \) \
+                    -print 2>/dev/null
+                if [ -d "$HOME/.zsh" ]; then
+                    find "$HOME/.zsh" -maxdepth 1 -type f \( -name 'zcompdump*' -o -name '.zcompdump*' \) -print 2>/dev/null
+                fi
+            } | LC_ALL=C sort | /sbin/md5 2>/dev/null || true)"
             ;;
         *) return 1 ;;
     esac

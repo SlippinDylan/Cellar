@@ -17,7 +17,7 @@ Cellar 是非沙盒的原生 macOS 前台应用，日常界面与状态由主进
 当前源码已经实现：
 
 - Home/Library/Discover/环境/维护与底部 Settings/About 的原生任务导航；内部 tools 路由保留为环境，包含 Terminal/Brew Tap/npm Registry/Node.js；维护独立提供检查/清理，Settings 提供通用/环境信息；
-- Home 依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，每个统计项使用独立小卡片与品牌色圆角图标底，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、类型／待更新／搜索交集筛选、单项和批量更新、任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序组织，项目版本归入 Node.js，检查与受限清理迁入维护，Zsh 文件整理仍归终端；Homebrew Tap 与 npm 软件源分别接入 Tap 和 Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；任务进度与最近结果跨页面显示，排错记录写入本地文件，Settings > 通用 > 日志提供显式会话诊断；既有 provider 页面和业务实现保留，不再作为主窗口路由；
+- Home 依次显示 Homebrew、Node/npm/nvm 与终端环境摘要，每个统计项使用独立小卡片与品牌色圆角图标底，提供独立线上版本检查和内联安装指引；Library 已接入本机卡片、类型／待更新／搜索交集筛选、单项和批量更新、任务专用卸载确认；Discover 已接入 Formula/Cask/npm 搜索、直接单项安装和一次确认的批量安装；环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序组织，检查与受限清理迁入维护，Zsh 文件整理仍归终端；Homebrew Tap 与 npm 软件源分别接入 Tap 和 Registry，Terminal 已接入 Oh My Zsh、实际安装插件和本机主题；任务进度与最近结果跨页面显示，排错记录写入本地文件，Settings > 通用 > 日志提供显式会话诊断；
 - 共享目录卡片与自适应网格已提供软件图标、类型、版本语义、目标 Node 环境、进度、单一主动作和网站链接，卡片本体不响应点击；
 - 全部可达页面的八语 String Catalog、默认 Follow System、受操作退出保护约束的语言切换与受控重启；
 - `AppModel` 状态、全局操作登记、启动刷新和内存中最多 100 条会话诊断；
@@ -71,7 +71,7 @@ Homebrew / npm / nvm / Zsh / official endpoints / macOS Installer
 
 全部主页面统一移除系统 toolbar title item；Home 在 navigation 位置显示本地化的 headline 页面标题，并隐藏该文字项的共享按钮背景。使用弹性 spacer 将动作推到右侧。工具栏背景与滚动边缘采用系统自动行为，不设置强制 `.visible` 或 `.hard`，也不添加自定义 hover 背景。环境、维护和 Settings 使用 `ToolbarCategoryPicker` 的原生 `NSSegmentedControl`，分别切换 Terminal/Brew Tap/npm Registry/Node.js、检查/清理和通用/环境信息。Home/Library/Discover/About 的滚动容器铺满正文，留白通过 scroll-content margins 应用于内容。环境、维护与 Settings 使用单列布局；操作分组沿用 SettingsPage / SettingsSection，必要上下文使用无卡片 caption 次要文字，短页面借助可用高度与弹性空间置于底部，长页面随正文滚动至末尾，居中排列、行间距 2 点且不设置最低行高；完整环境信息使用居中、最大宽度 600 点的小票纸面，SwiftUI Shape 绘制上下锯齿边和组间虚线；短值左右排列，长路径置于标签下方，PATH 逐目录显示，不设置最低行高。
 
-当前 shell 的刷新进入 `AppModel.performShellAction`，不定义停止 intent；Go 和 Settings 的主窗口呈现共享可注入的 `AppModel.showDestination`。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，主窗口不存在时创建，重复请求不新增窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library 与 Discover 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Batch Install 菜单和 toolbar 共用动作。尚无实际搜索内容的页面不提供搜索命令。环境、维护与 Settings 分类在根 toolbar 切换并绑定 App 状态。环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序提供四个独立页面，项目版本是 Node.js 小节，Homebrew 检查与 npm 缓存校验归维护 > 检查，其余五类 Node 清理归维护 > 清理。Settings > 通用保留语言和日志，Settings > 环境信息集中展示已有环境状态、版本、路径与受控 PATH；这些值属于 Cellar 识别和使用的环境，不显示额外说明横幅。操作页只保留目标版本、配置生效范围等必要上下文，不重复完整技术资料。输入保留明确标签，完整路径可换行与复制。About 保留 128 点图标、版本、Sparkle 检查及 Studio 版权署名，不再展示更新通道和开源入口。共享更新控制器观察 Sparkle 的检查可用状态并发布变化，About 与菜单订阅同一状态，后台检查结束后自动恢复按钮可用性。正文顶部的共享任务反馈独立于当前路由和日志等级，显示安装、配置与维护等任务进度与可展开、可关闭的最近完成结果；refresh 继续只在工具栏显示进度。
+当前 shell 的刷新进入 `AppModel.performShellAction`，不定义停止 intent；Go 和 Settings 的主窗口呈现共享可注入的 `AppModel.showDestination`。主窗口保留 `WindowGroup` 与原退出策略；已有相同 identity 的窗口由 SwiftUI 前置，主窗口不存在时创建，重复请求不新增窗口。系统 `SidebarCommands` 提供侧边栏显隐。Library 与 Discover 使用原生 toolbar search，通过共同的 focused scene intent 将 Find（Command-F）绑定到当前页面；Batch Install 菜单和 toolbar 共用动作。尚无实际搜索内容的页面不提供搜索命令。环境、维护与 Settings 分类在根 toolbar 切换并绑定 App 状态。环境按终端、Brew Tap（Homebrew Tap）、npm 软件源、Node.js 的顺序提供四个独立页面，Homebrew 检查与 npm 缓存校验归维护 > 检查，其余五类 Node 清理归维护 > 清理。Settings > 通用保留语言和日志，Settings > 环境信息集中展示已有环境状态、版本、路径与受控 PATH；这些值属于 Cellar 识别和使用的环境，不显示额外说明横幅。操作页只保留目标版本、配置生效范围等必要上下文，不重复完整技术资料。输入保留明确标签，完整路径可换行与复制。About 保留 128 点图标、版本、Sparkle 检查及 Studio 版权署名，不再展示更新通道和开源入口。共享更新控制器观察 Sparkle 的检查可用状态并发布变化，About 与菜单订阅同一状态，后台检查结束后自动恢复按钮可用性。正文顶部的共享任务反馈独立于当前路由和日志等级，显示安装、配置与维护等任务进度与可展开、可关闭的最近完成结果；refresh 继续只在工具栏显示进度。
 
 ## 状态与刷新
 
@@ -236,15 +236,13 @@ Command Line Tools service 只检测状态并执行 Apple 文档规定的 `xcode
 
 `NodeEnvironmentResolver` 继续从默认 `~/.nvm` 解析 `alias/default`，支持明确版本、数字前缀、`node`、`stable` 和 alias 链，检测循环；解析失败不选择任意最新版本。受控 PATH 不加载 `.zshrc`。
 
-`NodeManagerClient` 继续使用 schema v1。核心本地读取与 `outdated`/线上版本错误分开。Mutation 只有在单次执行环境中打开 JSON execute gate，项目 `.nvmrc` 使用额外 project-write gate。
+`NodeManagerClient` 继续使用 schema v1。核心本地读取与 `outdated`/线上版本错误分开。Mutation 只有在单次执行环境中打开 JSON execute gate；Cellar 仅管理全局 Node/npm 环境，不读写单个项目的 `.nvmrc`。
 
 环境的 Node.js 页面区分当前检测到的 Node/npm 与 nvm 管理的安装列表；前者以无卡片次要文字保留真实版本作为操作上下文，完整可执行路径移至 Settings > 环境信息，不以路径猜测 provider 归属，后者为空不表示整机没有 Node。nvm 状态及官方安装指引放在同一页面，未检查与缺失分开表达；Cellar 不执行远端安装脚本。用户主动打开版本安装后，从官方 Node 发布索引读取最多 100 个支持 macOS arm64 的具体版本，与 npm Registry 查询分离；读取中、失败与空结果分别呈现。恢复 nvm default 会先确认它能解析到已安装版本，Cellar 会话选择不改变现有终端。
 
-项目版本作为 Node.js 内的小节，只读取用户通过系统目录选择器选择的项目；提供已安装版本选择并保留手动输入。写入确认继续绑定 `.nvmrc`、`package.json`、nvm default 与受控环境，执行前复验并消费一次；保存只写项目声明，不自动安装或切换 Node。npm 软件源页仅以无卡片上下文保留目标 Node 版本与实际生效 Registry；默认 Registry 的用户／项目／全局配置层详情集中到 Settings > 环境信息，scope 查询结果仍保留各层以解释修改影响。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。Node 的 npm 缓存校验位于维护 > 检查；npm 下载缓存、node-gyp 构建缓存、失效 npm 链接、未使用 Node 版本和 Manager 日志清理位于维护 > 清理；日志维护列出精确旧日志候选，超过 1000 项时在准备阶段拒绝，不截断结果；确认后目录清单变化会拒绝执行。项目声明与 Manager 日志维护不依赖完整 Node/npm 读取成功；各自以项目文件或日志候选的实际复查判定结果，独立的 Node 刷新失败仍保留为环境不可用。
+npm 软件源页仅以无卡片上下文保留目标 Node 版本与实际生效 Registry；默认 Registry 的用户／项目／全局配置层详情集中到 Settings > 环境信息，scope 查询结果仍保留各层以解释修改影响。Registry 确认另外绑定用户/当前工作目录的 npm 配置指纹与有效配置层，状态变化时关闭写入 gate。Node 的 npm 缓存校验位于维护 > 检查；npm 下载缓存、node-gyp 构建缓存、失效 npm 链接、未使用 Node 版本和 Manager 日志清理位于维护 > 清理；日志维护列出精确旧日志候选，超过 1000 项时在准备阶段拒绝，不截断结果；确认后目录清单变化会拒绝执行。Manager 日志维护不依赖完整 Node/npm 读取成功，以日志候选的实际复查判定结果，独立的 Node 刷新失败仍保留为环境不可用。
 
-Node 配置指纹通过 `O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开普通文件，读取前后核对 metadata、路径与 inode；`.nvmrc`/alias 上限 4 KiB，npm 配置上限 64 KiB，`package.json` 上限 1 MiB。FIFO、设备、目录、符号链接、超限、替换和读取期间变化均拒绝，文件描述符在所有路径关闭。Registry 包含默认安装的 global config 及显式引用的 userconfig/globalconfig/prefix 配置，引用集合最多 16 个文件。
-
-Project 确认还在会话内绑定用户选择目录的 canonical URL、device/inode、owner/group/mode 与 birthtime，即使两个子文件都不存在也保留目录身份。目录通过 `O_DIRECTORY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开，canonical 路径由已打开 FD 的 `F_GETPATH` 取得；最终目录为 symlink、`.`/`..` 路径或非目录时拒绝。初始祖先 symlink（包括系统路径别名）可以使用，但确认后重新打开原选择路径必须仍对应同一 canonical 目录和身份。执行前重计划之前及紧邻 project-write gate 再次复验，Manager 实际收到的是已捕获 canonical 路径，保留原确认时效和单次消费。执行后再核对目录及有界读取的精确 `.nvmrc`；目录漂移或结果不能复验时记为 unknown，使用有限的 stateChanged/stateUnavailable 原因，不宣称回滚、不把路径写入任务摘要或文件日志。
+Node 配置指纹通过 `O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC` 打开普通文件，读取前后核对 metadata、路径与 inode；alias 上限 4 KiB，npm 配置上限 64 KiB。FIFO、设备、目录、符号链接、超限、替换和读取期间变化均拒绝，文件描述符在所有路径关闭。Registry 包含默认安装的 global config 及显式引用的 userconfig/globalconfig/prefix 配置，引用集合最多 16 个文件。
 
 普通 npm install 与 update 都把已确认的 packageName 和 targetVersion 组成精确安装参数；名称和标签只保留为请求身份。执行前仍复验原目标版本、安装状态、有效 Registry、精确 Node/npm 入口和全局目录；执行后核对该目标的实际版本，无法复验为 unknown，版本不匹配为 failed。
 
@@ -253,7 +251,7 @@ npm 目录能力只针对全局包：
 - Library 安装项及更新目标的 identity 包含当前受控 Node environment；
 - Discover 使用用户选择/有效 Registry 的有界 search client；
 - install/update/uninstall 只在目标身份绑定的 Node 环境执行；
-- Registry 管理位于环境 > npm Registry，Node 版本与项目版本位于环境 > Node.js；
+- Registry 管理位于环境 > npm Registry，全局 Node 版本管理位于环境 > Node.js；
 - current/wanted/latest 不能比较时产生 `unknown`，不得猜测或自动降级。
 
 ### Node 包能力与 Registry 精确环境
@@ -268,13 +266,13 @@ Registry、scope 各层读取及 npm 缓存任务绑定读取时完整 summary �
 
 环境的 Terminal 与主窗口共享同一 `AppModel` 和 `OperationStore`。Terminal 的内置插件直接枚举已安装 Oh My Zsh 的插件目录，不使用快照中的推荐列表；自定义插件只接受规范化 GitHub HTTPS repository URL，主题只来自本机安装。一次 Apply 绑定原 `.zshrc` 和有序 typed plugin/theme plans，在一个受控任务中执行；第二项使用第一项预期生成的精确文件内容作为基线，不接受外部漂移或第二次确认。每项保留原 adapter 的状态 token、备份、marker 与 `zsh -n`。语法失败时，仅在文件仍等于本项生成内容的条件下恢复本项原文；后续失败保留之前完成项与备份，不承诺整体事务回滚。符号链接或非普通 `.zshrc` 拒绝写入；不运行 `chsh`。
 
-Zsh tidy 位于环境 > 终端的维护区域，只移动确认列出的受限文件到 `~/.zsh`；Bridge 拒绝符号链接候选、重定向的整理目录和已占用的目标文件，复验候选清单与 adapter 状态 token，不修改 `.zprofile` 正文。Oh My Zsh 安装继续设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
+Zsh tidy 位于环境 > 终端的维护区域，对齐 `setup-zsh.sh` 逻辑：将 `export ZSH_COMPDUMP="$HOME/.cache/zsh/.zcompdump-$HOST"` 写入 `~/.zshenv`，清理 `~/.zshrc` 中旧的 `ZSH_COMPDUMP` 配置及旧位置 `.zcompdump*` 缓存，并将历史配置备份移至 `~/.zsh/backups/`（目标已存在时保留不覆盖）。Bridge 拒绝符号链接候选、非普通 `.zshenv`/`.zshrc` 及符号链接祖先目录，不修改 `.zprofile` 正文。Oh My Zsh 安装继续设置 `RUNZSH=no`、`CHSH=no`、`KEEP_ZSHRC=yes`。
 
 插件克隆先进入同一批准父目录下的独有 staging，adapter 在核验 marker/device/inode 后固定工作目录；Swift 以 `renameatx_np(RENAME_EXCL)` 原子发布，既有最终目录永不替换或删除。清理仅限已证明归属的 staging；发布后配置失败保留插件并报告 partial。
 
-插件、主题与 tidy 的受管块必须位于唯一有效的 Oh My Zsh 初始化之前。Bridge 先验证冻结 writer 的精确输出，再通过普通文件/no-follow/身份复验边界迁移受管块并执行语法检查；不增加或复制 source。接受 `source $ZSH/oh-my-zsh.sh`、双引号包围路径的 `$ZSH`/`${ZSH}` 形式和 `. "$ZSH/oh-my-zsh.sh"`；初始化之前只接受注释、空行及完整单行赋值。缺失、重复、条件执行、动态 loader 或其他歧义布局在写入前拒绝。原备份、精确回滚和 tidy 已移动文件的 partial 语义保留。
+插件与主题配置直接由 `ShellManagerClient` 对普通 `~/.zshrc` 原地更新最后一个生效的 `ZSH_THEME="..."` / `plugins=(...)`（支持多行 `plugins=(...)` 及清理历史 `# >>> omz-manager >>>` 块），同时完整保留用户在 `source $ZSH/oh-my-zsh.sh` 前后的合法语句；遇到未闭合 `plugins=(` 或残缺托管块时 fail closed 拒绝写入。写入前先校验 `~/.zsh` / `~/.zsh/backups` 非符号链接并备份原文件，写入后执行 `zsh -n` 语法校验，失败则精确恢复原文件并保留备份。
 
-Shell execute 的非零 `action-failed` 仅在 schema、command、action、subject、失败状态和完整执行字段匹配时保留为强类型失败证据；snapshot、plan 和预检错误继续抛出。操作标识、真实退出码、日志和备份不表示修改成功。tidy 在执行前保存确认候选的文件身份，失败或内部中断后只读核对源与批准目的地；确认移动至少一项才报告部分完成，确认候选与配置未变则报告失败，无法确认则保留 unknown。取消或超时没有完整响应时不虚构 operationId 或退出码。配置 Apply 保留之前完成项和当前失败项的执行证据；精确恢复与插件 staging 的归属保护不变。执行、复查及反馈期间保留任务登记；路径与错误详情只进入当前会话诊断，不进入文件日志摘要。
+Shell execute 的非零 `action-failed` 仅在 schema、command、action、subject、失败状态和完整执行字段匹配时保留为强类型失败证据；snapshot、plan 和预检错误继续抛出。tidy 在任一步骤已产生文件变更后若发生失败或取消，均通过 `ShellExecutionFailure` 保留 `partiallySucceeded` 与已变更路径，不丢失部分完成语义；配置 Apply 保留之前完成项与备份。执行、复查及反馈期间保留任务登记；路径与错误详情只进入当前会话诊断，不进入文件日志摘要。
 
 ## 进程、网络与文件边界
 

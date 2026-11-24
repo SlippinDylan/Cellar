@@ -12,7 +12,7 @@ struct ShellTaskConfirmation: View {
                     if plan.request.action == .installOhMyZsh {
                         Text("Download the official Oh My Zsh installer. Keep the existing .zshrc and login shell; do not launch a new shell.")
                     } else if plan.request.action == .tidy {
-                        Text("Move the listed completion files and historical backups into .zsh. The current .zshrc is backed up before its managed completion location changes.")
+                        Text("Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into ~/.zsh/backups.")
                         ForEach(plan.candidates, id: \.self) { Text($0).textSelection(.enabled) }
                     } else {
                         Text(plan.request.subject).textSelection(.enabled)

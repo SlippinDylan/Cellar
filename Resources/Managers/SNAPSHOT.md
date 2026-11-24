@@ -2,7 +2,7 @@
 
 - Node source commit: `586d960040ddf82bb31b4a30f6668a474391e492`（25 个生产白名单文件）
 - Homebrew / frozen Zsh source commit: `1c9d71b3fbec98034b397d76babe47e459ad83f6`（19 个冻结生产文件）
-- Snapshot version: `586d960-app6`
+- Snapshot version: `586d960-app7`
 - Generated: 2026-11-14
 
 `node-manager` follows `scripts/node-manager/app-bundle-manifest.txt`.

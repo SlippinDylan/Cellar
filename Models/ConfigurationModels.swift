@@ -90,8 +90,6 @@ extension NodeActionPlan {
         case "cannot-uninstall-current-node": LocalizedStringResource("The current Cellar Node version cannot be removed.")
         case "cannot-uninstall-default-node": LocalizedStringResource("The nvm default Node version cannot be removed.")
         case "node-package-inventory-unavailable": LocalizedStringResource("The global packages in this Node installation could not be read. Nothing was removed.")
-        case "project-path-not-directory": LocalizedStringResource("The selected project is no longer a directory. Choose the project again.")
-        case "project-nvmrc-not-regular-file": LocalizedStringResource("The project .nvmrc must be a regular file. Symbolic links are not changed.")
         default: LocalizedStringResource("This action is blocked by the current environment. Refresh and review the protected target or file type.")
         }
     }
@@ -101,6 +99,7 @@ extension ShellActionPlan {
     var blockingMessage: LocalizedStringResource {
         switch payload.blockedReason {
         case "zshrc-is-symlink", "zshrc-not-regular-file": LocalizedStringResource("The shell configuration must be a regular .zshrc file. Symbolic links are not changed.")
+        case "zshenv-is-symlink", "zshenv-not-regular-file": LocalizedStringResource("The shell environment file must be a regular .zshenv file. Symbolic links are not changed.")
         case "already-installed": LocalizedStringResource("Oh My Zsh is already installed.")
         case "target-path-exists", "plugin-destination-exists": LocalizedStringResource("The installation destination is already occupied. Existing files will not be replaced.")
         case "oh-my-zsh-not-installed": LocalizedStringResource("Install Oh My Zsh before adding a plugin.")

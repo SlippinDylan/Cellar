@@ -162,8 +162,10 @@ final class AppShellTests: XCTestCase {
         XCTAssertFalse(shell.contains("@FocusedValue(\\.activityActions)"))
         XCTAssertTrue(shell.contains(".buttonStyle(.automatic)"))
         XCTAssertTrue(shell.contains("ToolbarSpacer(.fixed, placement: .primaryAction)"))
-        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-actions-search\", placement: .automatic)"))
+        XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-actions-search\", placement: .primaryAction)"))
         XCTAssertTrue(shell.contains(".frame(width: 360)"))
+        let commands = try String(contentsOf: root.appending(path: "Features/AppCommands.swift"), encoding: .utf8)
+        XCTAssertTrue(commands.contains("CommandGroup(replacing: .newItem) {}"))
         XCTAssertTrue(toolbarPages.allSatisfy { !$0.contains(".toolbar {") })
     }
 

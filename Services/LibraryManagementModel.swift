@@ -62,6 +62,10 @@ final class LibraryUninstallModel: ObservableObject {
     @Published private var pathStatuses: [String: CaskRemovalPathStatus] = [:]
     var isExecuting: Bool { executionState == .running }
     var hasFinished: Bool { executionState == .finished }
+
+    func dismissResult() {
+        result = nil
+    }
     private let revealFile: (URL) -> Void
     private var preparationID: UUID?
     private var preparationTask: Task<BatchPlan, Error>?

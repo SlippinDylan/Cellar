@@ -67,10 +67,10 @@ struct LibraryView: View {
                         ProgressView { Text(current.context.stage.title) }
                     }
                     if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
-                    if let result = updates.result { UpdatesResultView(result: result) }
+                    if let result = updates.result { UpdatesResultView(result: result, dismiss: updates.dismissResult) }
                     if let error = uninstall.error { Text(error.libraryMessage).foregroundStyle(.secondary) }
                     if let reason = uninstall.failureReason { Text(reason.message).foregroundStyle(.secondary) }
-                    if let result = uninstall.result { LibraryResultView(result: result) }
+                    if let result = uninstall.result { LibraryResultView(result: result, dismiss: uninstall.dismissResult) }
                     if !cards.isEmpty {
                         CatalogCardGrid(states: cards, minimumCardWidth: 360, updateTargets: updateTargets, isActionEnabled: canPerformAction,
                                         isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, action in

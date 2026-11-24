@@ -48,8 +48,9 @@ struct UpdatesConfirmationSheet: View {
 
 struct UpdatesResultView: View {
     let result: BatchUpdateExecutionResult
+    var dismiss: (() -> Void)? = nil
     var body: some View {
-        GroupBox("Update Results") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 if result.groups.contains(where: { $0.refreshStatus == .failed }) {
                     Label("Updates finished, but an environment could not be refreshed. Item results are retained. Use Refresh to check the current state.", systemImage: "exclamationmark.circle")
@@ -69,6 +70,17 @@ struct UpdatesResultView: View {
                     }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
                 }.frame(maxHeight: 200)
             }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            HStack {
+                Text("Update Results")
+                Spacer()
+                if let dismiss {
+                    Button("Dismiss Feedback", systemImage: "xmark", action: dismiss)
+                        .labelStyle(.iconOnly).buttonStyle(.plain)
+                        .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
+                        .help("Dismiss Feedback")
+                }
+            }
         }
     }
 }

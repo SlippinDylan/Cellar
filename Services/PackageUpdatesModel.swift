@@ -11,6 +11,10 @@ final class PackageUpdatesModel: ObservableObject {
 
     init(model: AppModel) { self.model = model }
 
+    func dismissResult() {
+        result = nil
+    }
+
     func update(_ card: CatalogCardState) async {
         // A duplicate must not overwrite the active attempt's error or outcome.
         guard !isSubmitting, !model.isBusy, confirmation == nil else { return }

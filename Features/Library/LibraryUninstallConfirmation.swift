@@ -35,6 +35,7 @@ struct LibraryUninstallConfirmation: View {
                     } else {
                         Button("Cancel", role: .cancel, action: uninstall.dismissConfirmation)
                             .keyboardShortcut(.cancelAction)
+                            .disabled(uninstall.isExecuting)
                         Button("Uninstall", role: .destructive) {
                             if removal != nil { executionHeight = presentationHeight }
                             Task { await uninstall.confirmUninstall() }
@@ -404,9 +405,10 @@ struct LibraryWindowHeightReader: NSViewRepresentable {
 
 struct LibraryResultView: View {
     let result: BatchExecutionResult
+    var dismiss: (() -> Void)? = nil
 
     var body: some View {
-        GroupBox("Uninstall Results") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 Text(result.outcome.status.libraryTitle).font(.headline)
                 if result.refreshStatus == .failed {
@@ -447,6 +449,17 @@ struct LibraryResultView: View {
                 }.frame(maxHeight: 160)
             }
             .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+        } label: {
+            HStack {
+                Text("Uninstall Results")
+                Spacer()
+                if let dismiss {
+                    Button("Dismiss Feedback", systemImage: "xmark", action: dismiss)
+                        .labelStyle(.iconOnly).buttonStyle(.plain)
+                        .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
+                        .help("Dismiss Feedback")
+                }
+            }
         }
     }
 

@@ -229,6 +229,10 @@ final class DiscoverInstallationModel: ObservableObject {
         preview = nil
     }
 
+    func dismissResult() {
+        result = nil
+    }
+
     func confirmInstall() async {
         guard !isSubmitting, !model.isBusy, let preview else { return }
         isSubmitting = true

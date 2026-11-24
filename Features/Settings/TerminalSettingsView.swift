@@ -123,9 +123,13 @@ struct TerminalSettingsView: View {
         .controlSize(.large)
         .onAppear { synchronize() }
         .onChange(of: model.shell?.activePlugins) { previous, current in
-            if plugins == Set(previous ?? []).union(["git"]) { plugins = Set(current ?? []).union(["git"]) }
+            let matchesPrevious = previous == nil ? plugins.isEmpty : plugins == Set(previous ?? []).union(["git"])
+            if matchesPrevious, let current { plugins = Set(current).union(["git"]) }
         }
-        .onChange(of: model.shell?.currentTheme) { previous, current in if theme == previous { theme = current ?? "" } }
+        .onChange(of: model.shell?.currentTheme) { previous, current in
+            let matchesPrevious = previous == nil ? theme.isEmpty : theme == previous
+            if matchesPrevious, let current { theme = current }
+        }
         .sheet(isPresented: $showsPluginInstallation, onDismiss: prepareSubmittedPlugin) {
             pluginInstallationSheet
         }

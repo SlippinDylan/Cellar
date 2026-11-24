@@ -38,7 +38,7 @@ struct DiscoverView: View {
                     if installation.isSubmitting, let current = operationStore.currentOperation {
                         ProgressView { Text(current.context.stage.title) }
                     }
-                    if let result = installation.result { DiscoverInstallResultView(result: result) }
+                    if let result = installation.result { DiscoverInstallResultView(result: result, dismiss: installation.dismissResult) }
                     if search.state == .available, let context = search.resultContext {
                         CatalogCardGrid(states: cards, minimumCardWidth: 360, isActionEnabled: !model.isBusy,
                                         isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, _ in
@@ -65,7 +65,6 @@ struct DiscoverView: View {
             // Mutation reconciliation updates cards from local state; environment changes invalidate npm search.
             if scope == .all || scope == .npm, search.resultContext?.npm != context.npm { search.invalidate() }
         }
-        .onAppear { searchFocusRequest = UUID() }
         .onDisappear { search.invalidate() }
     }
 

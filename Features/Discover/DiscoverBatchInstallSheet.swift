@@ -92,8 +92,9 @@ struct DiscoverBatchInstallSheet: View {
 
 struct DiscoverInstallResultView: View {
     let result: BatchExecutionResult
+    var dismiss: (() -> Void)? = nil
     var body: some View {
-        GroupBox("Installation Results") {
+        GroupBox {
             VStack(alignment: .leading, spacing: 8) {
                 if result.refreshStatus == .failed {
                     Label("Installation finished, but the environment could not be refreshed. Use Refresh to check the current state.", systemImage: "exclamationmark.circle")
@@ -113,6 +114,17 @@ struct DiscoverInstallResultView: View {
                     }
                 }.frame(maxHeight: 160)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(8)
+        } label: {
+            HStack {
+                Text("Installation Results")
+                Spacer()
+                if let dismiss {
+                    Button("Dismiss Feedback", systemImage: "xmark", action: dismiss)
+                        .labelStyle(.iconOnly).buttonStyle(.plain)
+                        .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
+                        .help("Dismiss Feedback")
+                }
+            }
         }
     }
 }

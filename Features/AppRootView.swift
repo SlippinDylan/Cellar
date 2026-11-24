@@ -14,9 +14,6 @@ struct AppRootView: View {
     @FocusState private var focusedSidebarDestination: AppDestination?
     @State private var libraryQuery = ""
     @State private var librarySearchFocusRequest: UUID?
-    @State private var contentWidth: CGFloat = 0
-    @State private var libraryTabsWidth: CGFloat = 0
-    @State private var libraryFilterWidth: CGFloat = 0
 
     init(model: AppModel, updateController: ApplicationUpdateController) {
         self.init(model: model, updateController: updateController, uninstall: LibraryUninstallModel(model: model))
@@ -58,7 +55,6 @@ struct AppRootView: View {
                     destinationContent
                 }
             }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
                 .buttonStyle(.glass)
                 .navigationTitle(model.selectedDestination.title)
                 .toolbar {
@@ -92,12 +88,10 @@ struct AppRootView: View {
                         if libraryTabs.selected.isBrew {
                             ToolbarItem(id: "library-tabs-expanded", placement: .automatic) {
                                 CatalogToolbarScopeTabs(actions: libraryTabs)
-                                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { libraryTabsWidth = $0 }
                             }
                         } else {
                             ToolbarItem(id: "library-tabs-collapsed", placement: .automatic) {
                                 CatalogToolbarScopeTabs(actions: libraryTabs)
-                                    .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { libraryTabsWidth = $0 }
                             }
                         }
                     }
@@ -105,7 +99,6 @@ struct AppRootView: View {
                         ToolbarSpacer(.fixed, placement: .automatic)
                         ToolbarItem(id: "library-update-filter", placement: .automatic) {
                             LibraryToolbarUpdateFilter(selection: libraryUpdateFilter)
-                                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { libraryFilterWidth = $0 }
                         }
                     }
                     if model.selectedDestination == .discover, let discoverToolbar {
@@ -114,7 +107,7 @@ struct AppRootView: View {
                         }
                         .sharedBackgroundVisibility(.hidden)
                     }
-                    ToolbarSpacer(.flexible, placement: model.selectedDestination == .library ? .automatic : .primaryAction)
+                    ToolbarSpacer(.flexible, placement: .primaryAction)
                     if model.selectedDestination == .discover, let discoverToolbar {
                         ToolbarItem(id: "discover-search", placement: .primaryAction) {
                             CatalogToolbarSearchField(text: discoverToolbar.query, focusRequest: discoverToolbar.focusRequest,
@@ -126,17 +119,20 @@ struct AppRootView: View {
                         ToolbarSpacer(.fixed, placement: .primaryAction)
                     }
                     if model.selectedDestination == .library {
-                        ToolbarItem(id: "library-actions-search", placement: .automatic) {
+                        if libraryUpdateFilter?.wrappedValue == .pendingUpdates {
+                            ToolbarItem(id: "library-update-all", placement: .primaryAction) {
+                                Button("Update All") { packageUpdateActions?.updateAll() }
+                                    .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
+                                    .buttonStyle(.glass)
+                                    .fixedSize()
+                            }
+                            .sharedBackgroundVisibility(.hidden)
+                        }
+                        ToolbarItem(id: "library-actions-search", placement: .primaryAction) {
                             HStack(spacing: 8) {
-                                if libraryUpdateFilter?.wrappedValue == .pendingUpdates {
-                                    Button("Update All") { packageUpdateActions?.updateAll() }
-                                        .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
-                                        .buttonStyle(.glass)
-                                        .fixedSize()
-                                }
                                 CatalogToolbarSearchField(text: $libraryQuery, focusRequest: librarySearchFocusRequest,
                                                           prompt: LocalizedStringResource("Search Installed Software"))
-                                    .frame(minWidth: 140, maxWidth: 380)
+                                    .frame(minWidth: 130, idealWidth: 240, maxWidth: 320)
                                     .glassEffect(.regular, in: Capsule())
                                 RefreshToolbarButton(model: model)
                                     .frame(width: 36, height: 36)
@@ -149,7 +145,6 @@ struct AppRootView: View {
                                         }
                                     }
                             }
-                            .frame(width: libraryActionsWidth, alignment: .trailing)
                         }
                         .sharedBackgroundVisibility(.hidden)
                     } else if isRefreshActive {
@@ -182,11 +177,6 @@ struct AppRootView: View {
             }
         }
         .task { await model.refreshOnLaunch() }
-    }
-
-    private var libraryActionsWidth: CGFloat {
-        // Leave room for the system's toolbar group insets and fixed spacer.
-        max(0, contentWidth - libraryTabsWidth - libraryFilterWidth - 64)
     }
 
     @ViewBuilder private var contextualToolbarActions: some View {

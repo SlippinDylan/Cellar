@@ -14,6 +14,7 @@ struct AppCommands: Commands {
     }
 
     var body: some Commands {
+        CommandGroup(replacing: .newItem) {}
         CommandGroup(replacing: .appInfo) {
             Button("About Cellar") {
                 model.showDestination(.about) { openWindow(id: $0, value: $1) }

@@ -99,8 +99,8 @@ actor HomebrewSetupService {
             return package
         } catch {
             if let directory {
-                do { try FileManager.default.removeItem(at: directory) }
-                catch { throw HomebrewSetupError(failure: .temporaryFile) }
+                // Best-effort cleanup so a temporary-directory removal error never masks the original security or download failure.
+                try? FileManager.default.removeItem(at: directory)
             }
             try Task.checkCancellation()
             if error is CancellationError { throw error }

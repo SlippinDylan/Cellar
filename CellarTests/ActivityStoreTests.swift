@@ -122,6 +122,9 @@ final class ActivityStoreTests: XCTestCase {
             XCTAssertThrowsError(try store.record(summary(names: [unsafe])))
         }
         XCTAssertThrowsError(try store.record(summary(environment: .init(identifier: "opaque", nodeVersion: "v22.0.0+credential", npmVersion: "10.0.0"))))
+        XCTAssertThrowsError(try store.record(summary(environment: .init(identifier: "opaque", nodeVersion: "v22.0.0-", npmVersion: "10.0.0"))))
+        XCTAssertThrowsError(try store.record(summary(environment: .init(identifier: "opaque", nodeVersion: "v22.0.0-rc..1", npmVersion: "10.0.0"))))
+        try store.record(summary(environment: .init(identifier: "nvm:v22.0.0-rc.1", nodeVersion: "v22.0.0-rc.1", npmVersion: "10.9.0-next.0")))
         let formula = ActivitySummary(id: UUID(), operation: .update, scope: .homebrew(.formula), targetDisplayNames: ["python@3.13"], date: Date(), status: .succeeded, itemOutcomes: [])
         try store.record(formula)
         XCTAssertEqual(store.latestResult, formula)

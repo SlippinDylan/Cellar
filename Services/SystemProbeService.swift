@@ -38,6 +38,7 @@ actor SystemProbeService {
     func loadHomebrew(snapshot: SnapshotStatus, includingOutdated: Bool = true) async throws -> HomebrewStatus {
         let environment = environmentResolver.environment()
         guard let executable = locator.locate("brew", path: environment["PATH", default: ""]) else {
+            homebrewClient = nil
             return HomebrewStatus(
                 executablePath: nil,
                 version: nil,
@@ -227,7 +228,7 @@ actor SystemProbeService {
         guard let executable = locator.locate("brew", path: environment["PATH", default: ""]) else {
             throw BridgeError.executableNotFound("brew")
         }
-        let client = HomebrewClient(brewURL: executable, runner: runner)
+        let client = HomebrewClient(brewURL: executable, runner: runner, caskRemovalAuthorizer: .init(runner: runner))
         homebrewClient = client
         return client
     }

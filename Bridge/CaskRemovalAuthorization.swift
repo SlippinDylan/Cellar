@@ -59,9 +59,16 @@ struct CaskRemovalAuthorizer: Sendable {
         let request = CaskRemovalAuthorizationRequest(userID: getuid(), home: CaskRemovalFileSystem.physicalURL(home).path,
             ownerPID: getpid(), expiresAt: Date().addingTimeInterval(290), lease: lease.path, entries: entries, removal: removal)
         try request.validate()
-        let payload = try JSONEncoder().encode(request).base64EncodedString()
+        let requestData = try JSONEncoder().encode(request)
+        let requestFile = FileManager.default.temporaryDirectory.appending(path: "cellar-removal-req-\(UUID().uuidString).json")
+        let reqFD = open(requestFile.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        guard reqFD >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+        defer { unlink(requestFile.path) }
+        let handle = FileHandle(fileDescriptor: reqFD, closeOnDealloc: true)
+        try handle.write(contentsOf: requestData)
+        try handle.close()
         let process = ProcessRequest(executableURL: URL(filePath: "/usr/bin/osascript"),
-            arguments: ["-e", Self.authorizationScript, Bundle.main.bundleURL.path, requirement, CaskRemovalPrivilegedMode.flag, payload],
+            arguments: ["-e", Self.authorizationScript, Bundle.main.bundleURL.path, requirement, CaskRemovalPrivilegedMode.flag, requestFile.path],
             environment: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": home.path],
             currentDirectoryURL: home, timeout: .seconds(300))
         let output = try await applicationLifecycle.withApplicationsStopped(removal.applicationIdentities,
@@ -122,9 +129,25 @@ enum CaskRemovalPrivilegedMode {
     static func run(arguments: [String]) -> Int32? {
         guard arguments.dropFirst().first == flag else { return nil }
         do {
-            guard geteuid() == 0, arguments.count == 3, arguments[2].utf8.count < 1_048_576,
-                  let data = Data(base64Encoded: arguments[2]) else { throw CocoaError(.fileWriteNoPermission) }
+            guard geteuid() == 0, arguments.count == 3 else { throw CocoaError(.fileWriteNoPermission) }
+            let requestPath = arguments[2]
+            let reqFD = open(requestPath, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            guard reqFD >= 0 else { throw CocoaError(.fileWriteNoPermission) }
+            defer { close(reqFD) }
+            var reqStatus = stat()
+            guard fstat(reqFD, &reqStatus) == 0,
+                  (reqStatus.st_mode & S_IFMT) == S_IFREG,
+                  reqStatus.st_mode & 0o077 == 0,
+                  reqStatus.st_nlink == 1,
+                  reqStatus.st_size > 0,
+                  reqStatus.st_size <= 4 * 1_024 * 1_024 else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            let reqHandle = FileHandle(fileDescriptor: reqFD, closeOnDealloc: false)
+            let data = try reqHandle.read(upToCount: 4 * 1_024 * 1_024 + 1) ?? Data()
+            guard data.count == Int(reqStatus.st_size) else { throw CocoaError(.fileWriteNoPermission) }
             let request = try JSONDecoder().decode(CaskRemovalAuthorizationRequest.self, from: data)
+            guard reqStatus.st_uid == request.userID else { throw CocoaError(.fileWriteNoPermission) }
             try request.validate()
             let lease = open(request.lease, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
             guard lease >= 0 else { throw CocoaError(.fileWriteNoPermission) }

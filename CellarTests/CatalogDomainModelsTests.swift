@@ -268,4 +268,27 @@ final class CatalogDomainModelsTests: XCTestCase {
         XCTAssertEqual(ApplicationLanguage.traditionalChinese.rawValue, "zh-Hant")
         XCTAssertEqual(ApplicationLanguage.allCases.count, 9)
     }
+
+    func testNodeActionPlanCanExecuteFailsClosedWhenRequiredFlagsAreMissing() throws {
+        func makePlan(action: NodeAction, json: String) throws -> NodeActionPlan {
+            let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(json.utf8))
+            let request = NodeActionRequest(action: action, subject: "22.0.0")
+            return NodeActionPlan(id: UUID(), request: request, payload: payload, generatedAt: Date())
+        }
+        let base = #"{"action":"node-install","mode":"dry-run","command":["nvm","install","22"],"requiresConfirmation":true,"warnings":[]}"#
+        // Missing executeSupported must fail closed
+        XCTAssertFalse(try makePlan(action: .installNode, json: base).canExecute)
+        // Runtime action with executeSupported=true but missing executable must fail closed
+        let runtimeMissingExecutable = #"{"action":"node-install","mode":"dry-run","command":["nvm","install","22"],"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .installNode, json: runtimeMissingExecutable).canExecute)
+        // Runtime action with both executeSupported=true and executable=true succeeds
+        let runtimeExecutable = #"{"action":"node-install","mode":"dry-run","command":["nvm","install","22"],"requiresConfirmation":true,"executeSupported":true,"executable":true,"warnings":[]}"#
+        XCTAssertTrue(try makePlan(action: .installNode, json: runtimeExecutable).canExecute)
+        // Non-runtime action (e.g. installPackage) does not emit executable, requires executeSupported=true
+        let packageSupported = #"{"action":"install","mode":"dry-run","command":["npm","install","-g","eslint"],"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertTrue(try makePlan(action: .installPackage, json: packageSupported).canExecute)
+        // Non-runtime action with missing executeSupported fails closed
+        let packageMissingSupported = #"{"action":"install","mode":"dry-run","command":["npm","install","-g","eslint"],"requiresConfirmation":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .installPackage, json: packageMissingSupported).canExecute)
+    }
 }

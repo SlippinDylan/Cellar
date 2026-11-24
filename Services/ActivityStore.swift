@@ -131,9 +131,24 @@ enum ActivitySummarySanitizer {
 
     private static func validVersion(_ version: String) -> Bool {
         let normalized = version.hasPrefix("v") ? String(version.dropFirst()) : version
-        let pieces = normalized.split(separator: ".", omittingEmptySubsequences: false)
-        return normalized.count <= 64 && pieces.count == 3
-            && pieces.allSatisfy { !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }
+        guard !normalized.isEmpty, normalized.count <= 64 else { return false }
+        let preParts = normalized.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false)
+        let core = preParts[0].split(separator: ".", omittingEmptySubsequences: false)
+        guard core.count == 3,
+              core.allSatisfy({ !$0.isEmpty && $0.utf8.allSatisfy { (48...57).contains($0) } }) else {
+            return false
+        }
+        if preParts.count == 2 {
+            let prerelease = preParts[1].split(separator: ".", omittingEmptySubsequences: false)
+            guard prerelease.allSatisfy({ validVersionIdentifier($0) }) else { return false }
+        }
+        return true
+    }
+
+    private static func validVersionIdentifier(_ part: Substring) -> Bool {
+        !part.isEmpty && part.utf8.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0 == 45
+        }
     }
 
     private static func validPackageIdentifier(_ name: String, scope: ActivityScope?) -> Bool {

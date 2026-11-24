@@ -292,9 +292,9 @@ final class HomebrewSetupServiceTests: XCTestCase {
             gatekeeper: { _ in XCTFail("Must stop before Gatekeeper") },
             opener: { _ in XCTFail("Must never open") }
         )
-        do { _ = try await service.openInstaller(); XCTFail("Expected cleanup failure") }
+        do { _ = try await service.openInstaller(); XCTFail("Expected original download failure") }
         catch {
-            XCTAssertEqual((error as? HomebrewSetupError)?.failure, .temporaryFile)
+            XCTAssertEqual((error as? HomebrewSetupError)?.failure, .download)
             XCTAssertEqual((error as? HomebrewSetupError)?.officialURL, CatalogWebsites.homebrew)
         }
     }

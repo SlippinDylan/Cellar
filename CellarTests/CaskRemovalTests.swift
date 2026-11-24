@@ -755,6 +755,23 @@ final class CaskRemovalTests: XCTestCase {
             expiresAt: now.addingTimeInterval(60), lease: valid.lease, entries: [changed], removal: removal)
         XCTAssertThrowsError(try tampered.validate(ownerHome: fixture.home.path, now: now))
     }
+
+    func testNonAppSymlinkInApplicationsDoesNotMarkScanIncomplete() throws {
+        let fixture = try RemovalFixture()
+        defer { fixture.remove() }
+        _ = try fixture.app("Sample", bundle: "com.acme.sample")
+        let cache = try fixture.file("Library/Caches/com.acme.sample/data.bin")
+        let helperTarget = fixture.home.appending(path: "helper-dir")
+        try FileManager.default.createDirectory(at: helperTarget, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: fixture.apps.appending(path: "Utilities"), withDestinationURL: helperTarget)
+
+        let package = fixture.package(extraArtifacts: [
+            .init(kind: "trash", values: ["~/Library/Caches/com.acme.sample"], category: .zap)
+        ])
+        let plan = try fixture.scanner.scan(package: package, cache: fixture.home.appending(path: "Library/Caches/Homebrew"), otherCasks: [])
+        XCTAssertFalse(plan.warnings.contains(.incompleteScan))
+        XCTAssertTrue(plan.entries.contains { $0.path == cache.deletingLastPathComponent().path && $0.disposition == .remove })
+    }
 }
 
 private struct RemovalFixture: Sendable {

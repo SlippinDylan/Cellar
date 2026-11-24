@@ -483,9 +483,15 @@ struct CaskRemovalScanner: Sendable {
                     return false
                 }
                 if node.isSymbolicLink {
-                    if app && volume == nil, let identity = try readApplicationAlias(url, budget: budget) {
-                        if seen.insert(node.path).inserted { result.append(identity) }
-                    } else { complete = false }
+                    if volume != nil || depth == 0 {
+                        complete = false
+                    } else if app {
+                        if let identity = try readApplicationAlias(url, budget: budget) {
+                            if seen.insert(node.path).inserted { result.append(identity) }
+                        } else {
+                            complete = false
+                        }
+                    }
                     return false
                 }
                 if app {

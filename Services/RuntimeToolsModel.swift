@@ -12,14 +12,29 @@ final class RuntimeToolsModel: ObservableObject {
         self.loadReleases = loadReleases
     }
     func refresh(model: AppModel) async {
-        guard !model.isBusy else { return }
-        let id = model.operationStore.begin(context: .init(operation: .refresh, scope: model.node?.summary.activityEnvironment.map(ActivityScope.nodeRuntime), targets: [], stage: .checking))
+        guard !isLoading, !model.operationStore.hasActiveOperations else { return }
         isLoading = true
         error = nil
         diagnosticError = nil
-        defer { isLoading = false; model.operationStore.end(id) }
-        do { releases = try await model.operationStore.performCancellable(operationID: id) { try await self.loadReleases() } }
-        catch { self.error = .init(error: error); diagnosticError = error.localizedDescription }
+        let task = Task { try await self.loadReleases() }
+        let readOnlyID = model.operationStore.registerReadOnlyOperation(
+            cancel: { task.cancel() },
+            awaitCompletion: { _ = try? await task.value }
+        )
+        defer {
+            model.operationStore.unregisterReadOnlyOperation(readOnlyID)
+            isLoading = false
+        }
+        do {
+            releases = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+        } catch {
+            self.error = .init(error: error)
+            diagnosticError = error.localizedDescription
+        }
     }
 }
 

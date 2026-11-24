@@ -5,19 +5,80 @@ import Foundation
 final class OperationStore: ObservableObject {
     static let shared = OperationStore()
 
+    private struct ReadOnlyEntry {
+        let cancel: @MainActor () -> Void
+        let awaitCompletion: @MainActor () async -> Void
+    }
+
     @Published private var activeOperationIDs: Set<UUID> = []
     @Published private(set) var currentOperation: ActiveOperationState?
+    @Published private(set) var terminationBlockedNotice = false
+    private(set) var isTerminating = false
     private var runningTaskID: UUID?
+    private var readOnlyEntries: [UUID: ReadOnlyEntry] = [:]
     var logStore: FileLogStore?
 
     var activeOperationCount: Int { activeOperationIDs.count }
     var hasActiveOperations: Bool { !activeOperationIDs.isEmpty }
-
-    func isSoleOperation(_ identifier: UUID) -> Bool {
-        activeOperationIDs == [identifier]
-    }
+    var hasActiveReadOnlyOperations: Bool { !readOnlyEntries.isEmpty }
 
     init() {}
+
+    func beginTermination() {
+        isTerminating = true
+    }
+
+    func cancelTermination() {
+        isTerminating = false
+    }
+
+    func notifyTerminationBlocked() {
+        guard hasActiveOperations else { return }
+        terminationBlockedNotice = true
+    }
+
+    func dismissTerminationBlockedNotice() {
+        terminationBlockedNotice = false
+    }
+
+    @discardableResult
+    func registerReadOnlyOperation(
+        cancel: @escaping @MainActor () -> Void,
+        awaitCompletion: @escaping @MainActor () async -> Void = {}
+    ) -> UUID {
+        let identifier = UUID()
+        if isTerminating {
+            cancel()
+            return identifier
+        }
+        readOnlyEntries[identifier] = ReadOnlyEntry(cancel: cancel, awaitCompletion: awaitCompletion)
+        return identifier
+    }
+
+    func unregisterReadOnlyOperation(_ identifier: UUID) {
+        readOnlyEntries.removeValue(forKey: identifier)
+    }
+
+    func cancelAllReadOnlyOperations() {
+        let entries = Array(readOnlyEntries.values)
+        readOnlyEntries.removeAll()
+        for entry in entries {
+            entry.cancel()
+        }
+    }
+
+    func cancelAndAwaitAllReadOnlyOperations() async {
+        while !readOnlyEntries.isEmpty {
+            let entries = Array(readOnlyEntries.values)
+            readOnlyEntries.removeAll()
+            for entry in entries {
+                entry.cancel()
+            }
+            for entry in entries {
+                await entry.awaitCompletion()
+            }
+        }
+    }
 
     func performCancellable<Value: Sendable>(
         operationID: UUID,
@@ -66,6 +127,7 @@ final class OperationStore: ObservableObject {
         )
         logStore?.record(level: .debug, category: "operation", message: "Task released", taskID: identifier)
         if currentOperation?.id == identifier { currentOperation = nil }
+        if !hasActiveOperations { terminationBlockedNotice = false }
     }
 }
 

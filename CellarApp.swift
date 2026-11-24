@@ -36,7 +36,7 @@ struct CellarApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var logStore: FileLogStore?
-    private var isFlushingLogs = false
+    private var isTerminatingAsync = false
     private let operationStore: OperationStore
     private let relaunchController: ApplicationRelaunchController
     private let reopenApplication: () -> Void
@@ -63,20 +63,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         let reply = AppTerminationPolicy.reply(hasActiveOperations: operationStore.hasActiveOperations)
         if reply == .terminateCancel {
-            relaunchController.cancelRelaunchRequest()
+            presentBlockedTerminationNotice()
             return reply
         }
-        guard let logStore else { return reply }
-        if !isFlushingLogs {
-            isFlushingLogs = true
+        guard isTerminatingAsync || operationStore.hasActiveReadOnlyOperations || logStore != nil else {
+            return reply
+        }
+        if !isTerminatingAsync {
+            isTerminatingAsync = true
+            operationStore.beginTermination()
             let message = "Cellar terminating"
-            logStore.record(level: .info, category: "application", message: message)
+            logStore?.record(level: .info, category: "application", message: message)
             Task {
-                await logStore.flush()
+                await operationStore.cancelAndAwaitAllReadOnlyOperations()
+                if let logStore {
+                    await logStore.flush()
+                }
                 let canTerminate = !operationStore.hasActiveOperations
+                isTerminatingAsync = false
                 if !canTerminate {
-                    isFlushingLogs = false
-                    relaunchController.cancelRelaunchRequest()
+                    operationStore.cancelTermination()
+                    presentBlockedTerminationNotice()
                 }
                 replyToTermination(canTerminate)
             }
@@ -84,11 +91,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
+    private func presentBlockedTerminationNotice() {
+        operationStore.notifyTerminationBlocked()
+        relaunchController.cancelRelaunchRequest()
+        guard !AppRuntime.isRunningTests else { return }
+        for window in NSApplication.shared.windows where window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        NSApplication.shared.activate()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        operationStore.cancelAllReadOnlyOperations()
         guard relaunchController.consumeRelaunchRequest() else { return }
         reopenApplication()
     }

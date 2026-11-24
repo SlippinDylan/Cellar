@@ -51,6 +51,7 @@ final class ActivityStoreTests: XCTestCase {
         XCTAssertFalse(text.contains("/private/"))
         logger.minimumLevel = .critical
         store.append(result)
+        await logger.flush()
         XCTAssertEqual(store.latestResult?.cleanupItems, items)
         XCTAssertNil(ActivityStore().latestResult)
     }

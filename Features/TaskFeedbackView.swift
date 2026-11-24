@@ -47,6 +47,16 @@ struct TaskFeedbackView: View {
             } else if let store = model.activityStore {
                 TaskResultFeedback(store: store)
             }
+            if operations.terminationBlockedNotice {
+                HStack(spacing: 12) {
+                    Label("Cannot quit while a task is running. Wait for it to finish, then try again.", systemImage: "exclamationmark.triangle")
+                    Spacer()
+                    Button("Dismiss Feedback", systemImage: "xmark") { operations.dismissTerminationBlockedNotice() }
+                        .labelStyle(.iconOnly).help("Dismiss Feedback")
+                }
+                .padding(AppLayout.spacing)
+                Divider()
+            }
             if !errors.isEmpty && !model.isBusy {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {

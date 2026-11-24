@@ -272,7 +272,8 @@ final class DiscoverTests: XCTestCase {
         let first = Task { await model.search("old", scope: .homebrewFormula, context: context) }
         await fulfillment(of: [started], timeout: 3)
         XCTAssertEqual(model.state, .loading)
-        XCTAssertTrue(store.hasActiveOperations)
+        XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertTrue(store.hasActiveReadOnlyOperations)
         let replacement = Task { await model.search("new", scope: .homebrewCask, context: context) }
         await Task.yield()
         await fake.finishOld()
@@ -281,6 +282,7 @@ final class DiscoverTests: XCTestCase {
         XCTAssertEqual(model.results.first?.identity, .homebrew(.init(name: "new", kind: .cask)))
         XCTAssertEqual(model.state, .available)
         XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertFalse(store.hasActiveReadOnlyOperations)
     }
 
     func testInvalidationKeepsTaskRegisteredUntilSearchCleanup() async {
@@ -291,12 +293,14 @@ final class DiscoverTests: XCTestCase {
         let task = Task { await model.search("old", scope: .homebrewFormula, context: .init(homebrewAvailable: true, npm: nil)) }
         await fulfillment(of: [started], timeout: 3)
         model.invalidate()
-        XCTAssertTrue(store.hasActiveOperations)
+        XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertTrue(store.hasActiveReadOnlyOperations)
         await fake.finishOld()
         await task.value
         XCTAssertEqual(model.state, .idle)
         XCTAssertTrue(model.results.isEmpty)
         XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertFalse(store.hasActiveReadOnlyOperations)
     }
 
     func testRegistrySearchUsesDisplayedRegistryAndExactNodeEnvironment() async throws {

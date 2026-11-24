@@ -53,7 +53,7 @@ final class AppModel: ObservableObject {
     let homeOutdatedDependencies: HomeOutdatedDependencies
     var checkedOutdatedRefresh: Date?
     var activeOutdatedRefreshID: UUID?
-    var homeBackgroundOwner: (operationID: UUID, refreshedAt: Date, task: Task<Bool, Never>)?
+    var homeBackgroundOwner: (refreshedAt: Date, task: Task<Bool, Never>)?
     var latestHomeBackgroundRequestID: UUID?
 
     init(
@@ -139,32 +139,41 @@ final class AppModel: ObservableObject {
         invalidateHomeUpdates()
         isRefreshing = true
         errorMessages = []
-        let operationID = operationStore.begin()
-
-        defer {
-            isRefreshing = false
-            operationStore.end(operationID)
-        }
+        let refreshID = UUID()
 
         var cancelled = false
+        let task = Task<Bool, Error> {
+            try Task.checkCancellation()
+            let nvmInstalled = await self.service.isNVMInstalled()
+            try Task.checkCancellation()
+            self.nvmInstalled = nvmInstalled
+            let installedManagers = try await self.service.installManagers()
+            self.managers = installedManagers
+            try Task.checkCancellation()
+            async let homebrewResult: Void = self.refreshHomebrewState(snapshot: installedManagers)
+            async let nodeResult: Void = self.refreshNodeState(snapshot: installedManagers)
+            async let shellResult: Void = self.refreshShellState(snapshot: installedManagers)
+            _ = await (homebrewResult, nodeResult, shellResult)
+            if !Task.isCancelled { self.refreshedAt = Date() }
+            return Task.isCancelled
+        }
+        let readOnlyID = operationStore.registerReadOnlyOperation(
+            cancel: { task.cancel() },
+            awaitCompletion: { _ = try? await task.value }
+        )
+        defer {
+            operationStore.unregisterReadOnlyOperation(readOnlyID)
+            isRefreshing = false
+        }
+
         do {
-            cancelled = try await operationStore.performCancellable(operationID: operationID) {
-                try Task.checkCancellation()
-                let nvmInstalled = await self.service.isNVMInstalled()
-                try Task.checkCancellation()
-                self.nvmInstalled = nvmInstalled
-                let installedManagers = try await self.service.installManagers()
-                self.managers = installedManagers
-                try Task.checkCancellation()
-                async let homebrewResult: Void = self.refreshHomebrewState(snapshot: installedManagers)
-                async let nodeResult: Void = self.refreshNodeState(snapshot: installedManagers)
-                async let shellResult: Void = self.refreshShellState(snapshot: installedManagers)
-                _ = await (homebrewResult, nodeResult, shellResult)
-                if !Task.isCancelled { self.refreshedAt = Date() }
-                return Task.isCancelled
+            cancelled = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
             }
         } catch {
-            cancelled = error is CancellationError || Task.isCancelled
+            cancelled = error is CancellationError || Task.isCancelled || task.isCancelled
             if !cancelled {
                 homebrewRefreshFailed = true
                 nodeRefreshFailed = true
@@ -179,8 +188,8 @@ final class AppModel: ObservableObject {
         let detail = cancelled
             ? String(localized: ActivityItemReason.cancelledByUser.message)
             : errorMessages.isEmpty ? "Loaded all environment states" : errorMessages.joined(separator: "; ")
-        recordDiagnostic(id: operationID, detail: detail)
-        activityStore?.append(ActivitySummary(id: operationID, operation: .refresh, scope: nil,
+        recordDiagnostic(id: refreshID, detail: detail)
+        activityStore?.append(ActivitySummary(id: refreshID, operation: .refresh, scope: nil,
                                              targetDisplayNames: [], date: Date(),
                                              status: cancelled ? .cancelled : errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: [], reason: cancelled ? .cancelledByUser : errorMessages.isEmpty ? nil : .stateUnavailable))
     }
@@ -333,9 +342,10 @@ final class AppModel: ObservableObject {
 
     func failureMessage(_ error: Error, preparing: Bool = false) -> String {
         let context = operationStore.currentOperation?.context
-        activityDiagnostics.record(operation: context?.operation ?? .configuration, scope: context?.scope, detail: error.localizedDescription)
+        let operation = context?.operation ?? (isRefreshing ? .refresh : .configuration)
+        activityDiagnostics.record(operation: operation, scope: context?.scope, detail: error.localizedDescription)
         let reason = ActivityItemReason(error: error, preparing: preparing)
-        logStore?.record(level: .error, category: "operation", message: "\(context?.operation.rawValue ?? "configuration"): \(reason.rawValue)", taskID: operationStore.currentOperation?.id)
+        logStore?.record(level: .error, category: "operation", message: "\(operation.rawValue): \(reason.rawValue)", taskID: operationStore.currentOperation?.id)
         return String(localized: reason.message)
     }
 }

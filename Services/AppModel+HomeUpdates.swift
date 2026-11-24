@@ -29,41 +29,33 @@ extension AppModel {
         let requestID = UUID()
         latestHomeBackgroundRequestID = requestID
         if let previous = homeBackgroundOwner {
-            guard !operationStore.hasActiveOperations || operationStore.isSoleOperation(previous.operationID) else { return }
+            guard !operationStore.hasActiveOperations else { return }
             let healthyDuplicate = previous.refreshedAt == localRefresh && !previous.task.isCancelled
             if !healthyDuplicate { previous.task.cancel() }
             let completed = await previous.task.value
             guard !Task.isCancelled, latestHomeBackgroundRequestID == requestID else { return }
             if completed && previous.refreshedAt == localRefresh { return }
         }
-        guard !Task.isCancelled, latestHomeBackgroundRequestID == requestID,
+        guard !Task.isCancelled, !operationStore.isTerminating, latestHomeBackgroundRequestID == requestID,
               localRefresh == refreshedAt, !isBusy else { return }
-        let operationID = operationStore.begin()
-        let task = Task { await self.runHomeBackground(operationID: operationID, localRefresh: localRefresh, environment: environment) }
-        homeBackgroundOwner = (operationID, localRefresh, task)
+        let task = Task { await self.runHomeBackground(localRefresh: localRefresh, environment: environment) }
+        let readOnlyID = operationStore.registerReadOnlyOperation(
+            cancel: { task.cancel() },
+            awaitCompletion: { _ = await task.value }
+        )
+        homeBackgroundOwner = (localRefresh, task)
         await withTaskCancellationHandler {
             _ = await task.value
         } onCancel: { task.cancel() }
-        if homeBackgroundOwner?.operationID == operationID { homeBackgroundOwner = nil }
+        operationStore.unregisterReadOnlyOperation(readOnlyID)
+        if homeBackgroundOwner?.task == task { homeBackgroundOwner = nil }
     }
 
-    private func runHomeBackground(operationID: UUID, localRefresh: Date, environment: [String: String]) async -> Bool {
-        // Release the slot before task.value resumes a caller waiting to take ownership.
-        defer { operationStore.end(operationID) }
-        do {
-            try await operationStore.performCancellable(operationID: operationID) {
-                async let versions: Void = self.homeDashboard.refresh(after: localRefresh, environment: environment)
-                async let updates: Void = self.refreshHomeOutdated(after: localRefresh, environment: environment)
-                _ = await (versions, updates)
-                try Task.checkCancellation()
-            }
-            return true
-        } catch is CancellationError {
-            // Each child settles its state before the shared lifecycle slot is released.
-            return false
-        } catch {
-            preconditionFailure("Home reads handle provider failures before returning: \(error)")
-        }
+    private func runHomeBackground(localRefresh: Date, environment: [String: String]) async -> Bool {
+        async let versions: Void = self.homeDashboard.refresh(after: localRefresh, environment: environment)
+        async let updates: Void = self.refreshHomeOutdated(after: localRefresh, environment: environment)
+        _ = await (versions, updates)
+        return !Task.isCancelled
     }
 
     // Home owns this task alongside official versions. The two providers finish independently.

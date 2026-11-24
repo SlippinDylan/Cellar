@@ -1,6 +1,58 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Cannot quit while a task is running. Wait for it to finish, then try again." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Beenden während einer laufenden Aufgabe nicht möglich. Warten Sie auf den Abschluss und versuchen Sie es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cannot quit while a task is running. Wait for it to finish, then try again."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No se puede salir mientras hay una tarea en curso. Espera a que termine e inténtalo de nuevo."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Impossible de quitter pendant l’exécution d’une tâche. Attendez qu’elle se termine, puis réessayez."
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "タスクの実行中は終了できません。完了してからもう一度お試しください。"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업이 실행 중일 때는 종료할 수 없습니다. 작업이 끝난 뒤 다시 시도하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前有任务正在执行，暂时无法退出。请等待任务完成后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目前有任務正在執行，暫時無法結束。請等待任務完成後再試。"
+          }
+        }
+      }
+    },
     "The shell environment file must be a regular .zshenv file. Symbolic links are not changed." : {
       "extractionState": "manual",
       "localizations": {

@@ -69,19 +69,16 @@ final class DiscoverSearchModel: ObservableObject {
         if let guidance = Self.guidance(scope, context: context) { state = guidance; return }
         guard !operationStore.hasActiveOperations else { state = .busy; return }
         state = .loading
-        let activityScope: ActivityScope? = switch scope {
-        case .all: nil
-        case .homebrewFormula: .homebrew(.formula)
-        case .homebrewCask: .homebrew(.cask)
-        case .npm:
-            if let npm = context.npm { .npm(npm.environment) }
-            else { preconditionFailure("npm search requires a validated context") }
-        }
-        let operationID = operationStore.begin(context: .init(operation: .search, scope: activityScope, targets: [], stage: .checking))
-        let task = Task { await self.run(term, scope: scope, context: context, limit: limit, request: request, operationID: operationID) }
-        owner = (operationID, task)
+        let searchID = UUID()
+        let task = Task { await self.run(term, scope: scope, context: context, limit: limit, request: request) }
+        let readOnlyID = operationStore.registerReadOnlyOperation(
+            cancel: { task.cancel() },
+            awaitCompletion: { await task.value }
+        )
+        owner = (searchID, task)
         await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
-        if owner?.id == operationID { owner = nil }
+        operationStore.unregisterReadOnlyOperation(readOnlyID)
+        if owner?.id == searchID { owner = nil }
     }
 
     static func guidance(_ scope: DiscoverSearchScope, context: DiscoverContext) -> DiscoverSearchState? {
@@ -93,45 +90,41 @@ final class DiscoverSearchModel: ObservableObject {
     }
 
     private func run(_ query: String, scope: DiscoverSearchScope, context: DiscoverContext, limit: Int,
-                     request: UUID, operationID: UUID) async {
-        defer { operationStore.end(operationID) }
+                     request: UUID) async {
         do {
-            let (results, resolvedContext, unavailable, partial) = try await operationStore.performCancellable(operationID: operationID) {
-                let values: [DiscoverResult]
-                var effectiveContext = context
-                var unavailable: [CatalogProviderScope] = []
-                var partial: [CatalogProviderScope] = []
-                switch scope {
-                case .all:
-                    let merged = try await self.searchAll(query, context: context, limit: limit)
-                    values = merged.results
-                    effectiveContext = merged.context
-                    unavailable = merged.unavailable
-                    partial = merged.partial
-                case .homebrewFormula, .homebrewCask:
-                    let kind: HomebrewPackageKind = scope == .homebrewFormula ? .formula : .cask
-                    let discovery = try await self.dependencies.homebrew(query, kind, limit, 4)
-                    values = discovery.packages.prefix(limit).map(DiscoverResult.homebrew)
-                    let source: CatalogProviderScope = kind == .formula ? .homebrewFormula : .homebrewCask
-                    if discovery.isUnavailable { unavailable = [source] }
-                    else if discovery.failedDetailCount > 0 { partial = [source] }
-                case .npm:
-                    guard let base = context.npm else { preconditionFailure("npm search requires a validated context") }
-                    let npm = try await self.dependencies.resolveNPM(query, base)
-                    effectiveContext = DiscoverContext(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true)
-                    guard self.latestRequest == request else { throw CancellationError() }
-                    self.resultContext = effectiveContext
-                    values = try await self.dependencies.npm(query, npm, limit).prefix(limit).map(DiscoverResult.npm)
-                }
-                try Task.checkCancellation()
-                return (values, effectiveContext, unavailable, partial)
+            let values: [DiscoverResult]
+            var effectiveContext = context
+            var unavailable: [CatalogProviderScope] = []
+            var partial: [CatalogProviderScope] = []
+            switch scope {
+            case .all:
+                let merged = try await self.searchAll(query, context: context, limit: limit)
+                values = merged.results
+                effectiveContext = merged.context
+                unavailable = merged.unavailable
+                partial = merged.partial
+            case .homebrewFormula, .homebrewCask:
+                let kind: HomebrewPackageKind = scope == .homebrewFormula ? .formula : .cask
+                let discovery = try await self.dependencies.homebrew(query, kind, limit, 4)
+                values = discovery.packages.prefix(limit).map(DiscoverResult.homebrew)
+                let source: CatalogProviderScope = kind == .formula ? .homebrewFormula : .homebrewCask
+                if discovery.isUnavailable { unavailable = [source] }
+                else if discovery.failedDetailCount > 0 { partial = [source] }
+            case .npm:
+                guard let base = context.npm else { preconditionFailure("npm search requires a validated context") }
+                let npm = try await self.dependencies.resolveNPM(query, base)
+                effectiveContext = DiscoverContext(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true)
+                guard self.latestRequest == request else { throw CancellationError() }
+                self.resultContext = effectiveContext
+                values = try await self.dependencies.npm(query, npm, limit).prefix(limit).map(DiscoverResult.npm)
             }
+            try Task.checkCancellation()
             guard latestRequest == request, !Task.isCancelled else { return }
-            self.results = results
-            resultContext = resolvedContext
+            self.results = values
+            resultContext = effectiveContext
             unavailableScopes = unavailable
             partialScopes = partial
-            state = results.isEmpty ? (unavailable.isEmpty ? .empty : .failed) : .available
+            state = values.isEmpty ? (unavailable.isEmpty ? .empty : .failed) : .available
         } catch {
             guard latestRequest == request else { return }
             state = error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled ? .cancelled : .failed
@@ -220,7 +213,11 @@ final class DiscoverInstallationModel: ObservableObject {
             guard previewRequest == request, !Task.isCancelled else { return }
             try checkBindings(plan)
             preview = DiscoverInstallPreview(plan: plan, context: context)
-        } catch let error as DiscoverInputError { self.error = error }
+        } catch is CancellationError { return }
+        catch let error as DiscoverInputError { self.error = error }
+        catch let error as BatchOperationError where error == .reconciliationUnavailable {
+            if previewRequest == request { self.error = .staleContext }
+        }
         catch { if previewRequest == request { self.error = .installationFailed } }
     }
 
@@ -266,6 +263,7 @@ final class DiscoverInstallationModel: ObservableObject {
         } catch is CancellationError {
             // Preparation cancellation has no write outcome to report.
         } catch let error as DiscoverInputError { self.error = error }
+        catch let error as BatchOperationError where error == .reconciliationUnavailable { self.error = .staleContext }
         catch { self.error = .installationFailed }
     }
 
@@ -285,13 +283,16 @@ final class DiscoverInstallationModel: ObservableObject {
     }
 
     private func execute(_ plan: BatchPlan) async {
-        guard !model.isBusy else { error = .installationFailed; return }
         error = nil
         result = nil
         do {
             guard valid(plan.intent), !Task.isCancelled else { throw DiscoverInputError.staleContext }
             result = try await model.executeBatch(plan)
-        } catch let error as DiscoverInputError { self.error = error }
+        } catch is CancellationError { return }
+        catch let error as DiscoverInputError { self.error = error }
+        catch let error as BatchOperationError where error == .planUnavailable || error == .reconciliationUnavailable {
+            self.error = .staleContext
+        }
         catch { self.error = .installationFailed }
     }
 }

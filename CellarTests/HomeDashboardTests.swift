@@ -345,21 +345,27 @@ final class HomeDashboardTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let relaunch = ApplicationRelaunchController(operationStore: model.operationStore, defaults: defaults,
                                                     defaultsDomainName: suite, terminateApplication: {})
-        let delegate = AppDelegate(operationStore: model.operationStore, relaunchController: relaunch, reopenApplication: {})
+        let terminationReplied = expectation(description: "Termination waits until read-only child processes exit")
+        let delegate = AppDelegate(operationStore: model.operationStore, relaunchController: relaunch, replyToTermination: { allowed in
+            XCTAssertTrue(allowed)
+            terminationReplied.fulfill()
+        }, reopenApplication: {})
         XCTAssertEqual(model.homebrew?.version, "Homebrew 5.0.0")
         XCTAssertEqual(model.node?.packages.count, 3)
         let task = Task { await model.refreshHomeBackground(after: model.refreshedAt, environment: [:]) }
         let pid = try await pidReader.value
         await fulfillment(of: [readersStarted], timeout: 2)
         XCTAssertEqual(kill(pid, 0), 0)
-        XCTAssertTrue(model.operationStore.hasActiveOperations)
-        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateCancel)
+        XCTAssertFalse(model.operationStore.hasActiveOperations)
+        XCTAssertTrue(model.operationStore.hasActiveReadOnlyOperations)
+        XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateLater)
         XCTAssertTrue(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
-        task.cancel()
+        await fulfillment(of: [terminationReplied], timeout: 5)
+        XCTAssertEqual(kill(pid, 0), -1, "Child process must already be reaped before termination reply")
         await task.value
         await fulfillment(of: [readersCancelled], timeout: 2)
-        XCTAssertEqual(kill(pid, 0), -1)
         XCTAssertFalse(model.operationStore.hasActiveOperations)
+        XCTAssertFalse(model.operationStore.hasActiveReadOnlyOperations)
         XCTAssertEqual(model.operationStore.activeOperationCount, 0)
         XCTAssertEqual(delegate.applicationShouldTerminate(NSApplication.shared), .terminateNow)
         XCTAssertEqual(model.homebrewUpdateState, .notLoaded)
@@ -455,8 +461,9 @@ final class HomeDashboardTests: XCTestCase {
             first.cancel()
             await fulfillment(of: [cleanup], timeout: 2)
         }
-        XCTAssertEqual(model.operationStore.activeOperationCount, 1)
-        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: model.operationStore.hasActiveOperations), .terminateCancel)
+        XCTAssertEqual(model.operationStore.activeOperationCount, 0)
+        XCTAssertTrue(model.operationStore.hasActiveReadOnlyOperations)
+        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: model.operationStore.hasActiveOperations), .terminateNow)
         let replacement = Task {
             arrived.fulfill()
             await model.refreshHomeBackground(after: refresh, environment: [:])

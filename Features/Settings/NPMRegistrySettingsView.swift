@@ -7,6 +7,8 @@ struct NPMRegistrySettingsView: View {
     @State private var scopeRegistry = ""
     @State private var scopeLayers: NPMRegistryLayers?
     @State private var scopeReadError: String?
+    @State private var isReadingScope = false
+    @State private var scopeReadTask: Task<Void, Never>?
 
     var body: some View {
         SettingsPage(fillsViewport: true) {
@@ -19,11 +21,22 @@ struct NPMRegistrySettingsView: View {
                 } else { Text("Node Environment Unavailable") }
             }
         }
-        .onChange(of: scope) { _, _ in scopeLayers = nil; scopeReadError = nil }
-        .onChange(of: model.nodeActionResult?.operation.operationId) { _, _ in scopeLayers = nil }
-        .onChange(of: model.node?.summary) { _, _ in
+        .onChange(of: scope) { _, _ in
+            scopeReadTask?.cancel()
+            scopeReadTask = nil
             scopeLayers = nil
             scopeReadError = nil
+        }
+        .onChange(of: model.nodeActionResult?.operation.operationId) { _, _ in scopeLayers = nil }
+        .onChange(of: model.node?.summary) { _, _ in
+            scopeReadTask?.cancel()
+            scopeReadTask = nil
+            scopeLayers = nil
+            scopeReadError = nil
+        }
+        .onDisappear {
+            scopeReadTask?.cancel()
+            scopeReadTask = nil
         }
         .modifier(ProviderTaskPresentation(model: model, surface: .npmSources))
     }
@@ -53,9 +66,15 @@ struct NPMRegistrySettingsView: View {
             if !scopeRegistry.isEmpty && SourceConfiguration.registryURL(scopeRegistry) == nil {
                 Text("Use a credential-free HTTPS Registry URL, or HTTP on localhost, 127.0.0.1, or [::1]. Other addresses are unsupported.")
             }
-            Button("Check Effective Scope Registry") { Task { await readScope() } }
-                .disabled(!SourceConfiguration.validScope(scope) || unavailable)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            HStack(spacing: 8) {
+                Spacer()
+                if isReadingScope { ProgressView().controlSize(.small) }
+                Button("Check Effective Scope Registry") {
+                    scopeReadTask?.cancel()
+                    scopeReadTask = Task { await readScope() }
+                }
+                .disabled(!SourceConfiguration.validScope(scope) || unavailable || isReadingScope)
+            }
             if let scopeLayers {
                 registryLayer("Effective Scope Registry", scopeLayers.effective)
                 registryLayer("User", scopeLayers.user)
@@ -90,18 +109,37 @@ struct NPMRegistrySettingsView: View {
         .frame(minHeight: AppLayout.minimumInfoRowHeight)
     }
     private func readScope() async {
-        guard let node = model.node, let managers = model.managers, !model.isBusy, !model.nodeRefreshFailed else { return }
+        guard !Task.isCancelled, let node = model.node, let managers = model.managers, !model.isBusy, !model.nodeRefreshFailed, !isReadingScope else { return }
         let requestedScope = scope
-        let id = model.operationStore.begin()
-        defer { model.operationStore.end(id) }
+        isReadingScope = true
         scopeReadError = nil
+        let task = Task {
+            try await model.service.scopeRegistryLayers(requestedScope, summary: node.summary, snapshot: managers)
+        }
+        let readOnlyID = model.operationStore.registerReadOnlyOperation(
+            cancel: { task.cancel() },
+            awaitCompletion: { _ = try? await task.value }
+        )
+        defer {
+            model.operationStore.unregisterReadOnlyOperation(readOnlyID)
+            isReadingScope = false
+        }
         do {
-            let layers = try await model.operationStore.performCancellable(operationID: id) { try await model.service.scopeRegistryLayers(requestedScope, summary: node.summary, snapshot: managers) }
+            let layers = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
             guard scope == requestedScope, !model.nodeRefreshFailed, model.node?.summary == node.summary else { return }
             scopeLayers = layers
+        } catch is CancellationError {
+            return
         } catch {
             guard scope == requestedScope, !model.nodeRefreshFailed, model.node?.summary == node.summary else { return }
-            scopeReadError = String(localized: "The scope Registry could not be read. Refresh and try again.")
+            let detail = DiagnosticText.sanitized(error.localizedDescription)
+            scopeReadError = detail.isEmpty
+                ? String(localized: "The scope Registry could not be read. Refresh and try again.")
+                : detail
         }
     }
 }

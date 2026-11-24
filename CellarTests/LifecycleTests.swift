@@ -34,13 +34,16 @@ final class LifecycleTests: XCTestCase {
         let task = Task { await model.refreshOnLaunch(environment: [:]) }
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while (!FileManager.default.fileExists(atPath: root.appending(path: "provider-pid").path) || model.shell == nil), ContinuousClock.now < deadline { await Task.yield() }
-        XCTAssertTrue(store.hasActiveOperations)
-        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: store.hasActiveOperations), .terminateCancel)
+        XCTAssertTrue(model.isRefreshing)
+        XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertTrue(store.hasActiveReadOnlyOperations)
+        XCTAssertEqual(AppTerminationPolicy.reply(hasActiveOperations: store.hasActiveOperations), .terminateNow)
         await model.refresh()
-        XCTAssertEqual(store.activeOperationCount, 1)
-        task.cancel()
+        XCTAssertEqual(store.activeOperationCount, 0)
+        store.cancelAllReadOnlyOperations()
         await task.value
         XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertFalse(store.hasActiveReadOnlyOperations)
         XCTAssertFalse(model.isRefreshing)
         XCTAssertEqual(activity.summaries.first?.status, .cancelled)
         XCTAssertFalse(model.nodeRefreshFailed)
@@ -120,14 +123,17 @@ final class LifecycleTests: XCTestCase {
     func testAppDelegateReadsTheSharedOperationState() {
         let store = OperationStore.shared
         XCTAssertFalse(store.hasActiveOperations)
+        XCTAssertFalse(store.terminationBlockedNotice)
         let identifier = store.begin()
 
         XCTAssertEqual(
             AppDelegate().applicationShouldTerminate(NSApplication.shared),
             .terminateCancel
         )
+        XCTAssertTrue(store.terminationBlockedNotice)
 
         store.end(identifier)
+        XCTAssertFalse(store.terminationBlockedNotice)
         XCTAssertEqual(
             AppDelegate().applicationShouldTerminate(NSApplication.shared),
             .terminateNow

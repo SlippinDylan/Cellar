@@ -405,8 +405,8 @@ struct CaskRemovalScanner: Sendable {
             return cached
         }
         let data = try CaskRemovalFileSystem.readRegularFile(info.path, limit: 1_048_576, shouldContinue: budget.check)
-        guard infoIdentityBefore == (try? CaskRemovalFileSystem.fingerprint(info.path)),
-              let infoIdentity = try? CaskRemovalFileSystem.fingerprint(info.path),
+        guard let infoIdentity = try? CaskRemovalFileSystem.fingerprint(info.path),
+              infoIdentity == infoIdentityBefore,
               (try? CaskRemovalFileSystem.fingerprint(url.path)) == identity,
               let dictionary = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
               let bundle = dictionary["CFBundleIdentifier"] as? String,

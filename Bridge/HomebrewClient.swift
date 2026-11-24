@@ -90,47 +90,71 @@ actor HomebrewClient {
     func loadSnapshot(includingOutdated: Bool = true) async throws -> HomebrewSnapshot {
         try validateExecutable()
         let versionOutput = try await checkedRun(["--version"])
-        let commandLineToolsAvailable = await probeCommandLineTools()
+
+        // Bounded concurrency: at most 2 Ruby brew invocations run at once (config + info, then outdated + tap-info).
+        async let commandLineToolsTask = probeCommandLineTools()
+        async let configurationTask: Result<HomebrewConfiguration, Error> = captureHomebrewRead {
+            try await self.loadConfiguration()
+        }
+        async let packagesTask: Result<[HomebrewPackage], Error> = captureHomebrewRead {
+            try await self.loadInstalledPackages()
+        }
+
+        let commandLineToolsAvailable = await commandLineToolsTask
+        let configurationResult = await configurationTask
+        let packagesResult = await packagesTask
+        try Task.checkCancellation()
+
+        async let outdatedTask: Result<[HomebrewOutdatedPackage], Error>? = includingOutdated
+            ? captureHomebrewRead { try await self.loadOutdatedPackages() }
+            : nil
+        async let tapsTask: Result<[HomebrewTap], Error> = captureHomebrewRead {
+            try await self.loadInstalledTaps()
+        }
+
+        let outdatedResult = await outdatedTask
+        let tapsResult = await tapsTask
+
+        try Task.checkCancellation()
         var sectionErrors: [HomebrewSnapshot.Section: String] = [:]
 
         let configuration: HomebrewConfiguration
-        do {
-            configuration = try await loadConfiguration()
-        } catch {
-            configuration = HomebrewConfiguration(
-                prefix: "",
-                repository: "",
-                cache: "",
-                cellar: "",
-                values: [:]
-            )
+        switch configurationResult {
+        case .success(let value):
+            configuration = value
+        case .failure(let error):
+            if error is CancellationError { throw error }
+            configuration = HomebrewConfiguration(prefix: "", repository: "", cache: "", cellar: "", values: [:])
             sectionErrors[.configuration] = error.localizedDescription
         }
 
         let installedPackages: [HomebrewPackage]
-        do {
-            let rawPackages = try await checkedRun(["info", "--json=v2", "--installed"])
-            let envelope: BrewInfoEnvelope = try decode(rawPackages)
-            installedPackages = packages(from: envelope)
-        } catch {
+        switch packagesResult {
+        case .success(let value):
+            installedPackages = value
+        case .failure(let error):
+            if error is CancellationError { throw error }
             installedPackages = []
             sectionErrors[.packages] = error.localizedDescription
         }
 
         var outdated: [HomebrewOutdatedPackage] = []
-        if includingOutdated {
-            do { outdated = try await loadOutdatedPackages() }
-            catch { sectionErrors[.outdated] = error.localizedDescription }
+        if let outdatedResult {
+            switch outdatedResult {
+            case .success(let value):
+                outdated = value
+            case .failure(let error):
+                if error is CancellationError { throw error }
+                sectionErrors[.outdated] = error.localizedDescription
+            }
         }
 
         let taps: [HomebrewTap]
-        do {
-            let rawTaps = try await checkedRun(["tap-info", "--installed", "--json=v1"])
-            let payload: [BrewTapPayload] = try decode(rawTaps)
-            taps = payload.map(\.model).sorted {
-                $0.name.localizedStandardCompare($1.name) == .orderedAscending
-            }
-        } catch {
+        switch tapsResult {
+        case .success(let value):
+            taps = value
+        case .failure(let error):
+            if error is CancellationError { throw error }
             taps = []
             sectionErrors[.taps] = error.localizedDescription
         }
@@ -149,6 +173,27 @@ actor HomebrewClient {
         )
     }
 
+    private func loadInstalledPackages() async throws -> [HomebrewPackage] {
+        let rawPackages = try await checkedRun(["info", "--json=v2", "--installed"])
+        let envelope: BrewInfoEnvelope = try decode(rawPackages)
+        return packages(from: envelope)
+    }
+
+    private func loadInstalledTaps() async throws -> [HomebrewTap] {
+        let rawTaps = try await checkedRun(["tap-info", "--installed", "--json=v1"])
+        let payload: [BrewTapPayload] = try decode(rawTaps)
+        return payload.map(\.model).sorted {
+            $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+    }
+
+    private func captureHomebrewRead<Value: Sendable>(
+        _ operation: @Sendable () async throws -> Value
+    ) async -> Result<Value, Error> {
+        do { return .success(try await operation()) }
+        catch { return .failure(error) }
+    }
+
     func loadOutdatedPackages() async throws -> [HomebrewOutdatedPackage] {
         try validateExecutable()
         let output = try await checkedRun(["outdated", "--json=v2"])
@@ -158,17 +203,18 @@ actor HomebrewClient {
 
     func loadConfiguration() async throws -> HomebrewConfiguration {
         try validateExecutable()
-        let prefixOutput = try await checkedRun(["--prefix"])
-        let repositoryOutput = try await checkedRun(["--repository"])
-        let cacheOutput = try await checkedRun(["--cache"])
-        let cellarOutput = try await checkedRun(["--cellar"])
-        let rawConfig = try await checkedRun(["config"])
+        async let prefixOutput = checkedRun(["--prefix"])
+        async let repositoryOutput = checkedRun(["--repository"])
+        async let cacheOutput = checkedRun(["--cache"])
+        async let cellarOutput = checkedRun(["--cellar"])
+        let (prefix, repository, cache, cellar) = try await (prefixOutput, repositoryOutput, cacheOutput, cellarOutput)
+        let config = try await checkedRun(["config"])
         return HomebrewConfiguration(
-            prefix: try requiredLine(prefixOutput, label: "prefix"),
-            repository: try requiredLine(repositoryOutput, label: "repository"),
-            cache: try requiredLine(cacheOutput, label: "cache"),
-            cellar: try requiredLine(cellarOutput, label: "cellar"),
-            values: parseConfiguration(rawConfig.standardOutput)
+            prefix: try requiredLine(prefix, label: "prefix"),
+            repository: try requiredLine(repository, label: "repository"),
+            cache: try requiredLine(cache, label: "cache"),
+            cellar: try requiredLine(cellar, label: "cellar"),
+            values: parseConfiguration(config.standardOutput)
         )
     }
 
@@ -780,23 +826,21 @@ actor HomebrewClient {
     }
 
     private func validateFreshness(of plan: HomebrewActionPlan) async throws {
+        let targetPackages: [HomebrewPackage]
         if plan.action == .install || plan.action == .upgrade {
             guard plan.confirmedTargets.count == plan.targets.count else { throw HomebrewClientError.stateChanged }
-            let packages = try await loadTargetPackages(plan.targets)
-            guard try await confirmedTargets(packages) == plan.confirmedTargets else { throw HomebrewClientError.stateChanged }
+            targetPackages = try await loadTargetPackages(plan.targets)
+            guard try await confirmedTargets(targetPackages) == plan.confirmedTargets else { throw HomebrewClientError.stateChanged }
+        } else {
+            targetPackages = []
         }
         switch plan.action {
         case .install:
             guard !plan.targets.isEmpty else {
                 throw HomebrewClientError.invalidPlan("Install plan is missing targets")
             }
-            var packages: [HomebrewPackage] = []
-            packages.reserveCapacity(plan.targets.count)
-            for target in plan.targets {
-                packages.append(try await loadPackage(target))
-            }
-            guard packages.allSatisfy({ !$0.isInstalled }),
-                  packagesFingerprint(packages) == plan.stateFingerprint
+            guard targetPackages.allSatisfy({ !$0.isInstalled }),
+                  packagesFingerprint(targetPackages) == plan.stateFingerprint
             else {
                 throw HomebrewClientError.stateChanged
             }

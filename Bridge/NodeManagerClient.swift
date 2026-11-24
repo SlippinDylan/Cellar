@@ -35,31 +35,35 @@ actor NodeManagerClient {
         summary: NodeSummary,
         includingOutdated: Bool = true
     ) async throws -> NodeSnapshot {
-        let inventoryValue: NodePackageInventory = try await request(
+        async let inventoryTask: NodePackageInventory = request(
             "packages", managerDirectory: managerDirectory, environment: environment
         )
-        let configurationValue: NodeConfiguration = try await request(
+        async let configurationTask: NodeConfiguration = request(
             "config", managerDirectory: managerDirectory, environment: environment
         )
-        let statusResult: Result<NodeManagerStatus, Error> = await captureNodeRequest {
+        async let statusTask: Result<NodeManagerStatus, Error> = captureNodeRequest {
             try await self.request("status", managerDirectory: managerDirectory, environment: environment)
         }
-        let logsResult: Result<[String], Error> = await captureNodeRequest {
+        async let logsTask: Result<[String], Error> = captureNodeRequest {
             try await self.request(
                 "logs", arguments: ["20"], managerDirectory: managerDirectory, environment: environment
             )
         }
-        let outdatedResult: Result<[String: OutdatedPackage], Error>
-        if includingOutdated {
-            do {
-                let outdated: [String: OutdatedPackage] = try await request(
-                    "outdated", managerDirectory: managerDirectory, environment: environment
-                )
-                outdatedResult = .success(outdated)
-            } catch {
-                outdatedResult = .failure(error)
+        async let outdatedTask: Result<[String: OutdatedPackage], Error> = includingOutdated
+            ? captureNodeRequest {
+                try await self.request("outdated", managerDirectory: managerDirectory, environment: environment)
             }
-        } else { outdatedResult = .success([:]) }
+            : .success([:])
+
+        let inventoryValue = try await inventoryTask
+        let configurationValue = try await configurationTask
+        let statusResult = await statusTask
+        let logsResult = await logsTask
+        let outdatedResult = await outdatedTask
+
+        if let error = statusResult.failure, error is CancellationError { throw error }
+        if let error = logsResult.failure, error is CancellationError { throw error }
+        if let error = outdatedResult.failure, error is CancellationError { throw error }
         let outdatedValue = (try? outdatedResult.get()) ?? [:]
         let packages: [NodePackageRow] = (inventoryValue.dependencies ?? [:]).map { name, package in
             let available = outdatedValue[name]
@@ -135,7 +139,6 @@ actor NodeManagerClient {
             let fingerprint = try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: summary)
             let plan = try await self.plan(request, managerDirectory: managerDirectory, environment: environment)
             guard fingerprint == (try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: summary)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
-            _ = try await validatedDetectedEnvironment(summary, managerDirectory: managerDirectory)
             if request.action.isRegistryConfiguration {
                 guard plan.payload.effectiveRegistry != nil else { throw BridgeError.managerFailure(code: "registry-state-unavailable", detail: nil) }
                 registryConfirmations[plan.id] = (environment, fingerprint, summary)
@@ -195,7 +198,6 @@ actor NodeManagerClient {
             guard environment == baseline.environment,
                   baseline.fingerprint == (try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: baseline.summary))
             else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
-            _ = try await validatedDetectedEnvironment(baseline.summary, managerDirectory: managerDirectory)
         }
         if plan.request.action == .cleanup, plan.request.subject == NodeMaintenanceAction.logs.rawValue {
             guard let state = logConfirmations.removeValue(forKey: plan.id), state == (try NodeLogMaintenanceState.read(managerDirectory: managerDirectory)) else { throw BridgeError.managerFailure(code: "plan-stale", detail: nil) }
@@ -245,7 +247,6 @@ actor NodeManagerClient {
                   current.payload.globalRegistry == plan.payload.globalRegistry,
                   baseline.fingerprint == (try await registryFingerprint(environment: environment, managerDirectory: managerDirectory, summary: baseline.summary))
             else { throw BridgeError.managerFailure(code: "registry-state-changed", detail: nil) }
-            _ = try await validatedDetectedEnvironment(baseline.summary, managerDirectory: managerDirectory)
         }
         return try await execute(plan, managerDirectory: managerDirectory, environment: environment)
     }
@@ -285,20 +286,30 @@ actor NodeManagerClient {
 
     private func registryFingerprint(environment: [String: String], managerDirectory: URL, summary: NodeSummary) async throws -> String {
         _ = try registryFileFingerprint(environment: environment, managerDirectory: managerDirectory)
-        var files = [URL(filePath: summary.globalPrefix).appending(path: "etc/npmrc")]
-        var cachePath = ""
-        for arguments in [["config", "get", "globalconfig"], ["config", "get", "userconfig"], ["prefix"], ["config", "get", "cache"]] {
-            let result = try await runner.run(ProcessRequest(executableURL: URL(filePath: summary.npmPath), arguments: arguments,
-                                                            environment: environment, currentDirectoryURL: managerDirectory, timeout: .seconds(20)))
+        let npmURL = URL(filePath: summary.npmPath)
+        let runner = self.runner
+        func queryPath(_ arguments: [String]) async throws -> String {
+            let result = try await runner.run(ProcessRequest(executableURL: npmURL, arguments: arguments,
+                                                             environment: environment, currentDirectoryURL: managerDirectory, timeout: .seconds(20)))
             let path = result.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
             guard result.terminationStatus == 0, !result.standardOutputWasTruncated, !result.standardErrorWasTruncated,
                   path.hasPrefix("/"), !path.contains("\n") else { throw BridgeError.managerFailure(code: "registry-state-unavailable", detail: nil) }
-            if arguments == ["config", "get", "cache"] { cachePath = path }
-            else { files.append(arguments == ["prefix"] ? URL(filePath: path).appending(path: ".npmrc") : URL(filePath: path)) }
+            return path
         }
+        async let globalConfigPath = queryPath(["config", "get", "globalconfig"])
+        async let userConfigPath = queryPath(["config", "get", "userconfig"])
+        async let prefixPath = queryPath(["prefix"])
+        async let cachePath = queryPath(["config", "get", "cache"])
+        let (globalConfig, userConfig, prefix, cache) = try await (globalConfigPath, userConfigPath, prefixPath, cachePath)
+        let files = [
+            URL(filePath: summary.globalPrefix).appending(path: "etc/npmrc"),
+            URL(filePath: globalConfig),
+            URL(filePath: userConfig),
+            URL(filePath: prefix).appending(path: ".npmrc")
+        ]
         let destination = try packageDestination(summary)
         let fingerprint = try registryFileFingerprint(environment: environment, managerDirectory: managerDirectory, additionalFiles: files)
-        return SHA256.hash(data: Data([fingerprint, destination.nodeExecutable, destination.npmExecutable, destination.globalPrefix, destination.globalRoot, cachePath].joined(separator: "\0").utf8)).description
+        return SHA256.hash(data: Data([fingerprint, destination.nodeExecutable, destination.npmExecutable, destination.globalPrefix, destination.globalRoot, cache].joined(separator: "\0").utf8)).description
     }
 
     private func registryFileFingerprint(environment: [String: String], managerDirectory: URL, additionalFiles: [URL] = []) throws -> String {
@@ -549,7 +560,6 @@ actor NodeManagerClient {
         else { throw BridgeError.managerFailure(code: "registry-state-unavailable", detail: nil) }
         guard fingerprint == (try await registryFingerprint(environment: exact, managerDirectory: managerDirectory, summary: summary))
         else { throw BridgeError.managerFailure(code: "registry-state-changed", detail: nil) }
-        _ = try await validatedDetectedEnvironment(summary, managerDirectory: managerDirectory)
         return .init(effective: effective, user: user, project: project, global: global)
     }
 

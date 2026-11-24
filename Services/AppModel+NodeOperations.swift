@@ -79,7 +79,6 @@ extension AppModel {
         nodeOperationError = nil
         nodeActionResult = nil
         let operationID = operationStore.begin(context: nodeActivityContext(plan))
-        let activityID = beginActivity(title: plan.activityTitle, detail: "正在执行 Node 操作")
         defer {
             isNodeWorking = false
             operationStore.end(operationID)
@@ -118,16 +117,10 @@ extension AppModel {
             } else if operation.batchItemStatus != .succeeded {
                 nodeOperationError = String(localized: ActivityItemReason(error: BridgeError.managerFailure(code: operation.detail ?? "provider-failure", detail: nil)).message)
             }
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: operation.batchItemStatus == .succeeded && postflightError == nil ? .succeeded
-                    : operation.batchItemStatus == .failed ? .failed : .partiallySucceeded,
-                detail: result.activityDetail
-            )
+            recordDiagnostic(id: operationID, detail: result.diagnosticDetail)
             let itemStatus = operation.batchItemStatus.activityStatus
             let status = itemStatus == .succeeded && postflightError != nil ? ActivityStatus.partiallySucceeded : itemStatus
-            recordNodeSummary(plan, id: activityID, status: status, reason: postflightError != nil ? .stateUnavailable : operation.activityReason, cleanupItems: operation.cleanupItems)
+            recordNodeSummary(plan, id: operationID, status: status, reason: postflightError != nil ? .stateUnavailable : operation.activityReason, cleanupItems: operation.cleanupItems)
             return result
         } catch {
             nodeOperationError = failureMessage(error)
@@ -139,13 +132,8 @@ extension AppModel {
             } catch {
                 applyNodeReadResult(.failure(error), includingOutdated: true)
             }
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: .failed,
-                detail: error.localizedDescription
-            )
-            recordNodeSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : ActivityItemReason.postWriteStatus(error: error)?.activityStatus ?? .failed, reason: .init(error: error))
+            recordDiagnostic(id: operationID, detail: error.localizedDescription)
+            recordNodeSummary(plan, id: operationID, status: error is CancellationError ? .cancelled : ActivityItemReason.postWriteStatus(error: error)?.activityStatus ?? .failed, reason: .init(error: error))
             return nil
         }
     }
@@ -220,36 +208,18 @@ extension AppModel {
     }
 }
 
-private extension NodeActionPlan {
-    var activityTitle: String {
-        switch request.action {
-        case .installPackage: "安装 npm 全局包"
-        case .uninstallPackage: "卸载 npm 全局包"
-        case .updatePackage: "更新 npm 全局包"
-        case .setRegistry, .deleteRegistry, .setScopeRegistry, .deleteScopeRegistry: "修改 npm Registry"
-        case .installNVM: "安装 nvm"
-        case .installNode: "安装 Node 版本"
-        case .useNode: "切换 Cellar Node 会话"
-        case .setDefaultNode: "设置默认 Node 版本"
-        case .uninstallNode: "卸载 Node 版本"
-        case .cleanup: "维护 Node 环境"
-        case .writeProjectNVMRC: "写入项目 .nvmrc"
-        }
-    }
-}
-
 private extension NodeActionResult {
-    var activityDetail: String {
-        var parts = ["状态 \(operation.status)", "退出状态 \(operation.exitCode)"]
+    var diagnosticDetail: String {
+        var parts = ["status \(operation.status)", "exit \(operation.exitCode)"]
         if let detail = operation.detail?.nonblank {
             parts.append(detail)
         }
         if let postflightError {
-            parts.append("复查失败：\(postflightError)")
+            parts.append("postflight failed: \(postflightError)")
         } else if snapshot != nil {
-            parts.append("已重新读取 Node 状态")
+            parts.append("reloaded Node state")
         }
-        return parts.joined(separator: "；")
+        return parts.joined(separator: "; ")
     }
 }
 

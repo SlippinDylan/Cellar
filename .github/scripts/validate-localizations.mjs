@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
-// Extend this list as task pages replace the retained, unreachable provider UI.
+// All Swift sources that emit user-visible localized strings.
 export const presentationSources = [
   'CellarApp.swift',
   'Features/AppRootView.swift',
@@ -17,7 +17,6 @@ export const presentationSources = [
   'Features/Settings/FullDiskAccessGuide.swift',
   'Services/FileLogStore.swift',
   'Features/Activity/ActivityDiagnosticsView.swift',
-  'Features/ShellPlaceholderView.swift',
   'Features/Home/HomeView.swift',
   'Features/Catalog/CatalogCardView.swift',
   'Features/Catalog/CatalogIconView.swift',
@@ -52,6 +51,7 @@ export const presentationSources = [
   'Models/ActivityPresentation.swift',
   'Services/ActivityDiagnosticsStore.swift',
   'Services/RuntimeToolsModel.swift',
+  'Bridge/NodeManagerClient.swift',
   'Bridge/ShellManagerClient.swift',
   'Bridge/BridgeError.swift',
   'Models/AppDestination.swift',

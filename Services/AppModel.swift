@@ -10,7 +10,6 @@ final class AppModel: ObservableObject {
     @Published private(set) var managers: SnapshotStatus?
     @Published var refreshedAt: Date?
     @Published private(set) var errorMessages: [String] = []
-    @Published private(set) var activities: [ActivityEntry] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var homebrewRefreshFailed = false
     @Published private(set) var nodeRefreshFailed = false
@@ -21,8 +20,6 @@ final class AppModel: ObservableObject {
     @Published var nodeUpdateState = HomePackageUpdateState.notLoaded
     @Published var homebrewOutdatedCheckedAt: Date?
     @Published var nodeOutdatedCheckedAt: Date?
-    @Published var homebrewSearchResults: [HomebrewSearchResult] = []
-    @Published var homebrewDiagnostics: [HomebrewDiagnostic] = []
     @Published var homebrewDiagnosticReport: HomebrewDiagnosticReport?
     @Published var homebrewDiagnosticRecordID: UUID?
     @Published var homebrewPlan: HomebrewActionPlan?
@@ -105,17 +102,6 @@ final class AppModel: ObservableObject {
         ), activityStore: activityStore, logStore: logStore, homeDashboardDependencies: .live(runner: runner))
     }
 
-    var dashboard: DashboardSnapshot? {
-        guard let homebrew, let node, let shell, let managers, let refreshedAt else { return nil }
-        return DashboardSnapshot(
-            homebrew: homebrew,
-            node: node,
-            shell: shell,
-            managers: managers,
-            refreshedAt: refreshedAt
-        )
-    }
-
     var isBusy: Bool {
         operationStore.hasActiveOperations || isRefreshing || isHomebrewWorking || isNodeWorking || isShellWorking
     }
@@ -124,20 +110,6 @@ final class AppModel: ObservableObject {
         guard let node, let verification = nodeCacheVerification,
               verification.target == NodeCacheVerification.Target(node: node) else { return nil }
         return verification.state
-    }
-
-    var activeOperationLabel: String? {
-        if isRefreshing { return "正在读取 Homebrew、Node 和 Shell" }
-        if isHomebrewWorking { return "正在处理 Homebrew 任务" }
-        if isNodeWorking { return "正在处理 Node 任务" }
-        if isShellWorking { return "正在处理 Shell 任务" }
-        if let intent = batchCoordinator.activeIntent {
-            switch intent.scope {
-            case .homebrew: return "正在处理 Homebrew 任务"
-            case .npm, .nodeRuntime: return "正在处理 Node 任务"
-            }
-        }
-        return nil
     }
 
     func refreshOnLaunch(environment: [String: String] = ProcessInfo.processInfo.environment) async {
@@ -168,14 +140,6 @@ final class AppModel: ObservableObject {
         isRefreshing = true
         errorMessages = []
         let operationID = operationStore.begin()
-        let activityID = operationID
-        recordActivity(ActivityEntry(
-            id: activityID,
-            date: Date(),
-            title: "刷新本机环境",
-            outcome: .started,
-            detail: "正在读取 Homebrew、Node 和 Shell 状态"
-        ))
 
         defer {
             isRefreshing = false
@@ -212,15 +176,11 @@ final class AppModel: ObservableObject {
             if !cancelled { refreshedAt = Date() }
         }
 
-        activities.removeAll { $0.id == activityID }
-        recordActivity(ActivityEntry(
-            id: activityID,
-            date: Date(),
-            title: "刷新本机环境",
-            outcome: cancelled ? .cancelled : errorMessages.isEmpty ? .succeeded : .failed,
-            detail: cancelled ? String(localized: ActivityItemReason.cancelledByUser.message) : errorMessages.isEmpty ? "已读取全部环境状态" : errorMessages.joined(separator: "；")
-        ))
-        activityStore?.append(ActivitySummary(id: activityID, operation: .refresh, scope: nil,
+        let detail = cancelled
+            ? String(localized: ActivityItemReason.cancelledByUser.message)
+            : errorMessages.isEmpty ? "Loaded all environment states" : errorMessages.joined(separator: "; ")
+        recordDiagnostic(id: operationID, detail: detail)
+        activityStore?.append(ActivitySummary(id: operationID, operation: .refresh, scope: nil,
                                              targetDisplayNames: [], date: Date(),
                                              status: cancelled ? .cancelled : errorMessages.isEmpty ? .succeeded : .failed, itemOutcomes: [], reason: cancelled ? .cancelledByUser : errorMessages.isEmpty ? nil : .stateUnavailable))
     }
@@ -356,46 +316,19 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func beginActivity(title: String, detail: String) -> UUID {
-        let id = operationStore.currentOperation?.id ?? UUID()
-        recordActivity(ActivityEntry(
-            id: id,
-            date: Date(),
-            title: title,
-            outcome: .started,
-            detail: detail
-        ))
-        return id
-    }
-
-    func finishActivity(
-        _ id: UUID,
-        title: String,
-        outcome: ActivityEntry.Outcome,
+    func recordDiagnostic(
+        id: UUID,
         detail: String,
         command: HomebrewCommandOutput? = nil
     ) {
-        activities.removeAll { $0.id == id }
-        recordActivity(ActivityEntry(
+        let context = operationStore.currentOperation?.context
+        activityDiagnostics.record(
             id: id,
-            date: Date(),
-            title: title,
-            outcome: outcome,
+            operation: context?.operation ?? .refresh,
+            scope: context?.scope,
             detail: detail,
             command: command
-        ))
-    }
-
-    private func recordActivity(_ entry: ActivityEntry) {
-        if entry.outcome != .started {
-            let context = operationStore.currentOperation?.context
-            activityDiagnostics.record(id: entry.id, operation: context?.operation ?? .refresh, scope: context?.scope,
-                                       detail: entry.detail, command: entry.command)
-        }
-        activities.insert(entry, at: 0)
-        if activities.count > 100 {
-            activities.removeLast(activities.count - 100)
-        }
+        )
     }
 
     func failureMessage(_ error: Error, preparing: Bool = false) -> String {
@@ -405,7 +338,6 @@ final class AppModel: ObservableObject {
         logStore?.record(level: .error, category: "operation", message: "\(context?.operation.rawValue ?? "configuration"): \(reason.rawValue)", taskID: operationStore.currentOperation?.id)
         return String(localized: reason.message)
     }
-
 }
 
 private func capture<Value: Sendable>(

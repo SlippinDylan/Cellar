@@ -1,16 +1,5 @@
 import SwiftUI
 
-struct StatusOverviewCard<Content: View>: View {
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        GroupBox {
-            content()
-                .padding(.vertical, 4)
-        }
-    }
-}
-
 struct StatusMetric: View {
     @Environment(\.colorScheme) private var colorScheme
     let title: String
@@ -141,58 +130,5 @@ struct StatusMetric: View {
                 RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.35))
             }
         }
-    }
-}
-
-struct StatusMetricDivider: View {
-    var body: some View {
-        Divider()
-            .frame(height: 48)
-            .padding(.horizontal, 16)
-    }
-}
-
-struct PageLoadingView: View {
-    let message: String
-
-    var body: some View {
-        ProgressView(message)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-}
-
-struct OperationRow: View {
-    let title: String
-    let detail: String
-    let systemImage: String
-    let tint: Color
-    let actionTitle: String
-    var role: ButtonRole?
-    var isEnabled = true
-    let action: () -> Void
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: systemImage)
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 38, height: 38)
-                .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.headline)
-                Text(detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer(minLength: 16)
-
-            Button(actionTitle, role: role, action: action)
-                .buttonStyle(.glass)
-                .disabled(!isEnabled)
-        }
-        .padding(.vertical, 10)
     }
 }

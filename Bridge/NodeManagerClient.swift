@@ -66,7 +66,7 @@ actor NodeManagerClient {
             let available = outdatedValue[name]
             return NodePackageRow(
                 name: name,
-                installedVersion: package.version ?? "未知",
+                installedVersion: package.version ?? String(localized: "Unknown"),
                 wantedVersion: available?.wanted,
                 latestVersion: available?.latest
             )
@@ -86,7 +86,7 @@ actor NodeManagerClient {
             outdatedError: outdatedError,
             maintenanceError: [statusResult.failure, logsResult.failure]
                 .compactMap { $0?.localizedDescription }
-                .joined(separator: "；")
+                .joined(separator: "; ")
                 .nilIfBlank,
             packageEnvironment: packageEnvironment
         )
@@ -185,7 +185,7 @@ actor NodeManagerClient {
             environment: environment
         )
         guard payload.action == request.action.rawValue else {
-            throw BridgeError.invalidOutput("Node Manager 返回了不匹配的操作计划")
+            throw BridgeError.invalidOutput("Node Manager returned a mismatched action plan")
         }
         return NodeActionPlan(id: UUID(), request: request, payload: payload, generatedAt: Date())
     }
@@ -413,11 +413,11 @@ actor NodeManagerClient {
         guard plan.canExecute else {
             throw BridgeError.managerFailure(
                 code: plan.payload.blockedReason ?? "plan-not-executable",
-                detail: "Node 操作计划当前不可执行"
+                detail: "Node action plan is not executable"
             )
         }
         guard Date().timeIntervalSince(plan.generatedAt) <= 300 else {
-            throw BridgeError.managerFailure(code: "plan-expired", detail: "Node 操作计划已过期，请重新生成")
+            throw BridgeError.managerFailure(code: "plan-expired", detail: "Node action plan has expired")
         }
 
         if plan.request.action == .writeProjectNVMRC {

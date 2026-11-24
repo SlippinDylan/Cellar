@@ -31,11 +31,3 @@ struct SnapshotStatus: Sendable {
     let homebrewAvailable: Bool
     let shellAvailable: Bool
 }
-
-struct DashboardSnapshot: Sendable {
-    let homebrew: HomebrewStatus
-    let node: NodeSnapshot
-    let shell: ShellStatus
-    let managers: SnapshotStatus
-    let refreshedAt: Date
-}

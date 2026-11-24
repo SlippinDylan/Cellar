@@ -10,23 +10,6 @@ extension AppModel {
         } catch { homebrewOperationError = failureMessage(error) }
     }
 
-    func searchHomebrew(_ query: String) async {
-        guard !isBusy else { return }
-        isHomebrewWorking = true
-        homebrewOperationError = nil
-        let operationID = operationStore.begin(context: .init(operation: .refresh, scope: .homebrew(.formula), targets: [], stage: .checking))
-        defer {
-            isHomebrewWorking = false
-            operationStore.end(operationID)
-        }
-        do {
-            homebrewSearchResults = try await service.searchHomebrew(query)
-        } catch {
-            homebrewSearchResults = []
-            homebrewOperationError = failureMessage(error)
-        }
-    }
-
     func diagnoseHomebrew() async {
         guard !isBusy else { return }
         isHomebrewWorking = true
@@ -41,38 +24,12 @@ extension AppModel {
                 try await self.service.diagnoseHomebrew()
             }
             homebrewDiagnosticReport = report
-            homebrewDiagnostics = report.diagnostics
             homebrewDiagnosticRecordID = operationID
             activityDiagnostics.record(id: operationID, operation: .maintenance, scope: .homebrewDiagnostics, detail: "", command: report.command)
         } catch {
             homebrewDiagnosticReport = nil
             homebrewDiagnosticRecordID = nil
-            homebrewDiagnostics = []
             homebrewOperationError = failureMessage(error)
-        }
-    }
-
-    func prepareHomebrewInstall(_ identity: HomebrewPackageIdentity) async {
-        await prepareHomebrewPlan {
-            try await self.service.planHomebrewInstall(identity)
-        }
-    }
-
-    func prepareHomebrewInstall(_ identities: [HomebrewPackageIdentity]) async {
-        await prepareHomebrewPlan {
-            try await self.service.planHomebrewInstall(identities)
-        }
-    }
-
-    func prepareHomebrewUpgrade(_ targets: [HomebrewPackageIdentity]) async {
-        await prepareHomebrewPlan {
-            try await self.service.planHomebrewUpgrade(targets)
-        }
-    }
-
-    func prepareHomebrewUpdate() async {
-        await prepareHomebrewPlan(context: .init(operation: .updateHomebrewMetadata, scope: .homebrewMetadata, targets: [], stage: .preparing)) {
-            try await self.service.planHomebrewUpdate()
         }
     }
 
@@ -87,17 +44,6 @@ extension AppModel {
         guard ActivitySummarySanitizer.validHomebrewTap(name) else { homebrewOperationError = String(localized: ActivityItemReason.preparationFailed.message); return }
         await prepareHomebrewPlan(context: .init(operation: .removeHomebrewTap, scope: .homebrewTaps, targets: [name], stage: .preparing)) {
             try await self.service.planHomebrewRemoveTap(name)
-        }
-    }
-
-    func prepareHomebrewUninstall(_ identity: HomebrewPackageIdentity, zap: Bool = false) async {
-        await prepareHomebrewPlan {
-            switch identity.kind {
-            case .formula:
-                return try await self.service.planHomebrewFormulaUninstall(identity.name)
-            case .cask:
-                return try await self.service.planHomebrewCaskUninstall(identity.name, zap: zap)
-            }
         }
     }
 
@@ -119,7 +65,6 @@ extension AppModel {
         homebrewActionResult = nil
         let context = plan.activityContext
         let operationID = operationStore.begin(context: context)
-        let activityID = beginActivity(title: plan.activityTitle, detail: "正在执行 Homebrew 操作")
 
         defer {
             isHomebrewWorking = false
@@ -142,44 +87,33 @@ extension AppModel {
             } else {
                 applyHomebrewReadResult(.failure(BatchOperationError.reconciliationUnavailable), includingOutdated: true)
             }
-            let activityOutcome: ActivityEntry.Outcome
-            let activityDetail: String
+            let diagnosticDetail: String
             switch result.outcome {
             case .succeeded:
-                activityOutcome = .succeeded
-                activityDetail = result.activityDetail(prefix: "操作完成并已复查本机状态")
+                diagnosticDetail = result.diagnosticDetail(prefix: "Completed and verified local state")
             case .partial:
-                activityOutcome = .partiallySucceeded
                 let message = result.command.terminationStatus == 0
-                    ? "命令结束后复查未确认所有目标，但部分目标状态已经改变；请检查命令输出"
-                    : "命令报告失败，但复查发现目标状态已经改变；请检查命令输出"
+                    ? "Postflight could not verify all targets, but some target states changed"
+                    : "Command reported failure, but postflight observed partial state changes"
                 homebrewOperationError = String(localized: ActivityItemReason.providerFailure.message)
-                activityDetail = result.activityDetail(prefix: message)
+                diagnosticDetail = result.diagnosticDetail(prefix: message)
             case .failed:
-                activityOutcome = .failed
-                let message = result.command.standardError.nilIfBlank ?? "Homebrew 操作没有完成"
+                let message = result.command.standardError.nilIfBlank ?? "Homebrew operation did not complete"
                 homebrewOperationError = String(localized: ActivityItemReason.providerFailure.message)
-                activityDetail = result.activityDetail(prefix: message)
+                diagnosticDetail = result.diagnosticDetail(prefix: message)
             case .stateUnknown:
-                activityOutcome = .failed
-                let message = result.postflightError ?? "操作结束后无法确认本机状态"
+                let message = result.postflightError ?? "Could not verify local state after operation"
                 homebrewOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
-                activityDetail = result.activityDetail(prefix: message)
+                diagnosticDetail = result.diagnosticDetail(prefix: message)
             }
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: activityOutcome,
-                detail: activityDetail,
-                command: result.command
-            )
+            recordDiagnostic(id: operationID, detail: diagnosticDetail, command: result.command)
             let status: ActivityStatus = switch result.outcome {
             case .succeeded: .succeeded
             case .partial: .partiallySucceeded
             case .failed: .failed
             case .stateUnknown: .unknown
             }
-            recordHomebrewSummary(plan, id: activityID, status: status)
+            recordHomebrewSummary(plan, id: operationID, status: status)
         } catch {
             homebrewOperationError = failureMessage(error)
             if let managers {
@@ -194,13 +128,8 @@ extension AppModel {
             } else {
                 applyHomebrewReadResult(.failure(error), includingOutdated: true)
             }
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: .failed,
-                detail: error.localizedDescription
-            )
-            recordHomebrewSummary(plan, id: activityID, status: error is CancellationError ? .cancelled : .failed, reason: .init(error: error))
+            recordDiagnostic(id: operationID, detail: error.localizedDescription)
+            recordHomebrewSummary(plan, id: operationID, status: error is CancellationError ? .cancelled : .failed, reason: .init(error: error))
         }
     }
 
@@ -290,33 +219,21 @@ private extension HomebrewActionPlan {
         }
         return .init(operation: operation, scope: scope, targets: names, stage: .executing)
     }
-    var activityTitle: String {
-        switch action {
-        case .install: "安装 Homebrew 软件包"
-        case .upgrade: "升级 Homebrew 软件包"
-        case .update: "更新 Homebrew 元数据"
-        case .addTap: "添加 Homebrew Tap"
-        case .removeTap: "移除 Homebrew Tap"
-        case .uninstallFormula: "卸载 Homebrew Formula"
-        case .uninstallCask: "卸载 Homebrew Cask"
-        case .zapCask: "卸载并清理 Homebrew Cask"
-        }
-    }
 }
 
 private extension HomebrewActionResult {
-    func activityDetail(prefix: String) -> String {
-        var parts = [prefix, "退出状态 \(command.terminationStatus)"]
+    func diagnosticDetail(prefix: String) -> String {
+        var parts = [prefix, "exit \(command.terminationStatus)"]
         if let output = command.standardOutput.nilIfBlank {
-            parts.append("stdout：\(output.activityExcerpt)")
+            parts.append("stdout: \(output.activityExcerpt)")
         }
         if let error = command.standardError.nilIfBlank {
-            parts.append("stderr：\(error.activityExcerpt)")
+            parts.append("stderr: \(error.activityExcerpt)")
         }
         if command.standardOutputWasTruncated || command.standardErrorWasTruncated {
-            parts.append("命令输出已截断")
+            parts.append("output truncated")
         }
-        return parts.joined(separator: "；")
+        return parts.joined(separator: "; ")
     }
 }
 

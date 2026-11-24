@@ -195,10 +195,6 @@ struct AppRootView: View {
             Button("Batch Install") { discoverBatchAction?() }
                 .disabled(discoverBatchAction == nil || model.isBusy)
                 .buttonStyle(.automatic)
-        case .library:
-            Button("Update All") { packageUpdateActions?.updateAll() }
-                .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
-                .buttonStyle(.automatic)
         default:
             EmptyView()
         }
@@ -227,16 +223,22 @@ struct AppRootView: View {
     }
 
     @ViewBuilder private var destinationContent: some View {
-        if model.selectedDestination == .home { HomeView(model: model) }
-        else if model.selectedDestination == .library {
+        switch model.selectedDestination {
+        case .home:
+            HomeView(model: model)
+        case .library:
             LibraryView(model: model, uninstall: uninstall, query: $libraryQuery, searchFocusRequest: $librarySearchFocusRequest)
+        case .discover:
+            DiscoverView(model: model)
+        case .tools:
+            ToolsView(model: model)
+        case .maintenance:
+            MaintenanceView(model: model)
+        case .settings:
+            SettingsView(model: model, relaunchController: .shared)
+        case .about:
+            AboutView(updateController: updateController)
         }
-        else if model.selectedDestination == .discover { DiscoverView(model: model) }
-        else if model.selectedDestination == .tools { ToolsView(model: model) }
-        else if model.selectedDestination == .maintenance { MaintenanceView(model: model) }
-        else if model.selectedDestination == .settings { SettingsView(model: model, relaunchController: .shared) }
-        else if model.selectedDestination == .about { AboutView(updateController: updateController) }
-        else { ShellPlaceholderView(destination: model.selectedDestination) }
     }
 
     func adjacentSidebarDestination(to destination: AppDestination, forward: Bool) -> AppDestination? {

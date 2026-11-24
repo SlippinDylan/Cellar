@@ -879,7 +879,7 @@ final class HomebrewClientTests: XCTestCase {
             )
             XCTFail("Expected package identity mismatch")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("身份与请求不匹配"))
+            XCTAssertTrue(error.localizedDescription.contains("does not match the request"))
         }
     }
 
@@ -996,7 +996,7 @@ final class HomebrewClientTests: XCTestCase {
             ])
             XCTFail("Expected mixed package kinds to be rejected")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("不能混合 Formula 与 Cask"))
+            XCTAssertTrue(error.localizedDescription.contains("Cannot mix Formula and Cask"))
         }
     }
 
@@ -1011,7 +1011,7 @@ final class HomebrewClientTests: XCTestCase {
             ])
             XCTFail("Expected canonical duplicates to be rejected")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("同一个软件包"))
+            XCTAssertTrue(error.localizedDescription.contains("same canonical package"))
         }
     }
 

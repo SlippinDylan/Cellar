@@ -13,13 +13,13 @@ enum HomebrewClientError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .executableNotFound(let path):
-            "找不到 Homebrew 可执行文件：\(path)"
+            "Homebrew executable not found: \(path)"
         case .commandFailed(let output):
             output.standardError.nilIfBlank
                 ?? output.standardOutput.nilIfBlank
-                ?? "brew \(output.arguments.joined(separator: " ")) 执行失败（\(output.terminationStatus)）"
+                ?? "brew \(output.arguments.joined(separator: " ")) failed (exit \(output.terminationStatus))"
         case .invalidJSON(_, let detail):
-            "Homebrew 返回了无法识别的数据：\(detail)"
+            "Homebrew returned unrecognized data: \(detail)"
         case .invalidPlan(let detail):
             detail
         case .stateChanged:
@@ -27,9 +27,9 @@ enum HomebrewClientError: LocalizedError {
         case .scanIncomplete:
             String(localized: ActivityItemReason.scanIncomplete.message)
         case .alreadyInstalled(let identity):
-            "软件包已经安装：\(identity.name)"
+            "Package is already installed: \(identity.name)"
         case .outputTruncated(let arguments):
-            "brew \(arguments.joined(separator: " ")) 的输出超过安全上限"
+            "Output from brew \(arguments.joined(separator: " ")) exceeded the safety limit"
         }
     }
 }
@@ -262,7 +262,7 @@ actor HomebrewClient {
         let envelope: BrewInfoEnvelope = try decode(result)
         let returned = packages(from: envelope).filter { $0.identity.kind == validatedIdentity.kind }
         guard returned.count == 1, let package = returned.first else {
-            throw HomebrewClientError.invalidJSON(arguments: result.arguments, detail: "未返回软件包信息")
+            throw HomebrewClientError.invalidJSON(arguments: result.arguments, detail: "Package information was not returned")
         }
         let components = validatedIdentity.name.split(separator: "/").map(String.init)
         guard let requestedName = components.last else { throw HomebrewClientError.stateChanged }
@@ -270,7 +270,7 @@ actor HomebrewClient {
         let sourceMatches = components.count == 1 || components.dropLast().joined(separator: "/") == package.tap
         let nameMatches = requestedName == canonicalName || package.aliases.contains(requestedName) || package.oldTokens.contains(requestedName)
         if !sourceMatches || !nameMatches {
-            throw HomebrewClientError.invalidJSON(arguments: result.arguments, detail: "软件包身份与请求不匹配")
+            throw HomebrewClientError.invalidJSON(arguments: result.arguments, detail: "Returned package identity does not match the request")
         }
         return package
     }
@@ -285,7 +285,7 @@ actor HomebrewClient {
             diagnostics = [HomebrewDiagnostic(
                 id: "doctor-output-truncated",
                 severity: .error,
-                message: "brew doctor 输出超过安全上限，当前诊断不完整"
+                message: "brew doctor output exceeded the safety limit; diagnostics are incomplete."
             )]
         } else if lines.isEmpty, result.terminationStatus == 0 {
             diagnostics = [HomebrewDiagnostic(id: "healthy", severity: .info, message: "Your system is ready to brew.")]
@@ -293,7 +293,7 @@ actor HomebrewClient {
             diagnostics = [HomebrewDiagnostic(
                 id: "doctor-empty-error",
                 severity: .error,
-                message: "brew doctor 以非零状态结束，但没有返回诊断文本"
+                message: "brew doctor exited with a non-zero status without returning diagnostic output."
             )]
         } else {
             let defaultSeverity: HomebrewDiagnosticSeverity = result.terminationStatus == 0 ? .info : .warning
@@ -308,7 +308,7 @@ actor HomebrewClient {
                 parsed.append(HomebrewDiagnostic(
                     id: "doctor-line-limit",
                     severity: .warning,
-                    message: "brew doctor 返回了过多诊断行，界面只显示前 \(lines.count) 条"
+                    message: "brew doctor returned too many lines; showing only the first \(lines.count)."
                 ))
             }
             diagnostics = parsed
@@ -322,16 +322,16 @@ actor HomebrewClient {
 
     func planInstall(_ identities: [HomebrewPackageIdentity]) async throws -> HomebrewActionPlan {
         guard !identities.isEmpty, identities.count <= 100 else {
-            throw HomebrewClientError.invalidPlan("单次安装计划需要 1 至 100 个目标")
+            throw HomebrewClientError.invalidPlan("An install plan requires 1 to 100 targets")
         }
         let validatedTargets = try identities.map {
             HomebrewPackageIdentity(name: try validatedPackageName($0.name), kind: $0.kind)
         }
         guard Set(validatedTargets).count == validatedTargets.count else {
-            throw HomebrewClientError.invalidPlan("安装计划不能包含重复目标")
+            throw HomebrewClientError.invalidPlan("An install plan cannot contain duplicate targets")
         }
         guard Set(validatedTargets.map(\.kind)).count == 1 else {
-            throw HomebrewClientError.invalidPlan("单次安装不能混合 Formula 与 Cask")
+            throw HomebrewClientError.invalidPlan("Cannot mix Formula and Cask targets in a single install")
         }
 
         var packages: [HomebrewPackage] = []
@@ -344,7 +344,7 @@ actor HomebrewClient {
             packages.append(package)
         }
         guard Set(packages.map(\.identity)).count == packages.count else {
-            throw HomebrewClientError.invalidPlan("多个安装名称解析到了同一个软件包")
+            throw HomebrewClientError.invalidPlan("Multiple install names resolved to the same canonical package")
         }
         return plan(
             action: .install,
@@ -356,20 +356,20 @@ actor HomebrewClient {
 
     func planUpgrade(_ targets: [HomebrewPackageIdentity]) async throws -> HomebrewActionPlan {
         guard !targets.isEmpty else {
-            throw HomebrewClientError.invalidPlan("升级计划至少需要一个目标")
+            throw HomebrewClientError.invalidPlan("An upgrade plan requires at least one target")
         }
         let validatedTargets = try targets.map {
             HomebrewPackageIdentity(name: try validatedPackageName($0.name), kind: $0.kind)
         }
         guard Set(validatedTargets.map(\.kind)).count == 1 else {
-            throw HomebrewClientError.invalidPlan("单次升级不能混合 Formula 与 Cask")
+            throw HomebrewClientError.invalidPlan("Cannot mix Formula and Cask targets in a single upgrade")
         }
         let targetPackages = try await loadTargetPackages(validatedTargets)
         let canonicalTargets = targetPackages.map(\.identity)
         guard Set(canonicalTargets).count == canonicalTargets.count else { throw HomebrewClientError.stateChanged }
         let snapshot = try await loadSnapshot()
         guard snapshot.sectionErrors[.outdated] == nil else {
-            throw HomebrewClientError.invalidPlan("无法确认当前可升级项目")
+            throw HomebrewClientError.invalidPlan("Unable to verify currently outdated packages")
         }
         let outdated = Set(snapshot.outdatedPackages.map(\.identity))
         guard canonicalTargets.allSatisfy(outdated.contains) else {
@@ -377,7 +377,7 @@ actor HomebrewClient {
         }
         let packages = snapshot.outdatedPackages.filter { canonicalTargets.contains($0.identity) }
         guard packages.allSatisfy({ !$0.installedVersions.isEmpty && $0.currentVersion?.isEmpty == false }) else {
-            throw HomebrewClientError.invalidPlan("无法确认升级目标的可用版本")
+            throw HomebrewClientError.invalidPlan("Unable to verify available version for upgrade target")
         }
         let confirmed = try await confirmedTargets(targetPackages)
         guard confirmed.allSatisfy({ target in packages.contains { $0.identity == target.identity && $0.currentVersion == target.version } })
@@ -399,10 +399,10 @@ actor HomebrewClient {
         let tapName = try validatedTapName(name)
         let snapshot = try await loadSnapshot()
         guard snapshot.sectionErrors[.taps] == nil else {
-            throw HomebrewClientError.invalidPlan("无法确认当前 Tap 列表")
+            throw HomebrewClientError.invalidPlan("Unable to verify installed taps")
         }
         guard !snapshot.taps.contains(where: { $0.name == tapName }) else {
-            throw HomebrewClientError.invalidPlan("Tap 已经安装：\(tapName)")
+            throw HomebrewClientError.invalidPlan("Tap is already installed: \(tapName)")
         }
         return plan(action: .addTap, tapName: tapName)
     }
@@ -413,10 +413,10 @@ actor HomebrewClient {
         guard snapshot.sectionErrors[.taps] == nil,
               snapshot.sectionErrors[.packages] == nil
         else {
-            throw HomebrewClientError.invalidPlan("无法确认 Tap 与已安装项目的关联状态")
+            throw HomebrewClientError.invalidPlan("Unable to verify tap associations with installed packages")
         }
         guard snapshot.taps.contains(where: { $0.name == tapName }) else {
-            throw HomebrewClientError.invalidPlan("Tap 未安装：\(tapName)")
+            throw HomebrewClientError.invalidPlan("Tap is not installed: \(tapName)")
         }
         let associated = snapshot.packages
             .filter { $0.tap == tapName }
@@ -429,7 +429,7 @@ actor HomebrewClient {
         let identity = HomebrewPackageIdentity(name: name, kind: .formula)
         let package = try await loadPackage(identity)
         guard package.isInstalled else {
-            throw HomebrewClientError.invalidPlan("Formula 未安装：\(name)")
+            throw HomebrewClientError.invalidPlan("Formula is not installed: \(name)")
         }
         let usesResult = try await checkedRun(["uses", "--installed", "--formula", package.identity.name])
         return plan(
@@ -446,7 +446,7 @@ actor HomebrewClient {
         let identity = HomebrewPackageIdentity(name: name, kind: .cask)
         let package = try await loadPackage(identity)
         guard package.isInstalled else {
-            throw HomebrewClientError.invalidPlan("Cask 未安装：\(name)")
+            throw HomebrewClientError.invalidPlan("Cask is not installed: \(name)")
         }
         let relevantArtifacts = package.artifacts.filter { zap || $0.category == .installed }
         return plan(
@@ -530,7 +530,7 @@ actor HomebrewClient {
 
     func execute(_ plan: HomebrewActionPlan, caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> HomebrewActionResult {
         guard !mutationInProgress else {
-            throw HomebrewClientError.invalidPlan("已有 Homebrew 写操作正在执行")
+            throw HomebrewClientError.invalidPlan("Another Homebrew write operation is already in progress")
         }
         mutationInProgress = true
         defer { mutationInProgress = false }
@@ -565,7 +565,7 @@ actor HomebrewClient {
     private func executeConfirmed(_ plan: HomebrewActionPlan, progress: CaskRemovalProgressReporter?,
                                   installationRemoved: inout Bool) async throws -> HomebrewActionResult {
         guard plan.canExecute else {
-            throw HomebrewClientError.invalidPlan("Tap 仍有关联的已安装软件包，不能移除")
+            throw HomebrewClientError.invalidPlan("Tap still has associated installed packages and cannot be removed")
         }
         guard Date().timeIntervalSince(plan.generatedAt) <= 300 else {
             throw HomebrewClientError.stateChanged
@@ -788,7 +788,7 @@ actor HomebrewClient {
         switch plan.action {
         case .install:
             guard !plan.targets.isEmpty else {
-                throw HomebrewClientError.invalidPlan("安装计划缺少目标")
+                throw HomebrewClientError.invalidPlan("Install plan is missing targets")
             }
             var packages: [HomebrewPackage] = []
             packages.reserveCapacity(plan.targets.count)
@@ -813,7 +813,7 @@ actor HomebrewClient {
             }
         case .removeTap:
             guard let tapName = plan.tapName else {
-                throw HomebrewClientError.invalidPlan("Tap 操作缺少名称")
+                throw HomebrewClientError.invalidPlan("Tap operation is missing a tap name")
             }
             let current = try await planRemoveTap(tapName)
             guard current.associatedPackages == plan.associatedPackages, current.canExecute else {
@@ -821,7 +821,7 @@ actor HomebrewClient {
             }
         case .uninstallFormula, .uninstallCask, .zapCask:
             guard let target = plan.targets.first else {
-                throw HomebrewClientError.invalidPlan("卸载计划缺少目标")
+                throw HomebrewClientError.invalidPlan("Uninstall plan is missing a target")
             }
             let package = try await loadPackage(target)
             let currentFingerprint: String
@@ -837,7 +837,7 @@ actor HomebrewClient {
             }
         case .addTap:
             guard let tapName = plan.tapName else {
-                throw HomebrewClientError.invalidPlan("Tap 操作缺少名称")
+                throw HomebrewClientError.invalidPlan("Tap operation is missing a tap name")
             }
             let snapshot = try await loadSnapshot()
             guard snapshot.sectionErrors[.taps] == nil,
@@ -984,11 +984,11 @@ actor HomebrewClient {
 
     private func packageCommand(_ verb: String, targets: [HomebrewPackageIdentity]) throws -> [String] {
         guard !targets.isEmpty else {
-            throw HomebrewClientError.invalidPlan("操作计划没有目标")
+            throw HomebrewClientError.invalidPlan("Action plan has no targets")
         }
         let kinds = Set(targets.map(\.kind))
         guard kinds.count == 1, let kind = kinds.first else {
-            throw HomebrewClientError.invalidPlan("单次操作不能混合 Formula 与 Cask")
+            throw HomebrewClientError.invalidPlan("Cannot mix Formula and Cask targets in a single operation")
         }
         return [verb, kind == .formula ? "--formula" : "--cask"]
             + (try targets.map { try validatedPackageName($0.name) })
@@ -1000,14 +1000,14 @@ actor HomebrewClient {
         kind: HomebrewPackageKind
     ) throws -> [String] {
         guard plan.targets.count == 1, plan.targets[0].kind == kind else {
-            throw HomebrewClientError.invalidPlan("卸载计划目标无效")
+            throw HomebrewClientError.invalidPlan("Uninstall plan target is invalid")
         }
         return prefix + [try validatedPackageName(plan.targets[0].name)]
     }
 
     private func requiredTapName(_ plan: HomebrewActionPlan) throws -> String {
         guard let name = plan.tapName else {
-            throw HomebrewClientError.invalidPlan("Tap 操作缺少名称")
+            throw HomebrewClientError.invalidPlan("Tap operation is missing a tap name")
         }
         return try validatedTapName(name)
     }
@@ -1020,7 +1020,7 @@ actor HomebrewClient {
               !trimmed.hasPrefix("-"),
               trimmed.unicodeScalars.allSatisfy(Self.packageNameCharacters.contains)
         else {
-            throw HomebrewClientError.invalidPlan("Tap 名称必须使用 owner/repository 格式")
+            throw HomebrewClientError.invalidPlan("Tap name must use the owner/repository format")
         }
         return trimmed
     }
@@ -1031,7 +1031,7 @@ actor HomebrewClient {
               name == name.trimmingCharacters(in: .whitespacesAndNewlines),
               name.unicodeScalars.allSatisfy(Self.packageNameCharacters.contains)
         else {
-            throw HomebrewClientError.invalidPlan("Homebrew 软件包名称无效：\(name)")
+            throw HomebrewClientError.invalidPlan("Invalid Homebrew package name: \(name)")
         }
         return name
     }
@@ -1127,7 +1127,7 @@ actor HomebrewClient {
 
     private func requiredLine(_ output: HomebrewCommandOutput, label: String) throws -> String {
         guard let line = outputLines(output.standardOutput).first else {
-            throw HomebrewClientError.invalidJSON(arguments: output.arguments, detail: "缺少 \(label)")
+            throw HomebrewClientError.invalidJSON(arguments: output.arguments, detail: "Missing \(label)")
         }
         return line
     }

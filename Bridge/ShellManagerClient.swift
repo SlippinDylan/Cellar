@@ -63,7 +63,7 @@ actor ShellManagerClient {
             environment: environmentResolver.environment()
         )
         guard payload.action == request.action.rawValue else {
-            throw BridgeError.invalidOutput("Shell Manager 返回了不匹配的操作计划")
+            throw BridgeError.invalidOutput("Shell Manager returned a mismatched action plan")
         }
         var plan = ShellActionPlan(id: UUID(), request: request, payload: payload, generatedAt: Date())
         if plan.canExecute, request.action != .installOhMyZsh {
@@ -268,11 +268,11 @@ actor ShellManagerClient {
         guard plan.canExecute else {
             throw BridgeError.managerFailure(
                 code: plan.payload.blockedReason.isEmpty ? "plan-not-executable" : plan.payload.blockedReason,
-                detail: "Shell 操作计划当前不可执行"
+                detail: "Shell action plan is not executable"
             )
         }
         guard Date().timeIntervalSince(plan.generatedAt) <= 300 else {
-            throw BridgeError.managerFailure(code: "plan-expired", detail: "Shell 操作计划已过期，请重新生成")
+            throw BridgeError.managerFailure(code: "plan-expired", detail: "Shell action plan has expired")
         }
         if plan.request.action == .tidy {
             guard let confirmation = tidyConfirmations.removeValue(forKey: plan.id), confirmation.candidates == (try tidyCandidates()),

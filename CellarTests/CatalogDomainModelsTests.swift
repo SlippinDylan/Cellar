@@ -261,16 +261,11 @@ final class CatalogDomainModelsTests: XCTestCase {
         XCTAssertFalse(json.contains("userFacingMessage"))
     }
 
-    func testApplicationLanguageMapsToLocaleOverride() {
-        XCTAssertNil(AppLanguage.followSystem.localeIdentifier)
-        XCTAssertNil(AppLanguage.followSystem.locale)
-        XCTAssertEqual(AppLanguage.english.localeIdentifier, "en")
-        XCTAssertEqual(AppLanguage.simplifiedChinese.localeIdentifier, "zh-Hans")
-        XCTAssertEqual(AppLanguage.traditionalChinese.localeIdentifier, "zh-Hant")
-        XCTAssertEqual(AppLanguage.traditionalChinese.locale?.identifier, "zh-Hant")
-        XCTAssertEqual(AppLanguage.allCases.map(\.rawValue), ApplicationLanguage.allCases.map(\.rawValue))
-        for language in AppLanguage.allCases where language != .followSystem {
-            XCTAssertEqual(language.locale?.identifier, language.rawValue)
-        }
+    func testApplicationLanguageSupportsSystemAndEightLanguages() {
+        XCTAssertEqual(ApplicationLanguage.system.rawValue, "system")
+        XCTAssertEqual(ApplicationLanguage.english.rawValue, "en")
+        XCTAssertEqual(ApplicationLanguage.simplifiedChinese.rawValue, "zh-Hans")
+        XCTAssertEqual(ApplicationLanguage.traditionalChinese.rawValue, "zh-Hant")
+        XCTAssertEqual(ApplicationLanguage.allCases.count, 9)
     }
 }

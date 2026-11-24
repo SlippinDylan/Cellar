@@ -463,23 +463,3 @@ struct ActivitySummary: Identifiable, Equatable, Codable, Sendable {
     var cleanupItems: [NodeCleanupItem]? = nil
     var reason: ActivityItemReason? = nil
 }
-
-enum AppLanguage: String, Codable, CaseIterable, Sendable {
-    case followSystem = "system"
-    case english = "en"
-    case simplifiedChinese = "zh-Hans"
-    case traditionalChinese = "zh-Hant"
-    case japanese = "ja"
-    case korean = "ko"
-    case german = "de"
-    case french = "fr"
-    case spanish = "es"
-
-    var localeIdentifier: String? {
-        self == .followSystem ? nil : rawValue
-    }
-
-    var locale: Locale? {
-        localeIdentifier.map(Locale.init(identifier:))
-    }
-}

@@ -60,10 +60,6 @@ actor SystemProbeService {
         try await requireHomebrewClient().loadOutdatedPackages()
     }
 
-    func searchHomebrew(_ query: String) async throws -> [HomebrewSearchResult] {
-        try await requireHomebrewClient().search(query)
-    }
-
     func discoverHomebrew(_ query: String, kind: HomebrewPackageKind, limit: Int = 50, maximumConcurrentDetails: Int = 4) async throws -> HomebrewDiscoveryResult {
         try await requireHomebrewClient().discover(query, kind: kind, limit: limit, maximumConcurrentDetails: maximumConcurrentDetails)
     }
@@ -74,10 +70,6 @@ actor SystemProbeService {
 
     func planHomebrewInstall(_ identity: HomebrewPackageIdentity) async throws -> HomebrewActionPlan {
         try await requireHomebrewClient().planInstall(identity)
-    }
-
-    func planHomebrewInstall(_ identities: [HomebrewPackageIdentity]) async throws -> HomebrewActionPlan {
-        try await requireHomebrewClient().planInstall(identities)
     }
 
     func planHomebrewUpgrade(_ targets: [HomebrewPackageIdentity]) async throws -> HomebrewActionPlan {
@@ -106,10 +98,6 @@ actor SystemProbeService {
 
     func planHomebrewFormulaUninstall(_ name: String) async throws -> HomebrewActionPlan {
         try await requireHomebrewClient().planFormulaUninstall(name)
-    }
-
-    func planHomebrewCaskUninstall(_ name: String, zap: Bool) async throws -> HomebrewActionPlan {
-        try await requireHomebrewClient().planCaskUninstall(name, zap: zap)
     }
 
     func planHomebrewCaskRemoval(_ name: String) async throws -> HomebrewActionPlan {

@@ -200,7 +200,6 @@ final class AppShellTests: XCTestCase {
         XCTAssertNil(model.refreshedAt)
         XCTAssertNil(model.managers)
         XCTAssertNil(model.activityStore)
-        XCTAssertTrue(model.activities.isEmpty)
         XCTAssertFalse(model.operationStore.hasActiveOperations)
         for (language, expected) in [("en", "Settings"), ("zh-Hans", "设置"), ("zh-Hant", "設定")] {
             var title = AppDestination.settings.title
@@ -215,7 +214,6 @@ final class AppShellTests: XCTestCase {
         XCTAssertNil(model.refreshedAt)
         XCTAssertNil(model.managers)
         XCTAssertNil(model.activityStore)
-        XCTAssertTrue(model.activities.isEmpty)
         XCTAssertFalse(model.operationStore.hasActiveOperations)
     }
 
@@ -232,7 +230,6 @@ final class AppShellTests: XCTestCase {
         model.isNodeWorking = true
         await model.performShellAction(.refresh)
         XCTAssertNil(model.managers)
-        XCTAssertTrue(model.activities.isEmpty)
         XCTAssertFalse(model.operationStore.hasActiveOperations)
     }
 

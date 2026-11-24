@@ -29,7 +29,6 @@ extension AppModel {
         shellActionResult = nil
         let operation: ActivityOperationKind = plan.request.action == .tidy ? .maintenance : [.installOhMyZsh, .installPlugin].contains(plan.request.action) ? .install : .configuration
         let operationID = operationStore.begin(context: .init(operation: operation, scope: .shell, targets: [], stage: .executing))
-        let activityID = beginActivity(title: plan.activityTitle, detail: "正在执行 Shell 操作")
         defer {
             isShellWorking = false
             operationStore.end(operationID)
@@ -65,13 +64,8 @@ extension AppModel {
             if postflightError != nil {
                 shellOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
             }
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: operation.status == "ok" && postflightError == nil ? .succeeded : .partiallySucceeded,
-                detail: result.activityDetail
-            )
-            recordShellSummary(plan, id: activityID, status: operation.status == "ok" ? postflightError == nil ? .succeeded : .partiallySucceeded : operation.status == "partial" ? .partiallySucceeded : .failed,
+            recordDiagnostic(id: operationID, detail: result.diagnosticDetail)
+            recordShellSummary(plan, id: operationID, status: operation.status == "ok" ? postflightError == nil ? .succeeded : .partiallySucceeded : operation.status == "partial" ? .partiallySucceeded : .failed,
                                reason: postflightError != nil ? .stateUnavailable : nil)
         } catch {
             let evidence = error as? ShellExecutionFailure
@@ -94,13 +88,8 @@ extension AppModel {
                 shellActionResult = .init(plan: plan, operation: operation, snapshot: refreshedShell, postflightError: refreshError, executionOutcome: outcome)
             }
             let diagnostic = [evidence?.diagnosticDetail ?? error.localizedDescription, refreshError ?? ""].joined(separator: "\n")
-            finishActivity(
-                activityID,
-                title: plan.activityTitle,
-                outcome: outcome == .partiallySucceeded ? .partiallySucceeded : outcome == .cancelled ? .cancelled : .failed,
-                detail: diagnostic
-            )
-            recordShellSummary(plan, id: activityID, status: outcome, reason: reason)
+            recordDiagnostic(id: operationID, detail: diagnostic)
+            recordShellSummary(plan, id: operationID, status: outcome, reason: reason)
         }
     }
 
@@ -126,30 +115,18 @@ extension AppModel {
     }
 }
 
-private extension ShellActionPlan {
-    var activityTitle: String {
-        switch request.action {
-        case .installOhMyZsh: "安装 Oh My Zsh"
-        case .installPlugin: "安装 Shell 插件"
-        case .setPlugins: "更新 Shell 插件配置"
-        case .switchTheme: "切换 Shell 主题"
-        case .tidy: "整理 Shell 文件"
-        }
-    }
-}
-
 private extension ShellActionResult {
-    var activityDetail: String {
-        var parts = ["状态 \(operation.status)", "退出状态 \(operation.exitCode)", operation.operationId, operation.logFile]
+    var diagnosticDetail: String {
+        var parts = ["status \(operation.status)", "exit \(operation.exitCode)", operation.operationId, operation.logFile]
         if let detail = operation.detail { parts.append(detail) }
         if !operation.backupPath.isEmpty {
-            parts.append("备份：\(operation.backupPath)")
+            parts.append("backup: \(operation.backupPath)")
         }
         if let postflightError {
-            parts.append("复查失败：\(postflightError)")
+            parts.append("postflight failed: \(postflightError)")
         } else {
-            parts.append("已重新读取 Shell 状态")
+            parts.append("reloaded Shell state")
         }
-        return parts.joined(separator: "；")
+        return parts.joined(separator: "; ")
     }
 }

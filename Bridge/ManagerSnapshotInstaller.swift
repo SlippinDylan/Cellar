@@ -19,7 +19,7 @@ actor ManagerSnapshotInstaller {
 
     func installIfNeeded() throws -> SnapshotStatus {
         guard let resourcesURL = bundle.resourceURL else {
-            throw BridgeError.invalidOutput("App Bundle 缺少 Resources 目录")
+            throw BridgeError.invalidOutput("App bundle is missing the Resources directory")
         }
 
         let source = resourcesURL.appending(path: "Managers", directoryHint: .isDirectory)
@@ -33,7 +33,7 @@ actor ManagerSnapshotInstaller {
               sourceStatus.homebrewAvailable,
               sourceStatus.shellAvailable
         else {
-            throw BridgeError.invalidOutput("App Bundle 中的 Manager 快照不完整")
+            throw BridgeError.invalidOutput("Bundled Manager snapshot is incomplete")
         }
 
         let installedStatus = status(at: destination)
@@ -65,7 +65,7 @@ actor ManagerSnapshotInstaller {
               finalStatus.homebrewAvailable,
               finalStatus.shellAvailable
         else {
-            throw BridgeError.invalidOutput("Manager 运行快照安装不完整")
+            throw BridgeError.invalidOutput("Installed Manager runtime snapshot is incomplete")
         }
         return finalStatus
     }

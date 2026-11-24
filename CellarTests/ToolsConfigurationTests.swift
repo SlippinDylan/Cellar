@@ -128,7 +128,7 @@ final class ToolsConfigurationTests: XCTestCase {
             }
         }
         let rootView = try String(contentsOf: root.appending(path: "Features/AppRootView.swift"), encoding: .utf8)
-        XCTAssertTrue(rootView.contains(".tools { ToolsView(model: model) }"))
+        XCTAssertTrue(rootView.contains("case .tools:") && rootView.contains("ToolsView(model: model)"))
         let app = try String(contentsOf: root.appending(path: "CellarApp.swift"), encoding: .utf8)
         XCTAssertTrue(rootView.contains("SettingsView(model: model"))
         XCTAssertFalse(app.contains("Settings {"))

@@ -46,65 +46,38 @@ struct URLSessionCatalogTransport: CatalogHTTPTransport {
     }
 
     func data(for request: CatalogHTTPRequest) async throws -> CatalogHTTPResponse {
-        try Task.checkCancellation()
-        let session = makeSession(request)
-        defer { session.invalidateAndCancel() }
-        return try await withTaskCancellationHandler {
-            let (bytes, response) = try await session.bytes(for: urlRequest(request))
-            let (http, responseURL) = try checkedResponse(response, request: request)
-            var data = Data()
-            for try await byte in bytes {
-                try Task.checkCancellation()
-                guard data.count < request.maximumBytes else { throw CatalogSourceError.responseTooLarge }
-                data.append(byte)
-            }
-            try Task.checkCancellation()
-            return CatalogHTTPResponse(url: responseURL, status: http.statusCode, body: data, etag: http.value(forHTTPHeaderField: "ETag"), cacheControl: http.value(forHTTPHeaderField: "Cache-Control"))
-        } onCancel: {
-            session.invalidateAndCancel()
-        }
+        try await stream(request, destination: nil)
     }
 
     func download(_ request: CatalogHTTPRequest, to destination: URL) async throws {
+        _ = try await stream(request, destination: destination)
+    }
+
+    private func stream(_ request: CatalogHTTPRequest, destination: URL?) async throws -> CatalogHTTPResponse {
         try Task.checkCancellation()
-        let session = makeSession(request)
+        let urlReq = try urlRequest(request)
+        let config = makeConfiguration(request)
+        let delegate = CatalogStreamDelegate(request: request, destination: destination)
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        try await withTaskCancellationHandler {
-            let (bytes, response) = try await session.bytes(for: urlRequest(request))
-            let (http, _) = try checkedResponse(response, request: request)
-            guard http.statusCode == 200 else { throw CatalogSourceError.httpStatus(http.statusCode) }
-            guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
-                throw CocoaError(.fileWriteUnknown)
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.dataTask(with: urlReq)
+                delegate.start(session: session, task: task, continuation: continuation)
             }
-            let file = try FileHandle(forWritingTo: destination)
-            defer { try? file.close() }
-            var count = 0
-            var chunk = Data()
-            for try await byte in bytes {
-                try Task.checkCancellation()
-                guard count < request.maximumBytes else { throw CatalogSourceError.responseTooLarge }
-                count += 1
-                chunk.append(byte)
-                if chunk.count == 65_536 {
-                    try file.write(contentsOf: chunk)
-                    chunk.removeAll(keepingCapacity: true)
-                }
-            }
-            try Task.checkCancellation()
-            try file.write(contentsOf: chunk)
         } onCancel: {
-            session.invalidateAndCancel()
+            delegate.cancel()
         }
     }
 
-    private func makeSession(_ request: CatalogHTTPRequest) -> URLSession {
+    private func makeConfiguration(_ request: CatalogHTTPRequest) -> URLSessionConfiguration {
         let config = configuration()
         config.timeoutIntervalForRequest = request.timeout
         config.timeoutIntervalForResource = request.timeout
         config.urlCache = nil
         config.httpCookieStorage = nil
         config.urlCredentialStorage = nil
-        return URLSession(configuration: config, delegate: CatalogRedirectPolicy(allowedOrigins: request.allowedOrigins), delegateQueue: nil)
+        return config
     }
 
     private func urlRequest(_ request: CatalogHTTPRequest) throws -> URLRequest {
@@ -115,13 +88,164 @@ struct URLSessionCatalogTransport: CatalogHTTPTransport {
         return result
     }
 
-    private func checkedResponse(_ response: URLResponse, request: CatalogHTTPRequest) throws -> (HTTPURLResponse, URL) {
+    static func checkedResponse(_ response: URLResponse, request: CatalogHTTPRequest) throws -> (HTTPURLResponse, URL) {
         guard let http = response as? HTTPURLResponse,
               let url = http.url,
               let origin = CatalogWebsites.origin(url), request.allowedOrigins.contains(origin)
         else { throw CatalogSourceError.invalidResponse }
         guard response.expectedContentLength <= Int64(request.maximumBytes) else { throw CatalogSourceError.responseTooLarge }
         return (http, url)
+    }
+}
+
+private final class CatalogStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let request: CatalogHTTPRequest
+    private let destination: URL?
+    private let redirectPolicy: CatalogRedirectPolicy
+    private let lock = NSLock()
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var continuation: CheckedContinuation<CatalogHTTPResponse, Error>?
+    private var response: (HTTPURLResponse, URL)?
+    private var buffer = Data()
+    private var fileHandle: FileHandle?
+    private var receivedBytes = 0
+    private var isFinished = false
+    private var isCancelled = false
+
+    init(request: CatalogHTTPRequest, destination: URL?) {
+        self.request = request
+        self.destination = destination
+        self.redirectPolicy = CatalogRedirectPolicy(allowedOrigins: request.allowedOrigins)
+    }
+
+    func start(session: URLSession, task: URLSessionDataTask, continuation: CheckedContinuation<CatalogHTTPResponse, Error>) {
+        lock.lock()
+        if isCancelled {
+            isFinished = true
+            lock.unlock()
+            session.invalidateAndCancel()
+            continuation.resume(throwing: CancellationError())
+            return
+        }
+        self.session = session
+        self.task = task
+        self.continuation = continuation
+        lock.unlock()
+        task.resume()
+    }
+
+    func cancel() {
+        let state = finishLocked {
+            isCancelled = true
+        }
+        state.task?.cancel()
+        state.session?.invalidateAndCancel()
+        state.continuation?.resume(throwing: CancellationError())
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        redirectPolicy.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: request, completionHandler: completionHandler)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping @Sendable (URLSession.ResponseDisposition) -> Void) {
+        do {
+            let checked = try URLSessionCatalogTransport.checkedResponse(response, request: request)
+            var openedFile: FileHandle?
+            if let destination {
+                guard checked.0.statusCode == 200 else { throw CatalogSourceError.httpStatus(checked.0.statusCode) }
+                guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                openedFile = try FileHandle(forWritingTo: destination)
+            }
+            lock.lock()
+            guard !isFinished else {
+                lock.unlock()
+                try? openedFile?.close()
+                completionHandler(.cancel)
+                return
+            }
+            self.response = checked
+            self.fileHandle = openedFile
+            lock.unlock()
+            completionHandler(.allow)
+        } catch {
+            fail(with: error)
+            completionHandler(.cancel)
+        }
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        guard !isFinished else {
+            lock.unlock()
+            return
+        }
+        guard data.count <= request.maximumBytes - receivedBytes else {
+            lock.unlock()
+            fail(with: CatalogSourceError.responseTooLarge)
+            return
+        }
+        receivedBytes += data.count
+        if let fileHandle {
+            do {
+                try fileHandle.write(contentsOf: data)
+            } catch {
+                lock.unlock()
+                fail(with: error)
+                return
+            }
+        } else {
+            buffer.append(data)
+        }
+        lock.unlock()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        var result: Result<CatalogHTTPResponse, Error>?
+        let state = finishLocked {
+            if let error {
+                result = .failure(isCancelled ? CancellationError() : error)
+            } else if let (http, url) = response {
+                let body = destination == nil ? buffer : Data()
+                result = .success(CatalogHTTPResponse(
+                    url: url,
+                    status: http.statusCode,
+                    body: body,
+                    etag: http.value(forHTTPHeaderField: "ETag"),
+                    cacheControl: http.value(forHTTPHeaderField: "Cache-Control")
+                ))
+            } else {
+                result = .failure(CatalogSourceError.invalidResponse)
+            }
+        }
+        guard let continuation = state.continuation, let result else { return }
+        switch result {
+        case .success(let value): continuation.resume(returning: value)
+        case .failure(let failure): continuation.resume(throwing: failure)
+        }
+    }
+
+    private func fail(with error: Error) {
+        let state = finishLocked {}
+        state.task?.cancel()
+        state.continuation?.resume(throwing: error)
+    }
+
+    private func finishLocked(_ update: () -> Void) -> (session: URLSession?, task: URLSessionDataTask?, continuation: CheckedContinuation<CatalogHTTPResponse, Error>?) {
+        lock.lock()
+        defer { lock.unlock() }
+        update()
+        guard !isFinished else { return (nil, nil, nil) }
+        isFinished = true
+        try? fileHandle?.close()
+        fileHandle = nil
+        let captured = (session, task, continuation)
+        session = nil
+        task = nil
+        continuation = nil
+        return captured
     }
 }
 

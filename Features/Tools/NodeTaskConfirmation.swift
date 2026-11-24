@@ -17,12 +17,6 @@ struct NodeTaskConfirmation: View {
                             if plan.maintenanceCandidates.isEmpty { Text("No Older Logs to Remove") }
                             ForEach(plan.maintenanceCandidates, id: \.self) { Text($0).textSelection(.enabled) }
                         }
-                    } else if plan.request.action == .writeProjectNVMRC {
-                        Text("Only this project’s .nvmrc will be changed.")
-                        if let path = plan.payload.nvmrcPath { Text(path).textSelection(.enabled) }
-                        LabeledContent("New Node Version", value: plan.request.value ?? "")
-                        if let current = plan.payload.currentNvmrc { LabeledContent("Current .nvmrc", value: current) }
-                        if let engines = plan.payload.enginesNode, !engines.isEmpty { LabeledContent("Project Node Requirement", value: engines) }
                     } else if plan.request.action.isRegistryConfiguration {
                         Text("Change the user npm configuration for this Node environment. Higher priority project settings can still override it.")
                         if let effective = plan.payload.effectiveRegistry { LabeledContent("Effective Registry", value: DiagnosticText.sanitized(effective)) }
@@ -51,7 +45,6 @@ struct NodeTaskConfirmation: View {
     private var isDestructive: Bool { plan.request.action == .uninstallNode || plan.request.action == .cleanup || [.deleteRegistry, .deleteScopeRegistry].contains(plan.request.action) }
     private var title: LocalizedStringResource {
         switch plan.request.action {
-        case .writeProjectNVMRC: LocalizedStringResource("Save Project .nvmrc")
         case .uninstallNode: LocalizedStringResource("Uninstall Node Version")
         case .setDefaultNode: LocalizedStringResource("Set nvm Default")
         case .setRegistry: LocalizedStringResource("Set Default npm Registry")

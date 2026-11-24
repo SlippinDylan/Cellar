@@ -9,15 +9,6 @@ final class ToolsConfigurationTests: XCTestCase {
         XCTAssertTrue(source.contains("ActivityDiagnosticsView"))
     }
 
-    func testProjectReadsHaveViewOwnershipLoadingFeedbackAndRejectLateResults() throws {
-        let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appending(path: "Features/Tools/ProjectToolsView.swift"), encoding: .utf8)
-        XCTAssertTrue(source.contains(".task(id: readRequest)"))
-        XCTAssertTrue(source.contains("isReading"))
-        XCTAssertFalse(source.contains("Task { await readProject"))
-        XCTAssertTrue(source.contains("!Task.isCancelled"))
-    }
-
     func testTapConfirmationBoundsAssociatedItemsAndKeepsActionsOutsideScrollingContent() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appending(path: "Features/Settings/TapTaskConfirmation.swift"), encoding: .utf8)
@@ -119,7 +110,7 @@ final class ToolsConfigurationTests: XCTestCase {
 
     func testReachableTaskSurfacesDoNotPresentCommandsOrNVMRemoteInstall() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let files = ["Features/Tools/RuntimeToolsView.swift", "Features/Home/HomeView.swift", "Features/Tools/NodeMaintenanceView.swift", "Features/Tools/ProjectToolsView.swift",
+        let files = ["Features/Tools/RuntimeToolsView.swift", "Features/Home/HomeView.swift", "Features/Tools/NodeMaintenanceView.swift",
                      "Features/Settings/HomebrewSourcesView.swift", "Features/Settings/NPMRegistrySettingsView.swift", "Features/Settings/TerminalSettingsView.swift"]
         for file in files {
             let source = try String(contentsOf: root.appending(path: file), encoding: .utf8)
@@ -177,8 +168,7 @@ final class ToolsConfigurationTests: XCTestCase {
     func testBlockedRuntimeAndProjectActionsHaveSpecificVisibleReasons() throws {
         for (reason, message) in [
             ("cannot-uninstall-current-node", LocalizedStringResource("The current Cellar Node version cannot be removed.")),
-            ("cannot-uninstall-default-node", LocalizedStringResource("The nvm default Node version cannot be removed.")),
-            ("project-nvmrc-not-regular-file", LocalizedStringResource("The project .nvmrc must be a regular file. Symbolic links are not changed."))
+            ("cannot-uninstall-default-node", LocalizedStringResource("The nvm default Node version cannot be removed."))
         ] {
             let data = try JSONSerialization.data(withJSONObject: ["action": "node-uninstall", "executable": false, "blockedReason": reason])
             let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: data)

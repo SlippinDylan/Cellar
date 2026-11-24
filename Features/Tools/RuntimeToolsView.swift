@@ -48,7 +48,6 @@ struct RuntimeToolsView: View {
                     installedVersions
                 }
             }
-            ProjectToolsView(model: model, installations: installations)
             Spacer(minLength: 0)
             EnvironmentFooterView {
                 if let node = model.node {

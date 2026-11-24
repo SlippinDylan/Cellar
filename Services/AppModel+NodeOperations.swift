@@ -231,6 +231,6 @@ private extension String {
 
 private extension NodeActionRequest {
     var isIndependentOfNodeSnapshot: Bool {
-        action == .writeProjectNVMRC || action == .cleanup && subject == NodeMaintenanceAction.logs.rawValue
+        action == .cleanup && subject == NodeMaintenanceAction.logs.rawValue
     }
 }

@@ -4,87 +4,6 @@ import XCTest
 
 final class NodeConfigurationSafetyTests: XCTestCase {
     @MainActor
-    func testAppModelIndependentProjectSurvivesMissingAndLaterFailedCoreRead() async throws {
-        for retained in [false, true] {
-            let fixture = try NodeConfigurationFixture()
-            defer { fixture.remove() }
-            let model = try fixture.model()
-            if retained {
-                model.applyNodeReadResult(.success(try await fixture.client.loadSnapshot(managerDirectory: fixture.root)))
-            } else {
-                try FileManager.default.removeItem(at: fixture.root.appending(path: "bin"))
-            }
-            try Data().write(to: fixture.root.appending(path: "core-failure"))
-            do { _ = try await fixture.client.loadSnapshot(managerDirectory: fixture.root); XCTFail("Core read must fail") }
-            catch { model.applyNodeReadResult(.failure(error)) }
-            XCTAssertEqual(model.node != nil, retained)
-            let project = fixture.root.appending(path: "project")
-            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-            await model.prepareNodeAction(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"))
-            let plan = try XCTUnwrap(model.nodePlan)
-            XCTAssertTrue(model.nodeActionIsAvailable(NodeMaintenanceAction.logs.request))
-            for action in NodeMaintenanceAction.allCases where action != .logs {
-                XCTAssertFalse(model.nodeActionIsAvailable(action.request))
-            }
-            XCTAssertTrue(plan.canExecute)
-            XCTAssertFalse(try fixture.calls().contains("execute|1"))
-            await model.executeNodePlan(confirmed: plan)
-            let result = try XCTUnwrap(model.nodeActionResult)
-            XCTAssertEqual(result.operation.batchItemStatus, .succeeded)
-            XCTAssertNil(result.postflightError, "An unrelated failed npm read is not project verification")
-            XCTAssertNil(model.nodeOperationError)
-            XCTAssertEqual(try String(contentsOf: project.appending(path: ".nvmrc"), encoding: .utf8), "v24.0.0\n")
-            XCTAssertTrue(model.nodeRefreshFailed)
-            XCTAssertNil(model.nodePackageEnvironment)
-            XCTAssertEqual(model.activityStore?.summaries.first?.status, .succeeded)
-            let calls = try fixture.calls()
-            await model.executeNodePlan(confirmed: plan)
-            XCTAssertEqual(try fixture.calls(), calls, "Confirmation is consumed once")
-            for request in [NodeActionRequest(action: .installPackage, subject: "package"),
-                            .init(action: .setRegistry, subject: "https://registry.example.test/"), NodeMaintenanceAction.verify.request,
-                            NodeMaintenanceAction.npmCache.request] {
-                await model.prepareNodeAction(request)
-                XCTAssertNil(model.nodePlan)
-                XCTAssertNotNil(model.nodeOperationError)
-            }
-            XCTAssertEqual(try fixture.calls(), calls, "Unavailable core never authorizes dependent planning")
-        }
-    }
-
-    @MainActor
-    func testAppModelProjectStillRejectsChangedFileDirectoryAndUnverifiedWriteWithoutNode() async throws {
-        for change in ["file", "directory", "wrong-project-version"] {
-            let fixture = try NodeConfigurationFixture()
-            defer { fixture.remove() }
-            let model = try fixture.model()
-            try Data().write(to: fixture.root.appending(path: "core-failure"))
-            model.applyNodeReadResult(.failure(BridgeError.managerFailure(code: "no-npm", detail: nil)))
-            let project = fixture.root.appending(path: "project")
-            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-            await model.prepareNodeAction(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"))
-            let plan = try XCTUnwrap(model.nodePlan)
-            switch change {
-            case "file": try Data("v22.0.0\n".utf8).write(to: project.appending(path: ".nvmrc"))
-            case "directory":
-                try FileManager.default.moveItem(at: project, to: fixture.root.appending(path: "old-project"))
-                try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-            default: try Data().write(to: fixture.root.appending(path: change))
-            }
-            await model.executeNodePlan(confirmed: plan)
-            XCTAssertTrue(model.nodeRefreshFailed)
-            XCTAssertNotNil(model.nodeOperationError)
-            if change == "wrong-project-version" {
-                XCTAssertEqual(model.nodeActionResult?.operation.batchItemStatus, .unknown)
-                XCTAssertEqual(model.nodeActionResult?.operation.detail, "project-verification-unavailable")
-                XCTAssertEqual(model.activityStore?.summaries.first?.status, .unknown)
-            } else {
-                XCTAssertNil(model.nodeActionResult)
-                XCTAssertFalse(try fixture.calls().contains("execute|1"))
-            }
-        }
-    }
-
-    @MainActor
     func testAppModelLogCandidateLimitPreservesEveryConfirmedOutcomeOrRefusesBeforeWrite() async throws {
         for count in [1099, 1100] {
             let fixture = try NodeConfigurationFixture()
@@ -161,123 +80,6 @@ final class NodeConfigurationSafetyTests: XCTestCase {
         }
     }
 
-    func testProjectConfirmationKeepsOriginalExpiryAndFailedVerificationIsUnknown() async throws {
-        for expired in [true, false] {
-            let fixture = try NodeConfigurationFixture()
-            defer { fixture.remove() }
-            let project = fixture.root.appending(path: "project")
-            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-            let prepared = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
-            if expired {
-                let plan = NodeActionPlan(id: prepared.id, request: prepared.request, payload: prepared.payload, generatedAt: Date().addingTimeInterval(-301))
-                do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Directory revalidation must not renew confirmation") }
-                catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-expired") }
-                XCTAssertFalse(try fixture.calls().contains("execute|1|1"))
-            } else {
-                try Data().write(to: fixture.root.appending(path: "wrong-project-version"))
-                let result = try await fixture.client.execute(prepared, managerDirectory: fixture.root)
-                XCTAssertEqual(result.batchItemStatus, .unknown)
-                XCTAssertEqual(result.activityReason, .stateUnavailable)
-                XCTAssertEqual(result.detail, "project-verification-unavailable")
-            }
-        }
-    }
-
-    func testProjectReplacementDuringFinalPlanningIsRejectedBeforeWriteGate() async throws {
-        let fixture = try NodeConfigurationFixture()
-        defer { fixture.remove() }
-        let project = fixture.root.appending(path: "project")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
-        try Data().write(to: fixture.root.appending(path: "replace-during-plan"))
-        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Final planning must not replace the selected directory") }
-        catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
-        XCTAssertFalse(try fixture.calls().contains("execute|1|1"))
-        for name in ["project", "project-during-plan"] {
-            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "\(name)/.nvmrc").path))
-        }
-    }
-
-    func testProjectFinalSymlinksAndDotTraversalRefuseBeforePlanning() async throws {
-        let fixture = try NodeConfigurationFixture()
-        defer { fixture.remove() }
-        let actual = fixture.root.appending(path: "actual")
-        let link = fixture.root.appending(path: "selected")
-        try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
-        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
-        for path in [link.path, link.path + "/", actual.path + "/../actual"] {
-            do { _ = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: path, value: "v24.0.0"), managerDirectory: fixture.root); XCTFail("Unsafe selected path must refuse") }
-            catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
-        }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "calls.log").path))
-    }
-
-    func testEmptyProjectDirectoryReplacementCannotOpenWriteGate() async throws {
-        for replacement in ["project-symlink", "ancestor-symlink", "recreated-directory"] {
-            let fixture = try NodeConfigurationFixture()
-            defer { fixture.remove() }
-            let parent = fixture.root.appending(path: "selected")
-            let project = parent.appending(path: "project")
-            let otherParent = fixture.root.appending(path: "other")
-            let other = otherParent.appending(path: "project")
-            try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
-            let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
-            let moved = fixture.root.appending(path: "original")
-            if replacement == "ancestor-symlink" {
-                try FileManager.default.moveItem(at: parent, to: moved)
-                try FileManager.default.createSymbolicLink(at: parent, withDestinationURL: otherParent)
-            } else {
-                try FileManager.default.moveItem(at: project, to: moved)
-                if replacement == "project-symlink" { try FileManager.default.createSymbolicLink(at: project, withDestinationURL: other) }
-                else { try FileManager.default.createDirectory(at: project, withIntermediateDirectories: false) }
-            }
-            do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Directory identity changed: \(replacement)") }
-            catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
-            XCTAssertFalse(try fixture.calls().contains("execute|1|1"))
-            for directory in [project, other, moved, moved.appending(path: "project")] {
-                XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appending(path: ".nvmrc").path), replacement)
-            }
-        }
-    }
-
-    func testEmptyProjectUsesCapturedCanonicalDirectoryAndVerifiesWrittenVersion() async throws {
-        let fixture = try NodeConfigurationFixture()
-        defer { fixture.remove() }
-        let actual = fixture.root.appending(path: "actual/project")
-        try FileManager.default.createDirectory(at: actual, withIntermediateDirectories: true)
-        let alias = fixture.root.appending(path: "alias")
-        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: actual.deletingLastPathComponent())
-        let selected = alias.appending(path: "project")
-        let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: selected.path, value: "v24.0.0"), managerDirectory: fixture.root)
-        XCTAssertEqual(plan.request.subject, selected.path)
-        let result = try await fixture.client.execute(plan, managerDirectory: fixture.root)
-        XCTAssertEqual(result.batchItemStatus, .succeeded)
-        XCTAssertEqual(try String(contentsOf: actual.appending(path: ".nvmrc"), encoding: .utf8), "v24.0.0\n")
-        let canonical = try XCTUnwrap(realpath(actual.path, nil))
-        defer { free(canonical) }
-        XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: "executed-project"), encoding: .utf8), String(cString: canonical))
-        XCTAssertEqual(try fixture.calls().split(separator: "\n").filter { $0.hasPrefix("execute|1|1") }.count, 1)
-        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Confirmation must be consumed once") }
-        catch { XCTAssertEqual(ActivityItemReason(error: error), .stateChanged) }
-    }
-
-    func testProjectPostWriteDirectoryDriftCannotReportSuccess() async throws {
-        let fixture = try NodeConfigurationFixture()
-        defer { fixture.remove() }
-        let project = fixture.root.appending(path: "project")
-        let other = fixture.root.appending(path: "other")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: other, withIntermediateDirectories: true)
-        let plan = try await fixture.client.plan(.init(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0"), managerDirectory: fixture.root)
-        try Data().write(to: fixture.root.appending(path: "redirect-after-write"))
-        let result = try await fixture.client.execute(plan, managerDirectory: fixture.root)
-        XCTAssertEqual(result.batchItemStatus, .unknown)
-        XCTAssertEqual(result.activityReason, .stateChanged)
-        XCTAssertEqual(try String(contentsOf: fixture.root.appending(path: "project-after-write/.nvmrc"), encoding: .utf8), "v24.0.0\n")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: other.appending(path: ".nvmrc").path))
-    }
-
     func testRegistryReferencedConfigurationAndSameContentReplacementInvalidatePlans() async throws {
         let fixture = try NodeConfigurationFixture()
         defer { fixture.remove() }
@@ -297,17 +99,14 @@ final class NodeConfigurationSafetyTests: XCTestCase {
         catch { }
     }
 
-    func testProjectAndRegistryFingerprintRejectOversizedInputsBeforeManagerReads() async throws {
-        for name in ["package.json", ".nvmrc", ".npmrc"] {
-            let fixture = try NodeConfigurationFixture()
-            defer { fixture.remove() }
-            try Data(repeating: 32, count: 2 * 1_024 * 1_024 + 1).write(to: fixture.root.appending(path: name))
-            let request: NodeActionRequest = name == ".npmrc" ? .init(action: .setRegistry, subject: "https://registry.example.test/")
-                : .init(action: .writeProjectNVMRC, subject: fixture.root.path, value: "v24.0.0")
-            do { _ = try await fixture.client.plan(request, managerDirectory: fixture.root); XCTFail("Oversized fingerprint input must refuse") }
-            catch { }
-            XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "calls.log").path))
-        }
+    func testRegistryFingerprintRejectsOversizedInputsBeforeManagerReads() async throws {
+        let fixture = try NodeConfigurationFixture()
+        defer { fixture.remove() }
+        try Data(repeating: 32, count: 2 * 1_024 * 1_024 + 1).write(to: fixture.root.appending(path: ".npmrc"))
+        let request = NodeActionRequest(action: .setRegistry, subject: "https://registry.example.test/")
+        do { _ = try await fixture.client.plan(request, managerDirectory: fixture.root); XCTFail("Oversized fingerprint input must refuse") }
+        catch { }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.root.appending(path: "calls.log").path))
     }
 
     func testLogMaintenanceListsExactCandidatesAndRefusesChangedInventory() async throws {
@@ -363,44 +162,6 @@ final class NodeConfigurationSafetyTests: XCTestCase {
             _ = try await fixture.client.execute(plan, managerDirectory: fixture.root)
         }
         XCTAssertEqual(try fixture.calls().split(separator: "\n").filter { $0.hasPrefix("execute|1|0") }.count, 3)
-    }
-
-    func testProjectWriteRejectsDriftThenUsesOnlyProjectGate() async throws {
-        let fixture = try NodeConfigurationFixture()
-        defer { fixture.remove() }
-        let project = fixture.root.appending(path: "project")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        let file = project.appending(path: ".nvmrc")
-        try Data("v22.0.0\n".utf8).write(to: file)
-        let request = NodeActionRequest(action: .writeProjectNVMRC, subject: project.path, value: "v24.0.0")
-        let plan = try await fixture.client.plan(request, managerDirectory: fixture.root)
-        try Data("v23.0.0\n".utf8).write(to: file)
-        do { _ = try await fixture.client.execute(plan, managerDirectory: fixture.root); XCTFail("Changed project contents must reject old confirmation") }
-        catch BridgeError.managerFailure(let code, _) { XCTAssertEqual(code, "plan-stale") }
-        XCTAssertFalse(try fixture.calls().contains("execute"))
-        let fresh = try await fixture.client.plan(request, managerDirectory: fixture.root)
-        _ = try await fixture.client.execute(fresh, managerDirectory: fixture.root)
-        XCTAssertTrue(try fixture.calls().contains("execute|1|1|project-nvmrc"))
-        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "v24.0.0\n")
-    }
-
-    func testProjectReadOnlyUsesSelectedDirectoryAndRefusesSymlink() async throws {
-        let fixture = try NodeConfigurationFixture()
-        defer { fixture.remove() }
-        let project = fixture.root.appending(path: "project")
-        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
-        let service = ProjectConfigurationService()
-        let missing = try await service.readNVMRC(in: project)
-        XCTAssertNil(missing)
-        let file = project.appending(path: ".nvmrc")
-        try Data("v24.0.0\n".utf8).write(to: file)
-        let current = try await service.readNVMRC(in: project)
-        XCTAssertEqual(current, "v24.0.0")
-        let target = fixture.root.appending(path: "outside")
-        try FileManager.default.moveItem(at: file, to: target)
-        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: target)
-        do { _ = try await service.readNVMRC(in: project); XCTFail("Symlink must not be read as project config") }
-        catch { XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "v24.0.0\n") }
     }
 
     func testNVMDefaultChangeInvalidatesConfigurationConfirmation() async throws {

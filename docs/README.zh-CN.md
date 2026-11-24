@@ -26,7 +26,7 @@ Cellar 把 Homebrew 软件、npm 全局包、Node.js 版本和终端配置集中
 | 查看环境状态 | 在首页查看 Homebrew、Node.js、npm、nvm 和终端环境状态。 |
 | 管理已安装软件 | 在软件库浏览、搜索和筛选 Homebrew Formula、Cask 与 npm 全局包；单项更新、按筛选范围批量更新，以及单项卸载。 |
 | 查找新工具 | 在发现页面搜索 Homebrew 和 npm，单项安装或批量安装同一类型的软件包。 |
-| 配置开发环境 | 通过 nvm 管理 Node.js 版本，管理所选项目的 `.nvmrc`、Homebrew Tap、npm 软件源，以及 Oh My Zsh 主题和插件。 |
+| 配置开发环境 | 通过 nvm 管理全局 Node.js 版本，管理 Homebrew Tap、npm 软件源，以及 Oh My Zsh 主题和插件。 |
 | 检查与清理 | 运行 Homebrew 诊断和 npm 缓存校验，查看并确认受支持的缓存、未使用 Node 版本及旧 Manager 日志清理任务。 |
 
 任务进度和最近结果会在切换页面后继续显示，批量任务部分成功时也能查看逐项结果。
@@ -70,7 +70,7 @@ xcodebuild build \
 
 - npm 全局包属于具体的 Node.js 安装。搜索与操作绑定所选 Node 环境；Cellar 不管理项目内的 npm 依赖。
 - npm 包搜索与修改需要受支持的 nvm 安装；其他已检测的 Node 安装仍可读取。Registry 用户设置和缓存维护按各自能力规则处理。软件源地址支持无凭证 HTTPS，以及 `localhost`、`127.0.0.1`、`[::1]` 的本机 HTTP；不支持其他 HTTP 地址。
-- 切换 Cellar 当前使用的 Node 版本仅影响本次 Cellar 会话，不会切换已打开的终端。保存项目的 `.nvmrc` 只声明所需版本，不会自动安装 Node 或切换终端。
+- 切换 Cellar 当前使用的 Node 版本仅影响本次 Cellar 会话，不会切换已打开的终端。Cellar 仅管理全局 Node/npm 环境，不管理单个项目的 `.nvmrc`。
 - 软件库与发现页面卡片中的单项软件包安装和更新直接开始；终端组件安装、批量操作、卸载、清理和配置修改会先确认范围。运行中的任务不能手动停止，任务进行时 Cellar 会阻止退出。
 - Homebrew Cask 卸载还可移除预先确认、能够验证归属的关联数据，共享或无法核实的数据会保留。Formula 和 npm 卸载不包含这类关联数据清理。Cellar 不执行 Homebrew cleanup，也不自动删除孤儿依赖。
 - 部分残留文件清理需要 macOS 管理员授权或完全磁盘访问权限。密码由系统处理，Cellar 不收集密码，也不安装常驻特权服务；授权不保证所有文件均可删除。

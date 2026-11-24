@@ -39,7 +39,6 @@ export const presentationSources = [
   'Features/Tools/ToolsView.swift',
   'Features/Tools/MaintenanceView.swift',
   'Features/Tools/RuntimeToolsView.swift',
-  'Features/Tools/ProjectToolsView.swift',
   'Features/Tools/DiagnosticsToolsView.swift',
   'Features/Tools/NodeMaintenanceView.swift',
   'Features/Tools/ProviderTaskPresentation.swift',

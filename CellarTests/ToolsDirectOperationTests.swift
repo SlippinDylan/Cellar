@@ -99,7 +99,6 @@ final class ToolsDirectOperationTests: XCTestCase {
         let cases: [(NodeActionRequest, ProviderTaskSurface?)] = [
             (.init(action: .setRegistry, subject: "https://registry.example.test"), .npmSources),
             (.init(action: .setDefaultNode, subject: "v22.0.0"), .tools),
-            (.init(action: .writeProjectNVMRC, subject: "/fixture/project", value: "v22.0.0"), .tools),
             (NodeMaintenanceAction.verify.request, nil),
         ] + NodeMaintenanceAction.allCases.filter { $0.category == .cleanup }.map { ($0.request, .maintenance) }
         for (request, expectedSurface) in cases {

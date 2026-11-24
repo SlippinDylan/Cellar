@@ -43,7 +43,7 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 - Formula/Cask 卸载必须显式禁止 Homebrew 自动更新和 autoremove。增强 Cask 卸载使用 standard，不把整个 zap stanza 静默交给 Homebrew；应用本体仍由 Homebrew 处理，额外删除限于强类型确认计划。删除前复验文件身份，拒绝符号链接祖先和任意路径输入。
 - 受限 Cask 残留删除可通过 macOS 系统管理员授权执行一次性清理模式；只接受真实用户主目录下的允许路径、精确文件身份和有界请求，遵守任务取消及生命周期约束。Cellar 不收集密码、不安装常驻特权服务、不把整条 brew 命令提权。Homebrew 自身需 sudo 的卸载钩子仍按实际失败或部分完成报告。
 - Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。
-- Node 通过 Manager schema v1 读取状态，并仅在产品确认规则满足后启用单次 JSON execute。支持的写操作限定为 npm 全局包、nvm/Node 版本、Registry、Manager 维护和用户明确选择项目的 `.nvmrc`；npm 搜索与操作始终绑定明确 Node 环境。
+- Node 通过 Manager schema v1 读取状态，并仅在产品确认规则满足后启用单次 JSON execute。支持的写操作限定为全局 npm 包、nvm/Node 版本、Registry 和 Manager 维护（不管理单个项目的 `.nvmrc`）；npm 搜索与操作始终绑定明确 Node 环境。
 - Shell 通过 App 专用 schema v1 adapter 查询和修改 Oh My Zsh、插件、主题及受限 Zsh 文件布局；不得驱动交互菜单或执行协议外的 Shell 命令。
 - 主导航固定为 Home、Library、Discover、环境（内部路由仍为 tools）、维护；软件更新与待更新筛选位于 Library；侧边栏左下方依次显示 Settings 和 About，不提供活动记录页面或菜单。环境按顺序包含 Terminal、Brew Tap、npm Registry、Node.js，操作页仅在短页面底部或长页面正文末尾以无卡片、居中紧凑的小号次要文字保留必要上下文；维护包含检查与清理，分别保留 Homebrew 检查／npm 缓存校验和既有受限清理；Zsh 文件整理仍在终端，Homebrew 目录更新仍在 Homebrew Tap 页。Settings 使用通用／环境信息分类，前者提供语言与日志偏好，后者集中展示 Cellar 识别和使用的完整环境信息，不冒充已打开终端的环境；About 是独立页面，显示放大的图标、名称、版本、检查更新和底部 Studio 版权署名。不声明独立 Settings scene，Command-Comma 经共享导航意图前置或重建主窗口并选择 Settings。
 - 卡片本体不导航，只显示关键信息和系统浏览器网站链接。Library 卡片提供单项更新与卸载，Discover 卡片保留状态相关主动作。普通 UI 不显示原始命令或内部计划术语。

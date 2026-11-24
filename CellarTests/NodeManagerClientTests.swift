@@ -192,23 +192,6 @@ final class NodeManagerClientTests: XCTestCase {
             runner: ProcessRunner(),
             environmentResolver: NodeEnvironmentResolver(homeDirectory: manager)
         )
-        let request = NodeActionRequest(
-            action: .writeProjectNVMRC,
-            subject: project.path,
-            value: "v22.14.0"
-        )
-        let plan = try await client.plan(request, managerDirectory: manager)
-        let result = try await client.execute(plan, managerDirectory: manager)
-
-        XCTAssertTrue(plan.canExecute)
-        XCTAssertEqual(result.operationId, "op-1")
-        let calls = try String(contentsOf: log, encoding: .utf8)
-        let canonical = try XCTUnwrap(realpath(project.path, nil))
-        defer { free(canonical) }
-        XCTAssertTrue(calls.contains("plan|project-nvmrc|\(String(cString: canonical))|v22.14.0|0|"))
-        XCTAssertTrue(calls.contains("execute|project-nvmrc|\(String(cString: canonical))|v22.14.0|1|1"))
-        XCTAssertEqual(result.batchItemStatus, .succeeded)
-
         let cleanupPlan = try await client.plan(
             .init(action: .cleanup, subject: "npm-cache-clean"),
             managerDirectory: manager

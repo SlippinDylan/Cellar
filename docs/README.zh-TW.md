@@ -26,7 +26,7 @@ Cellar 將 Homebrew 軟體、npm 全域套件、Node.js 版本和終端機設定
 | 查看環境狀態 | 在首頁查看 Homebrew、Node.js、npm、nvm 和終端機環境狀態。 |
 | 管理已安裝軟體 | 在軟體庫瀏覽、搜尋和篩選 Homebrew Formula、Cask 與 npm 全域套件；單項更新、依篩選範圍批次更新，以及單項解除安裝。 |
 | 尋找新工具 | 在探索頁面搜尋 Homebrew 和 npm，單項安裝或批次安裝同一類型的套件。 |
-| 設定開發環境 | 透過 nvm 管理 Node.js 版本，管理所選專案的 `.nvmrc`、Homebrew Tap、npm 套件來源，以及 Oh My Zsh 佈景主題和外掛。 |
+| 設定開發環境 | 透過 nvm 管理全域 Node.js 版本，管理 Homebrew Tap、npm 套件來源，以及 Oh My Zsh 佈景主題和外掛。 |
 | 檢查與清理 | 執行 Homebrew 診斷和 npm 快取驗證，查看並確認支援的快取、未使用 Node 版本及舊 Manager 日誌清理工作。 |
 
 工作進度和最近結果會在切換頁面後繼續顯示，批次工作部分成功時也能查看逐項結果。
@@ -70,7 +70,7 @@ xcodebuild build \
 
 - npm 全域套件屬於特定的 Node.js 安裝。搜尋與操作綁定所選 Node 環境；Cellar 不管理專案內的 npm 相依套件。
 - npm 套件搜尋與變更需要支援的 nvm 安裝；其他已偵測的 Node 安裝仍可讀取。Registry 使用者設定和快取維護依各自能力規則處理。套件來源網址支援無憑證 HTTPS，以及 `localhost`、`127.0.0.1`、`[::1]` 的本機 HTTP；不支援其他 HTTP 位址。
-- 切換 Cellar 目前使用的 Node 版本僅影響本次 Cellar 工作階段，不會切換已開啟的終端機。儲存專案的 `.nvmrc` 只宣告所需版本，不會自動安裝 Node 或切換終端機。
+- 切換 Cellar 目前使用的 Node 版本僅影響本次 Cellar 工作階段，不會切換已開啟的終端機。Cellar 僅管理全域 Node/npm 環境，不管理單一專案的 `.nvmrc`。
 - 軟體庫與探索頁面卡片中的單項套件安裝和更新直接開始；終端機元件安裝、批次操作、解除安裝、清理和設定變更會先確認範圍。執行中的工作無法手動停止，工作進行時 Cellar 會阻止結束應用程式。
 - Homebrew Cask 解除安裝還可移除事先確認、能夠驗證歸屬的關聯資料，共用或無法核實的資料會保留。Formula 和 npm 解除安裝不包含這類關聯資料清理。Cellar 不執行 Homebrew cleanup，也不自動刪除孤立相依套件。
 - 部分殘留檔案清理需要 macOS 管理員授權或完整磁碟存取權限。密碼由系統處理，Cellar 不收集密碼，也不安裝常駐特權服務；授權不保證所有檔案均可刪除。

@@ -136,7 +136,6 @@ enum NodeAction: String, Codable, Sendable {
     case setDefaultNode = "node-default"
     case uninstallNode = "node-uninstall"
     case cleanup
-    case writeProjectNVMRC = "project-nvmrc"
 
     var isRegistryConfiguration: Bool {
         [.setRegistry, .deleteRegistry, .setScopeRegistry, .deleteScopeRegistry].contains(self)
@@ -195,11 +194,6 @@ struct NodeActionPlanPayload: Decodable, Sendable {
     let targetDir: String?
     let pathExists: Bool?
     let pathIsDirectory: Bool?
-    let nvmrcPath: String?
-    let currentNvmrc: String?
-    let packageJsonExists: Bool?
-    let enginesNode: String?
-    let nvmrcIsSymlink: Bool?
     let effectiveRegistry: String?
     let userRegistry: String?
     let projectRegistry: String?
@@ -334,7 +328,7 @@ struct NodeOperationResult: Decodable, Sendable {
             return verification == .partiallySucceeded && exitCode != 0 ? .failed : verification
         }
         guard exitCode == 0 else { return .failed }
-        if [NodeAction.installPackage.rawValue, NodeAction.updatePackage.rawValue, NodeAction.writeProjectNVMRC.rawValue].contains(action), status == "unknown" { return .unknown }
+        if [NodeAction.installPackage.rawValue, NodeAction.updatePackage.rawValue].contains(action), status == "unknown" { return .unknown }
         if action == NodeAction.cleanup.rawValue, subject == "logs", status == "unknown" { return .unknown }
         if status == "ok" { return .succeeded }
         if action == NodeAction.uninstallPackage.rawValue, status == "warn", detail == "residue-detected" {
@@ -348,7 +342,7 @@ struct NodeOperationResult: Decodable, Sendable {
         case .skipped: .alreadySatisfied
         case .succeeded: nil
         case .cancelled: .cancelledByUser
-        case .unknown: detail == "project-changed" ? .stateChanged : .stateUnavailable
+        case .unknown: .stateUnavailable
         case .partiallySucceeded: detail == "residue-detected" ? .residueDetected : .stateUnavailable
         case .failed: .init(error: BridgeError.managerFailure(code: detail ?? "provider-failure", detail: nil))
         }

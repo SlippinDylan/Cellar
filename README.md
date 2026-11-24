@@ -26,7 +26,7 @@ Cellar brings Homebrew software, npm global packages, Node.js versions, and term
 | Check your environment | See Homebrew, Node.js, npm, nvm, and terminal status on Home. |
 | Manage installed software | Browse, search, and filter Homebrew Formulae, Casks, and npm global packages in Library. Update individual items or a filtered batch, and uninstall individual items. |
 | Find new tools | Search Homebrew and npm in Discover, then install individual items or a batch of the same package type. |
-| Configure your environment | Manage Node.js versions with nvm, a selected project's `.nvmrc`, Homebrew taps, npm registries, and Oh My Zsh themes and plugins. |
+| Configure your environment | Manage global Node.js versions with nvm, Homebrew taps, npm registries, and Oh My Zsh themes and plugins. |
 | Check and clean up | Run Homebrew diagnostics and npm cache verification, then review supported cache, unused Node version, and old Manager log cleanup tasks. |
 
 Task progress and recent results stay visible as you move between pages, including individual results when a batch only partly succeeds.
@@ -70,7 +70,7 @@ The app is built at `build/DerivedData-Debug/Build/Products/Debug/Cellar.app`. S
 
 - npm global packages belong to a specific Node.js installation. Searches and operations use the selected Node environment; Cellar does not manage project-local npm dependencies.
 - npm package search and changes require a supported nvm installation; other detected Node installations remain readable. Registry user settings and cache maintenance keep their own capability rules. Registry URLs support credential-free HTTPS and local HTTP on `localhost`, `127.0.0.1`, or `[::1]`; other HTTP addresses are unsupported.
-- Switching the Node version used by Cellar affects only the current Cellar session, not terminals already open. Saving a project's `.nvmrc` declares the required version; it does not automatically install Node or switch terminal sessions.
+- Switching the Node version used by Cellar affects only the current Cellar session, not terminals already open. Cellar manages global Node/npm environments rather than per-project `.nvmrc` files.
 - Single-package installs and updates from Library and Discover cards start directly. Installing terminal components, batch operations, uninstalls, cleanup, and configuration changes ask you to confirm their scope. Running tasks cannot be stopped manually, and Cellar prevents quitting while tasks are active.
 - Homebrew Cask uninstalls can also remove confirmed related data whose ownership can be verified. Shared or unverified data stays in place. Formula and npm uninstalls do not include this related-data cleanup. Cellar does not run Homebrew cleanup or automatically remove orphaned dependencies.
 - Some residual-file cleanup needs macOS administrator authorization or Full Disk Access. macOS handles passwords; Cellar does not collect them or install a persistent privileged service. Authorization does not guarantee every file can be removed.

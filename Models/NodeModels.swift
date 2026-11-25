@@ -338,17 +338,6 @@ struct NodeOperationResult: Decodable, Sendable {
         }
         return .failed
     }
-
-    var activityReason: ActivityItemReason? {
-        switch batchItemStatus {
-        case .skipped: .alreadySatisfied
-        case .succeeded: nil
-        case .cancelled: .cancelledByUser
-        case .unknown: .stateUnavailable
-        case .partiallySucceeded: detail == "residue-detected" ? .residueDetected : .stateUnavailable
-        case .failed: .init(error: BridgeError.managerFailure(code: detail ?? "provider-failure", detail: nil))
-        }
-    }
 }
 
 struct NodeActionResult: Sendable {

@@ -355,7 +355,6 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_PREVIEWS = YES;
@@ -390,7 +389,6 @@
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_PREVIEWS = YES;
@@ -416,12 +414,12 @@
 		};
 		C00000000000000000000024 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C00000000000000000000029 /* Config/Generated/Version.xcconfig */;
 			buildSettings = {
 				ARCHS = "$(ARCHS_STANDARD)";
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_TESTABILITY = YES;
 				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -446,12 +444,12 @@
 		};
 		C00000000000000000000025 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = C00000000000000000000029 /* Config/Generated/Version.xcconfig */;
 			buildSettings = {
 				ARCHS = "$(ARCHS_STANDARD)";
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_IDENTITY = "-";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (

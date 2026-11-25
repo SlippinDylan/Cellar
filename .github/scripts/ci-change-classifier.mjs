@@ -93,7 +93,7 @@ function main() {
   if (!outputPath) throw new Error('GITHUB_OUTPUT is required.');
   const runMacOS = shouldRunMacOS({
     eventName: event.eventName,
-    releaseEnabled: manifest.release === true,
+    releaseEnabled: manifest.packagingEnabled === true,
     comparison,
   });
   appendFileSync(outputPath, `run_macos=${runMacOS}\n`);

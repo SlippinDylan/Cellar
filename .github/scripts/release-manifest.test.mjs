@@ -39,11 +39,14 @@ test('rejects unsupported release version forms', () => {
   }
 });
 
-test('requires exactly the version and release manifest fields', () => {
-  assert.deepEqual(parseManifest('{"version":"1.2.3","release":false}').release, false);
-  assert.throws(() => parseManifest('{"version":"1.2.3"}'));
-  assert.throws(() => parseManifest('{"version":"1.2.3","release":"true"}'));
-  assert.throws(() => parseManifest('{"version":"1.2.3","release":true,"channel":"stable"}'));
+test('requires exactly the version, build, and packagingEnabled manifest fields', () => {
+  const parsed = parseManifest('{"version":"1.2.3","build":4,"packagingEnabled":false}');
+  assert.equal(parsed.packagingEnabled, false);
+  assert.equal(parsed.build, 4);
+  assert.throws(() => parseManifest('{"version":"1.2.3","packagingEnabled":false}'));
+  assert.throws(() => parseManifest('{"version":"1.2.3","build":0,"packagingEnabled":false}'));
+  assert.throws(() => parseManifest('{"version":"1.2.3","build":1,"packagingEnabled":"true"}'));
+  assert.throws(() => parseManifest('{"version":"1.2.3","build":1,"packagingEnabled":true,"channel":"stable"}'));
 });
 
 test('extracts only the exact non-empty changelog section', () => {
@@ -78,24 +81,25 @@ test('rejects versions that do not advance published history', () => {
   assert.throws(() => validateReleaseOrder(parseVersion('1.0.0'), ['v1.0.0']));
 });
 
-test('does not require release notes while release is disabled', () => {
+test('does not require release notes while packaging is disabled', () => {
   const plan = createReleasePlan({
-    manifestSource: '{"version":"0.2.0-beta.1","release":false}',
+    manifestSource: '{"version":"0.2.0-beta.1","build":1,"packagingEnabled":false}',
     changelogSource: '',
     publishedTags: [],
   });
-  assert.equal(plan.release, false);
+  assert.equal(plan.packagingEnabled, false);
 });
 
-test('requires matching notes and advancing history when release is enabled', () => {
+test('requires matching notes and advancing history when packaging is enabled', () => {
   const plan = createReleasePlan({
-    manifestSource: '{"version":"0.2.0-beta.1","release":true}',
+    manifestSource: '{"version":"0.2.0-beta.1","build":2,"packagingEnabled":true}',
     changelogSource: changelog,
     publishedTags: ['v0.2.0-alpha.2'],
   });
-  assert.equal(plan.release, true);
+  assert.equal(plan.packagingEnabled, true);
+  assert.equal(plan.build, 2);
   assert.throws(() => createReleasePlan({
-    manifestSource: '{"version":"0.2.0-beta.1","release":true}',
+    manifestSource: '{"version":"0.2.0-beta.1","build":2,"packagingEnabled":true}',
     changelogSource: changelog,
     publishedTags: ['v0.2.0'],
   }));

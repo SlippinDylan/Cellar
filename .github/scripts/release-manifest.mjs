@@ -44,15 +44,23 @@ export function parseManifest(source) {
   }
 
   const keys = Object.keys(manifest).sort();
-  if (keys.join(',') !== 'release,version') {
-    throw new Error(`${MANIFEST_PATH} must contain exactly "version" and "release".`);
+  if (keys.join(',') !== 'build,packagingEnabled,version') {
+    throw new Error(`${MANIFEST_PATH} must contain exactly "version", "build", and "packagingEnabled".`);
   }
 
-  if (typeof manifest.release !== 'boolean') {
-    throw new Error('release must be a boolean.');
+  if (!Number.isSafeInteger(manifest.build) || manifest.build < 1) {
+    throw new Error('build must be a positive safe integer.');
   }
 
-  return { version: parseVersion(manifest.version), release: manifest.release };
+  if (typeof manifest.packagingEnabled !== 'boolean') {
+    throw new Error('packagingEnabled must be a boolean.');
+  }
+
+  return {
+    version: parseVersion(manifest.version),
+    build: manifest.build,
+    packagingEnabled: manifest.packagingEnabled,
+  };
 }
 
 function parseDate(value) {
@@ -87,6 +95,10 @@ export function extractChangelogSection(source, version) {
 
   if (!body) {
     throw new Error(`CHANGELOG.md section ${version} must not be empty.`);
+  }
+
+  if (/\b(TODO|TBD|FIXME)\b/.test(body)) {
+    throw new Error(`CHANGELOG.md section ${version} must not contain placeholder markers.`);
   }
 
   return body;
@@ -129,13 +141,13 @@ export function validateReleaseOrder(version, publishedTags) {
 
 export function createReleasePlan({ manifestSource, changelogSource, publishedTags = [] }) {
   const manifest = parseManifest(manifestSource);
-  if (!manifest.release) {
-    return { release: false, version: manifest.version };
+  if (!manifest.packagingEnabled) {
+    return { packagingEnabled: false, version: manifest.version, build: manifest.build };
   }
 
   extractChangelogSection(changelogSource, manifest.version.value);
   validateReleaseOrder(manifest.version, publishedTags);
-  return { release: true, version: manifest.version };
+  return { packagingEnabled: true, version: manifest.version, build: manifest.build };
 }
 
 async function writeOutputs(values) {
@@ -167,8 +179,9 @@ async function main() {
   if (command === 'validate') {
     const manifest = parseManifest(inputs.manifestSource);
     await writeOutputs({
-      release: manifest.release,
+      packaging_enabled: manifest.packagingEnabled,
       version: manifest.version.value,
+      build: manifest.build,
       marketing_version: manifest.version.base,
       channel: manifest.version.channel,
       tag: `v${manifest.version.value}`,
@@ -181,7 +194,7 @@ async function main() {
   if (command === 'plan') {
     const publishedTags = String(process.env.PUBLISHED_RELEASE_TAGS ?? '').split('\n').filter(Boolean);
     const plan = createReleasePlan({ ...inputs, publishedTags });
-    await writeOutputs({ publish: plan.release });
+    await writeOutputs({ publish: plan.packagingEnabled });
     return;
   }
 

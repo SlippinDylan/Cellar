@@ -1,51 +1,25 @@
 # Changelog
 
-记录 Cellar 面向用户的重要变更。
+All notable user-facing changes to Cellar are documented in this file.
 
-## [1.0.0] - 2026-11-12
+## [Unreleased]
 
-当前为源码实现与本地验证版本，尚未公开发布；真实环境人工验收仍按清单执行。
+## [0.1.0] - 2026-11-25
 
 ### Added
 
-- Home、Library、Discover、环境、维护与主窗口 Settings/About 任务导航，软件更新整合在 Library。
-- Formula、Cask 与明确 Node 环境的 npm 目录、搜索和顺序批量操作，保留逐项状态、部分完成与复查结果。
-- CLT/Homebrew 安全安装引导、Node runtime/项目配置、Sources/Terminal 受限配置与维护。
-- 本地文件日志，可配置记录等级和保存期限，并从设置打开日志文件夹；支持英文、简体中文和繁体中文界面。
-- Icon Composer 应用图标、README 图标预览及随 App 打包的彩色工具图标。
-- Library 和 Discover 为官方 Homebrew Cask 按需显示 CaskFlow 真实软件图标，提供本地缓存与缺失回退；Formula、npm 使用通用图标，第三方 Tap 不借用官方同名图标。
-- 独立的维护入口，按检查与清理分类：检查提供 Homebrew 状态检查和 npm 缓存校验，清理保留 npm／node-gyp 缓存、失效 npm 链接、未使用 Node 版本与旧 Manager 日志的受限处理。
-- Settings 新增环境信息分类，集中展示 Homebrew、Node/npm、npm Registry、nvm 和终端的版本、状态、可执行文件、目录及受控 PATH；小票纸面使用锯齿边与分组虚线，长路径完整换行、PATH 逐目录显示，支持复制。
+- Native macOS 26+ Apple Silicon app with task-oriented Home, Library, Discover, Environment, Maintenance, Settings, and About navigation.
+- Unified management for Homebrew Formulae and Casks, global npm packages bound to explicit Node environments, nvm-managed Node.js runtimes, Homebrew Taps, npm registries, and Oh My Zsh themes and plugins.
+- Guided Command Line Tools and verified official Homebrew installer setup on Home, plus local Cask `.app` icon resolution with CaskFlow fallback.
+- Enhanced Homebrew Cask uninstall with ownership-verified related-data cleanup, bounded confirmation plans, and optional one-shot macOS administrator authorization.
+- Unified Maintenance grid with Homebrew diagnostics, npm cache verification, batch installation, and bounded cleanup modals.
+- Configurable local file logging, session diagnostics redaction, Sparkle signed updates, drag-to-install DMG packaging, and full eight-language interface localization following system preferences by default.
 
-### Changed
+### Improved
 
-- 开发环境更名为环境，分类按终端、Brew Tap、npm 软件源、Node.js 排列，默认打开终端；Homebrew Tap 与 npm Registry 拆成独立页面，项目版本保留在 Node.js。
-- Settings 使用通用／环境信息分类，通用保留应用语言与日志偏好；“关于”仍为独立入口。通用的当前会话诊断入口移至 Settings > 通用 > 日志，检查结果与错误仍保留对应详情。
-- 操作页底部以无卡片、居中紧凑的小号次要文字保留必要环境上下文，长页面随正文滚动至末尾；移除重复的范围说明，清理范围提示置于分组标题右侧，保留任务确认中的目标、影响与安全说明。
-- 配置和清理确认随各自页面呈现；Zsh 文件整理保留在终端，Homebrew/Tap 目录元数据更新只由 Brew Tap 页的刷新入口触发，不升级已安装软件。
-- 移除活动记录页面，以跨页面的任务进度和最近结果展示逐项完成情况；历史活动文件不再读写，也不自动迁移或删除。
-- 首页各统计项使用独立小卡片，统一图标底框、阴影与更新箭头；调整侧边栏、工具栏、搜索框、表单间距及按钮样式。
-- 添加 Tap 和从 GitHub 安装插件改用输入弹窗；终端插件通过分组多选面板展示已选项、未选项和来源。
-- 批量安装使用与发现页一致的分类控件，并提供带行号、高亮当前行、边框及共享背景的输入框。
-- 软件库与发现共用带图标的卡片布局：图标固定尺寸并垂直居中，类型标签紧随名称，简介最多两行；版本改用较小的 `V` 前缀，网站文字与图标共同组成蓝色链接。
+- App Store-style horizontal catalog cards with inline pending-update grouping, linked titles, and unified search and scope controls.
+- Receipt-styled Environment Information sheet in Settings displaying detected versions, paths, and controlled `PATH`.
 
 ### Fixed
 
-- Debug 构建使用本地临时签名，并修复嵌套框架签名，无需登录 Apple 账号或选择开发团队。
-- 修复批量安装长列表无法滚动到末尾、输入无法撤销的问题；撤销与重做同步更新输入内容和行号。
-- 限制任务反馈区的总高度并支持整体滚动，避免多组失败结果挤占整个页面。
-- 拒绝将日志写入符号链接或特殊文件，避免异常目标阻塞写入和退出，并保留失败记录供重试。
-- 修正本地化检查对数字插值的误判，补齐原有翻译目录中的缺失项。
-- 修复“关于”和菜单中的检查更新按钮未随后台更新状态恢复的问题。
-- 修复无简介或空简介的软件卡片高度不一致的问题，统一保留两行简介区域；图标加载、失败和成功时保持相同布局尺寸。
-- 修复 npm 缓存校验结果被无关配置准备或通用反馈关闭清空的问题；校验状态独立保留，并绑定 Node 环境、npm 路径及缓存目录，切换目标不显示旧结果。
-- 修复停留环境信息页刷新时 nvm 安装状态不更新的问题；首页、Node.js 与设置共用本机刷新得到的安装状态，区分已安装与本次已加载。
-- 修复终端读取失败后旧快照被当作当前状态展示的问题；首次失败显示不可用，已有数据保留并提示读取失败，后续成功清除提示；本机刷新和操作后复查共用状态更新，内部刷新取消不误报失败。
-
-## [0.1.0] - 2026-09-21
-
-### Added
-
-- Native macOS management for Homebrew, Node/npm/nvm, Zsh, and Oh My Zsh.
-- Controlled plan, confirmation, execution, and post-refresh workflows.
-- Sparkle update support and release automation for arm64 macOS 26 builds.
+- Hardened app termination, read-only subprocess cancellation, clean-machine startup without Node/npm or Command Line Tools, and sheet confirmation guards.

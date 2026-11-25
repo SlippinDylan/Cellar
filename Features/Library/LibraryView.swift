@@ -137,9 +137,6 @@ struct LibraryView: View {
         if scope != .homebrew, nodeReadState == .failed {
             Label("Node and npm could not be refreshed. Previously loaded items may be out of date. Use Refresh to retry.", systemImage: "exclamationmark.circle")
         }
-        if scope != .homebrew, !model.nodeRefreshFailed, model.node != nil, model.nodePackageEnvironment == nil {
-            Text("This Node installation is readable. npm package changes and search require a supported nvm installation.").foregroundStyle(.secondary)
-        }
         if scope != .npm, model.homebrewUpdateState == .failed { updateWarning("Homebrew") }
         if scope != .homebrew, model.nodeUpdateState == .failed { updateWarning("npm") }
     }

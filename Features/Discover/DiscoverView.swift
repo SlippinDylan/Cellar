@@ -23,9 +23,6 @@ struct DiscoverView: View {
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: AppLayout.spacing) {
-                    if scope == .all, !model.nodeRefreshFailed, model.node != nil, model.nodePackageEnvironment == nil {
-                        Text("This Node installation is readable. npm package changes and search require a supported nvm installation.").foregroundStyle(.secondary)
-                    }
                     ForEach(search.unavailableScopes, id: \.self) { source in
                         LabeledContent { Text("Search Unavailable") } label: { Text(source.cardTitle) }
                             .foregroundStyle(.secondary)
@@ -88,25 +85,21 @@ struct DiscoverView: View {
     private func openBatch() { installation.dismissPreview(); showsBatch = true }
 
     @ViewBuilder private var searchContent: some View {
-        if scope == .npm, !model.nodeRefreshFailed, model.node != nil, model.nodePackageEnvironment == nil {
-            ContentUnavailableView("Search Unavailable", systemImage: "shippingbox", description: Text("This Node installation is readable. npm package changes and search require a supported nvm installation."))
-        } else {
-            let state = search.state == .idle ? DiscoverSearchModel.guidance(scope, context: model.discoverContext) ?? .idle : search.state
-            switch state {
-            case .loading:
-                ProgressView()
-                    .accessibilityLabel("Searching Software")
-                    .frame(maxWidth: .infinity, minHeight: 180)
-            case .idle: ContentUnavailableView("Find Software", systemImage: "magnifyingglass", description: Text("Choose a scope, enter a name, then press Return."))
-            case .empty: ContentUnavailableView("No Matching Software", systemImage: "magnifyingglass", description: Text("Try another search or choose a different scope."))
-            case .failed: ContentUnavailableView("Search Unavailable", systemImage: "exclamationmark.circle", description: Text("Check this source, then press Return to retry. Installed software remains available in Library."))
-            case .cancelled: ContentUnavailableView("Search Cancelled", systemImage: "stop.circle", description: Text("Press Return to try again."))
-            case .busy: ContentUnavailableView("Another Task Is Running", systemImage: "clock", description: Text("Wait for the current task to finish, then press Return."))
-            case .homebrewRequired: guidance("Homebrew Required", message: "Use Home to set up Homebrew, or Refresh to check the local environment.")
-            case .nodeRequired: guidance("Node and npm Required", message: "Use Home to check Node and npm. Search needs a known Node environment.")
-            case .registryRequired: guidance("Registry Required", message: "The effective npm Registry is unavailable. Check Sources and Refresh before searching.")
-            case .available: EmptyView()
-            }
+        let state = search.state == .idle ? DiscoverSearchModel.guidance(scope, context: model.discoverContext) ?? .idle : search.state
+        switch state {
+        case .loading:
+            ProgressView()
+                .accessibilityLabel("Searching Software")
+                .frame(maxWidth: .infinity, minHeight: 180)
+        case .idle: ContentUnavailableView("Find Software", systemImage: "magnifyingglass", description: Text("Choose a scope, enter a name, then press Return."))
+        case .empty: ContentUnavailableView("No Matching Software", systemImage: "magnifyingglass", description: Text("Try another search or choose a different scope."))
+        case .failed: ContentUnavailableView("Search Unavailable", systemImage: "exclamationmark.circle", description: Text("Check this source, then press Return to retry. Installed software remains available in Library."))
+        case .cancelled: ContentUnavailableView("Search Cancelled", systemImage: "stop.circle", description: Text("Press Return to try again."))
+        case .busy: ContentUnavailableView("Another Task Is Running", systemImage: "clock", description: Text("Wait for the current task to finish, then press Return."))
+        case .homebrewRequired: guidance("Homebrew Required", message: "Use Home to set up Homebrew, or Refresh to check the local environment.")
+        case .nodeRequired: guidance("Node and npm Required", message: "Use Home to check Node and npm. Search needs a known Node environment.")
+        case .registryRequired: guidance("Registry Required", message: "The effective npm Registry is unavailable. Check Sources and Refresh before searching.")
+        case .available: EmptyView()
         }
     }
 

@@ -8,6 +8,44 @@ enum AppLayout {
     static let minimumDescribedRowHeight: CGFloat = 52
 }
 
+struct DashboardSectionHeader<Trailing: View>: View {
+    let title: LocalizedStringResource
+    let systemImage: String
+    let tint: Color
+    @ViewBuilder let trailing: Trailing
+
+    init(
+        _ title: LocalizedStringResource,
+        systemImage: String,
+        tint: Color,
+        @ViewBuilder trailing: () -> Trailing = { EmptyView() }
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(tint)
+                .accessibilityHidden(true)
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.primary.opacity(0.75))
+                .accessibilityAddTraits(.isHeader)
+            Rectangle()
+                .fill(.separator.opacity(0.35))
+                .frame(height: 0.5)
+                .padding(.leading, 4)
+            trailing
+        }
+        .padding(.leading, 2)
+    }
+}
+
 struct SettingsPage<Content: View>: View {
     var fillsViewport = false
     @ViewBuilder var content: Content
@@ -38,11 +76,8 @@ struct SettingsSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                Text(title).font(.headline)
-                if let website {
-                    WebsiteLink(destination: website, title: websiteTitle)
-                        .font(.caption)
-                }
+                LinkedTitle(title, destination: website, linkLabel: websiteTitle)
+                    .font(.headline)
                 if detail != nil || action != nil { Spacer(minLength: 12) }
                 if let detail {
                     Text(verbatim: detail).font(.callout).foregroundStyle(.secondary)

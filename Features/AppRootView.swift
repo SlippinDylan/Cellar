@@ -1,11 +1,8 @@
 import SwiftUI
 
 struct AppRootView: View {
-    @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
     @FocusedValue(\.discoverToolbar) private var discoverToolbar
     @FocusedValue(\.libraryTabs) private var libraryTabs
-    @FocusedValue(\.libraryUpdateFilter) private var libraryUpdateFilter
-    @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
     @StateObject private var uninstall: LibraryUninstallModel
     @State private var parentWindowHeight: CGFloat?
     @ObservedObject var model: AppModel
@@ -51,14 +48,16 @@ struct AppRootView: View {
         } detail: {
             GeometryReader { geometry in
                 VStack(spacing: 0) {
-                    TaskFeedbackView(model: model, maximumHeight: geometry.size.height * 0.45)
+                    if model.selectedDestination != .maintenance || operationStore.terminationBlockedNotice {
+                        TaskFeedbackView(model: model, maximumHeight: geometry.size.height * 0.45)
+                    }
                     destinationContent
                 }
             }
                 .buttonStyle(.glass)
                 .navigationTitle(model.selectedDestination.title)
                 .toolbar {
-                    if model.selectedDestination == .home {
+                    if model.selectedDestination == .home || model.selectedDestination == .maintenance {
                         ToolbarItem(id: "page-title", placement: .navigation) {
                             Text(model.selectedDestination.title)
                                 .font(.headline)
@@ -70,12 +69,6 @@ struct AppRootView: View {
                         ToolbarItem(id: "tools-categories", placement: .navigation) {
                             ToolbarCategoryPicker(selection: $model.selectedToolsCategory,
                                                   label: LocalizedStringResource("Environment"), title: { $0.title })
-                        }
-                    }
-                    if model.selectedDestination == .maintenance {
-                        ToolbarItem(id: "maintenance-categories", placement: .navigation) {
-                            ToolbarCategoryPicker(selection: $model.selectedMaintenanceCategory,
-                                                  label: LocalizedStringResource("Maintenance"), title: { $0.title })
                         }
                     }
                     if model.selectedDestination == .settings {
@@ -95,12 +88,6 @@ struct AppRootView: View {
                             }
                         }
                     }
-                    if model.selectedDestination == .library, let libraryUpdateFilter {
-                        ToolbarSpacer(.fixed, placement: .automatic)
-                        ToolbarItem(id: "library-update-filter", placement: .automatic) {
-                            LibraryToolbarUpdateFilter(selection: libraryUpdateFilter)
-                        }
-                    }
                     if model.selectedDestination == .discover, let discoverToolbar {
                         ToolbarItem(id: "discover-scopes", placement: .navigation) {
                             DiscoverToolbarScopes(selection: discoverToolbar.scope)
@@ -112,22 +99,13 @@ struct AppRootView: View {
                         ToolbarItem(id: "discover-search", placement: .primaryAction) {
                             CatalogToolbarSearchField(text: discoverToolbar.query, focusRequest: discoverToolbar.focusRequest,
                                                       prompt: LocalizedStringResource("Search Software"), onSubmit: discoverToolbar.submit)
-                                .frame(width: 360)
+                                .frame(minWidth: 130, idealWidth: 240, maxWidth: 320)
                                 .glassEffect(.regular, in: Capsule())
                         }
                         .sharedBackgroundVisibility(.hidden)
                         ToolbarSpacer(.fixed, placement: .primaryAction)
                     }
                     if model.selectedDestination == .library {
-                        if libraryUpdateFilter?.wrappedValue == .pendingUpdates {
-                            ToolbarItem(id: "library-update-all", placement: .primaryAction) {
-                                Button("Update All") { packageUpdateActions?.updateAll() }
-                                    .disabled(packageUpdateActions?.canUpdateAll != true || model.isBusy)
-                                    .buttonStyle(.glass)
-                                    .fixedSize()
-                            }
-                            .sharedBackgroundVisibility(.hidden)
-                        }
                         ToolbarItem(id: "library-actions-search", placement: .primaryAction) {
                             HStack(spacing: 8) {
                                 CatalogToolbarSearchField(text: $libraryQuery, focusRequest: librarySearchFocusRequest,
@@ -179,21 +157,9 @@ struct AppRootView: View {
         .task { await model.refreshOnLaunch() }
     }
 
-    @ViewBuilder private var contextualToolbarActions: some View {
-        switch model.selectedDestination {
-        case .discover:
-            Button("Batch Install") { discoverBatchAction?() }
-                .disabled(discoverBatchAction == nil || model.isBusy)
-                .buttonStyle(.automatic)
-        default:
-            EmptyView()
-        }
-    }
-
     private var toolbarControlGroup: some View {
         ControlGroup {
             RefreshToolbarButton(model: model)
-            contextualToolbarActions
         }
         .controlGroupStyle(.navigation)
         .overlay(alignment: .leading) {
@@ -219,7 +185,7 @@ struct AppRootView: View {
         case .library:
             LibraryView(model: model, uninstall: uninstall, query: $libraryQuery, searchFocusRequest: $librarySearchFocusRequest)
         case .discover:
-            DiscoverView(model: model)
+            DiscoverView(model: model, uninstall: uninstall)
         case .tools:
             ToolsView(model: model)
         case .maintenance:

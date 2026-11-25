@@ -8,7 +8,6 @@ struct LibraryView: View {
     @StateObject private var updates: PackageUpdatesModel
     @State private var selectedTab = CatalogScopeTab.all
     @State private var lastBrewTab = CatalogScopeTab.brewAll
-    @State private var updateFilter = LibraryUpdateFilter.all
     @Binding private var query: String
     @Binding private var searchFocusRequest: UUID?
 
@@ -30,15 +29,13 @@ struct LibraryView: View {
                                          stage: operationStore.currentOperation?.context.stage)
         let updateCards = model.updateCards
         let contents = LibraryCatalog.contents(cards, scope: selectedTab.scope, subtype: selectedTab.subtype, query: query,
-                                               updateFilter: updateFilter, updateCards: updateCards)
+                                               updateFilter: .all, updateCards: updateCards)
         let targets = LibraryCatalog.updateTargets(for: contents.matching, from: updateCards).filter { model.canMutatePackages(in: $0.batchItem.scope) }
-        libraryContent(cards: contents.matching, scopedCount: contents.scoped.count, updateTargets: targets,
-                       totalUpdateCount: LibraryCatalog.updateTargets(for: cards, from: updateCards).count)
+        libraryContent(cards: contents.matching, scopedCount: contents.scoped.count, updateTargets: targets)
         .focusedSceneValue(\.catalogSearchAction) { searchFocusRequest = UUID() }
         .focusedSceneValue(\.libraryTabs, CatalogScopeTabActions(selected: selectedTab) { selectedTab = $0 })
-        .focusedSceneValue(\.libraryUpdateFilter, $updateFilter)
         .focusedSceneValue(\.packageUpdateActions, PackageUpdateActions(
-            canUpdateAll: updateFilter == .pendingUpdates && !targets.isEmpty && canPerformAction,
+            canUpdateAll: !targets.isEmpty && canPerformAction,
             updateAll: { prepareAll(targets, scope: selectedTab.scope, subtype: selectedTab.subtype) },
             checkUpdates: { Task { await model.retryPackageUpdateChecks() } }
         ))
@@ -57,11 +54,14 @@ struct LibraryView: View {
         }
     }
 
-    private func libraryContent(cards: [CatalogCardState], scopedCount: Int, updateTargets: [CatalogCardState], totalUpdateCount: Int) -> some View {
+    private func libraryContent(cards: [CatalogCardState], scopedCount: Int, updateTargets: [CatalogCardState]) -> some View {
         let state = LibraryContentState(readStates: readStates(for: selectedTab.scope), totalCount: scopedCount, matchCount: cards.count)
+        let updateTargetIDs = Set(updateTargets.map(\.identity))
+        let pendingCards = cards.filter { $0.versionStatus == .behind || updateTargetIDs.contains($0.identity) }
+        let installedCards = cards.filter { !($0.versionStatus == .behind || updateTargetIDs.contains($0.identity)) }
         return GeometryReader { viewport in
             ScrollView {
-                VStack(alignment: .leading, spacing: AppLayout.spacing) {
+                VStack(alignment: .leading, spacing: 20) {
                     providerWarnings(for: selectedTab.scope)
                     if updates.isSubmitting, let current = operationStore.currentOperation {
                         ProgressView { Text(current.context.stage.title) }
@@ -72,17 +72,26 @@ struct LibraryView: View {
                     if let reason = uninstall.failureReason { Text(reason.message).foregroundStyle(.secondary) }
                     if let result = uninstall.result { LibraryResultView(result: result, dismiss: uninstall.dismissResult) }
                     if !cards.isEmpty {
-                        CatalogCardGrid(states: cards, minimumCardWidth: 360, updateTargets: updateTargets, isActionEnabled: canPerformAction,
-                                        isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, action in
-                            switch action {
-                            case .update: Task { await updates.update(card) }
-                            case .uninstall: Task { await uninstall.prepare(card.batchItem) }
-                            case .install: preconditionFailure("The installed library does not offer installation")
+                        if !pendingCards.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                DashboardSectionHeader("Pending Updates", systemImage: "arrow.up.circle.fill", tint: .orange) {
+                                    if !updateTargets.isEmpty {
+                                        Button("Update All") {
+                                            prepareAll(updateTargets, scope: selectedTab.scope, subtype: selectedTab.subtype)
+                                        }
+                                        .buttonStyle(CatalogCardPillButtonStyle(tint: .green))
+                                        .disabled(!canPerformAction)
+                                    }
+                                }
+                                catalogGrid(pendingCards, updateTargets: updateTargets)
                             }
                         }
-                    } else if updateFilter == .pendingUpdates, state != .loading && state != .failed {
-                        if scopedCount > 0 && !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { emptyContent(.noMatches) }
-                        else { emptyUpdates(UpdatesContentState(states: updateStates, totalCount: totalUpdateCount, visibleCount: 0)) }
+                        if !installedCards.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                DashboardSectionHeader("Installed", systemImage: "square.grid.2x2.fill", tint: .blue)
+                                catalogGrid(installedCards, updateTargets: updateTargets)
+                            }
+                        }
                     } else { emptyContent(state) }
                 }
                 .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - AppLayout.spacing * 2),
@@ -92,18 +101,19 @@ struct LibraryView: View {
         }
     }
 
-    private var canPerformAction: Bool {
-        !model.isBusy && !updates.isSubmitting && updates.confirmation == nil && uninstall.presentedItem == nil
+    private func catalogGrid(_ states: [CatalogCardState], updateTargets: [CatalogCardState]) -> some View {
+        CatalogCardGrid(states: states, minimumCardWidth: 360, updateTargets: updateTargets, isActionEnabled: canPerformAction,
+                        isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, action in
+            switch action {
+            case .update: Task { await updates.update(card) }
+            case .uninstall: Task { await uninstall.prepare(card.batchItem) }
+            case .install: preconditionFailure("The installed library does not offer installation")
+            }
+        }
     }
 
-    private var updateStates: [HomePackageUpdateState] {
-        let brew = model.homebrewRefreshFailed ? HomePackageUpdateState.failed : model.homebrewUpdateState
-        let npm = model.nodeRefreshFailed ? HomePackageUpdateState.failed : model.nodeUpdateState
-        switch selectedTab.scope {
-        case .all: return [brew, npm]
-        case .homebrew: return [brew]
-        case .npm: return [npm]
-        }
+    private var canPerformAction: Bool {
+        !model.isBusy && !updates.isSubmitting && updates.confirmation == nil && uninstall.presentedItem == nil
     }
 
     private func prepareAll(_ targets: [CatalogCardState], scope: CatalogScope, subtype: LibraryHomebrewSubtype) {
@@ -146,17 +156,6 @@ struct LibraryView: View {
         return Label("\(providerName): Update Check Failed. Known versions are retained. Use Refresh or check again.", systemImage: "exclamationmark.circle")
     }
 
-    @ViewBuilder private func emptyUpdates(_ state: UpdatesContentState) -> some View {
-        switch state {
-        case .notLoaded: ContentUnavailableView("Updates Not Checked", systemImage: "questionmark.circle", description: Text("Use Refresh to read the local environment, then check for package updates."))
-        case .loading: EmptyView()
-        case .failed: ContentUnavailableView("Updates Unavailable", systemImage: "exclamationmark.circle", description: Text("One or more update checks failed. Use Refresh or check again."))
-        case .empty: ContentUnavailableView("No Package Updates", systemImage: "checkmark.circle", description: Text("The completed checks found no package updates in this scope."))
-        case .noMatches: ContentUnavailableView("No Updates in This Scope", systemImage: "line.3.horizontal.decrease.circle", description: Text("Choose another scope to see the known version differences."))
-        case .available: EmptyView()
-        }
-    }
-
     @ViewBuilder private func emptyContent(_ state: LibraryContentState) -> some View {
         switch state {
         case .loading: EmptyView()
@@ -170,26 +169,11 @@ struct LibraryView: View {
 }
 
 private struct LibraryTabsKey: FocusedValueKey { typealias Value = CatalogScopeTabActions }
-private struct LibraryUpdateFilterKey: FocusedValueKey { typealias Value = Binding<LibraryUpdateFilter> }
 
 extension FocusedValues {
-    var libraryUpdateFilter: Binding<LibraryUpdateFilter>? {
-        get { self[LibraryUpdateFilterKey.self] }
-        set { self[LibraryUpdateFilterKey.self] = newValue }
-    }
-
     var libraryTabs: CatalogScopeTabActions? {
         get { self[LibraryTabsKey.self] }
         set { self[LibraryTabsKey.self] = newValue }
-    }
-}
-
-extension LibraryUpdateFilter {
-    var title: LocalizedStringResource {
-        switch self {
-        case .all: LocalizedStringResource("All")
-        case .pendingUpdates: LocalizedStringResource("Pending Updates")
-        }
     }
 }
 

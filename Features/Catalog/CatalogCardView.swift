@@ -7,19 +7,31 @@ struct CatalogCardGrid: View {
     var isActionEnabled = true
     var isItemActionEnabled: (CatalogCardState) -> Bool = { _ in true }
     let action: (CatalogCardState, CatalogCardAction) -> Void
+    @State private var columnCount = 1
+
+    private let columnSpacing: CGFloat = 24
 
     var body: some View {
-        let targets = Dictionary(uniqueKeysWithValues: updateTargets.map { ($0.identity, $0) })
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumCardWidth), spacing: AppLayout.cardSpacing, alignment: .top)], alignment: .leading, spacing: AppLayout.cardSpacing) {
+        let targets = Dictionary(updateTargets.map { ($0.identity, $0) }, uniquingKeysWith: { first, _ in first })
+        let indices = Dictionary(states.enumerated().map { ($0.element.identity, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: minimumCardWidth), spacing: columnSpacing, alignment: .top)], alignment: .leading, spacing: 0) {
             ForEach(states) { state in
                 let target = targets[state.identity]
-                CatalogCardView(state: state, updateTarget: target, isActionEnabled: isActionEnabled && isItemActionEnabled(state)) { selectedAction in
+                let index = indices[state.identity] ?? states.count
+                let showsBottomDivider = index + columnCount < states.count
+                CatalogCardView(state: state, updateTarget: target, isActionEnabled: isActionEnabled && isItemActionEnabled(state),
+                                showsBottomDivider: showsBottomDivider) { selectedAction in
                     if selectedAction == .update, state.primaryAction == .uninstall {
                         guard let target else { preconditionFailure("An enabled library update requires its canonical target") }
                         action(target, selectedAction)
                     } else { action(state, selectedAction) }
                 }
             }
+        }
+        .onGeometryChange(for: Int.self) { proxy in
+            max(1, Int((proxy.size.width + columnSpacing) / (minimumCardWidth + columnSpacing)))
+        } action: { count in
+            columnCount = count
         }
     }
 }
@@ -28,67 +40,78 @@ struct CatalogCardView: View {
     let state: CatalogCardState
     var updateTarget: CatalogCardState? = nil
     var isActionEnabled = true
+    var showsBottomDivider = true
     let action: (CatalogCardAction) -> Void
 
     var body: some View {
-        GroupBox {
-            HStack(alignment: .center, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 14) {
                 CatalogIconView(state: state)
-                VStack(alignment: .leading, spacing: 4) {
-                    header
-                    metadata
-                        .frame(height: 20, alignment: .leading)
+                VStack(alignment: .leading, spacing: 0) {
+                    name
+                    if let description = nonEmptyDescription {
+                        CatalogCardDescription(description: description)
+                            .padding(.top, 3)
+                    }
+                    metadataRow
+                        .padding(.top, 3)
+                    actionRow
+                        .padding(.top, 7)
                 }
+                .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(8)
+            .padding(.vertical, 12)
+
+            Rectangle()
+                .fill(.separator.opacity(showsBottomDivider ? 0.45 : 0))
+                .frame(height: 0.5)
+                .padding(.leading, 70)
+                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
         .controlSize(.regular)
     }
 
-    private var header: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    name
-                    Text(state.identity.providerScope.tagTitle)
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.quaternary, in: Capsule())
-                        .fixedSize()
-                        .accessibilityLabel(Text(state.identity.providerScope.cardTitle))
-                    Spacer(minLength: 0)
-                }
-                CatalogCardDescription(description: state.description)
+    private var nonEmptyDescription: String? {
+        let trimmed = state.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var metadataRow: some View {
+        HStack(alignment: .center, spacing: 5) {
+            Text(state.identity.providerScope.tagTitle)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+                .accessibilityLabel(Text(state.identity.providerScope.cardTitle))
+            if state.currentVersion != nil || state.availableVersion != nil {
+                Circle()
+                    .fill(.tertiary)
+                    .frame(width: 2.5, height: 2.5)
+                    .accessibilityHidden(true)
+                versionSummary
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            controls
-                .controlSize(.large)
+            Spacer(minLength: 0)
         }
     }
 
-    private var metadata: some View {
-        HStack(spacing: 6) {
-            versionSummary
-            if let website = state.websiteURL {
-                WebsiteLink(destination: website, title: LocalizedStringResource("Website for \(state.displayName)"), showsLabel: true)
-                    .font(.callout)
-            }
+    private var actionRow: some View {
+        HStack(alignment: .center, spacing: 8) {
+            controls
             Spacer(minLength: 0)
             taskStatus
                 .fixedSize()
         }
+        .frame(minHeight: 24, alignment: .leading)
     }
 
     private var name: some View {
-        Text(state.displayName)
-            .font(.title3.weight(.semibold))
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .textSelection(.enabled)
+        LinkedTitle(
+            state.displayName,
+            destination: state.websiteURL,
+            linkLabel: state.websiteURL != nil ? LocalizedStringResource("Website for \(state.displayName)") : nil
+        )
+        .font(.headline.weight(.semibold))
     }
 
     private var updateVersion: String? {
@@ -106,12 +129,14 @@ struct CatalogCardView: View {
             }
             HStack(spacing: 4) {
                 title
-                    .font(.callout)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
                 if updateVersion != nil {
                     Image(systemName: "arrow.up.circle.fill")
+                        .font(.caption)
                         .foregroundStyle(.orange)
                         .accessibilityHidden(true)
                 }
@@ -141,42 +166,32 @@ struct CatalogCardView: View {
 
     @ViewBuilder private var controls: some View {
         if state.primaryAction == .uninstall {
-            HStack(spacing: 0) {
+            HStack(spacing: 6) {
                 if updateTarget != nil {
                     Button { action(.update) } label: {
-                        Label("Update", systemImage: "arrowshape.up.circle").labelStyle(.iconOnly)
-                            .foregroundStyle(.green)
+                        Text("Update")
                     }
+                    .buttonStyle(CatalogCardPillButtonStyle(tint: .green))
                     .disabled(!isActionEnabled || state.progress != .idle)
                     .accessibilityLabel(Text("Update \(state.displayName)"))
-                    .help("Update")
                 }
 
                 Button(role: .destructive) { action(.uninstall) } label: {
-                    Label("Uninstall", systemImage: "trash").labelStyle(.iconOnly)
-                        .foregroundStyle(.red)
+                    Text("Uninstall")
                 }
+                .buttonStyle(CatalogCardPillButtonStyle(tint: .red))
                 .disabled(!isActionEnabled || state.progress != .idle)
                 .accessibilityLabel(Text("Uninstall \(state.displayName)"))
-                .help("Uninstall")
             }
-            .buttonStyle(CatalogCardActionButtonStyle())
-            .padding(2)
-            .glassEffect(.regular, in: Capsule())
             .fixedSize()
         } else if let action = state.primaryAction {
             let actionTitle = String(localized: action.cardTitle)
             Button { self.action(action) } label: {
-                Label(action.cardTitle, systemImage: action == .install ? "arrowshape.down.circle" : "arrowshape.up.circle")
-                    .labelStyle(.iconOnly)
-                    .foregroundStyle(action == .update ? Color.green : Color.primary)
+                Text(action.cardTitle)
             }
-            .buttonStyle(CatalogCardActionButtonStyle())
-            .padding(2)
-            .glassEffect(.regular, in: Capsule())
+            .buttonStyle(CatalogCardPillButtonStyle(tint: action == .update ? .green : .blue))
             .disabled(!isActionEnabled || state.progress != .idle)
             .accessibilityLabel(Text("\(actionTitle) \(state.displayName)"))
-            .help(Text(action.cardTitle))
         }
     }
 }
@@ -185,31 +200,51 @@ struct CatalogCardDescription: View {
     let description: String?
 
     var body: some View {
-        let text = description ?? ""
-        // Empty Text reserves only one line; a blank glyph preserves the two-line layout.
-        Text(text.isEmpty ? " " : text)
-            .font(.callout)
+        let text = (description ?? "")
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        Text(text)
+            .font(.subheadline)
             .foregroundStyle(.secondary)
-            .lineLimit(2, reservesSpace: true)
+            .lineLimit(1)
             .truncationMode(.tail)
-            .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityHidden(text.isEmpty)
     }
 }
 
-private struct CatalogCardActionButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-    @State private var isHovered = false
+struct CatalogCardPillButtonStyle: ButtonStyle {
+    let tint: Color
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.body)
-            .frame(width: 28, height: 28)
-            .background(.quaternary.opacity(isEnabled && (isHovered || configuration.isPressed) ? 0.7 : 0), in: Capsule())
-            .contentShape(Capsule())
-            .opacity(isEnabled ? 1 : 0.5)
-            .onHover { isHovered = $0 }
+        PillButtonBody(configuration: configuration, tint: tint)
+    }
+
+    private struct PillButtonBody: View {
+        @Environment(\.colorScheme) private var colorScheme
+        @Environment(\.isEnabled) private var isEnabled
+        @State private var isHovered = false
+        let configuration: Configuration
+        let tint: Color
+
+        var body: some View {
+            let isActive = isEnabled && (isHovered || configuration.isPressed)
+            let neutralBase = colorScheme == .dark ? Color.white.opacity(0.11) : Color.black.opacity(0.06)
+
+            configuration.label
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isActive ? .white : tint)
+                .padding(.horizontal, 14)
+                .frame(minWidth: 56)
+                .frame(height: 24)
+                .background(isActive ? tint : neutralBase, in: Capsule())
+                .contentShape(Capsule())
+                .opacity(isEnabled ? 1 : 0.45)
+                .onHover { isHovered = $0 }
+                .animation(.easeOut(duration: 0.14), value: isHovered)
+        }
     }
 }
 

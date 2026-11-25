@@ -90,6 +90,12 @@ enum HomeVersion {
         return "\(current) → \(available)"
     }
 
+    static func updateDetail(current: String, online: OnlineVersionState) -> String? {
+        let current = normalized(current)
+        guard case .available(let version) = online, hasUpdate(current: current, online: online) else { return nil }
+        return "→ \(normalized(version))"
+    }
+
     static func hasUpdate(current: String, online: OnlineVersionState) -> Bool {
         guard case .available(let version) = online else { return false }
         return SemanticVersionStatus(current: normalized(current), available: normalized(version)).allowsUpdate

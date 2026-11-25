@@ -25,7 +25,7 @@ final class CatalogIconTests: XCTestCase {
                                                        running: nil, canInstall: true)
         XCTAssertEqual(card.icon, CatalogIcon.homebrew(package))
         XCTAssertEqual(card.identity, .homebrew(package.identity))
-        XCTAssertNil(card.primaryAction)
+        XCTAssertEqual(card.primaryAction, .uninstall)
         let snapshot = HomebrewSnapshot(executablePath: "/fixture/brew", version: "5.0",
             configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]),
             packages: [package], outdatedPackages: [], taps: [], sectionErrors: [:], controlledPath: "",
@@ -35,6 +35,36 @@ final class CatalogIconTests: XCTestCase {
         XCTAssertEqual(library.icon, card.icon)
         XCTAssertEqual(library.identity, card.identity)
         XCTAssertEqual(library.primaryAction, .uninstall)
+    }
+
+    func testInstalledCaskResolvesAllowedLocalAppCandidatesAndRejectsUnsafePaths() throws {
+        let home = URL(filePath: "/Users/fixture-user")
+        let validArtifacts = [
+            HomebrewCaskArtifact(kind: "app", values: ["Alcove.app"], category: .installed,
+                                 application: .init(source: "Subdir/Alcove.app", target: nil)),
+            HomebrewCaskArtifact(kind: "app", values: ["~/Applications/Custom.app"], category: .installed,
+                                 application: .init(source: "Custom.app", target: "~/Applications/Custom.app")),
+            HomebrewCaskArtifact(kind: "app", values: ["/etc/passwd"], category: .installed,
+                                 application: .init(source: "/etc/passwd", target: "/etc/passwd")),
+            HomebrewCaskArtifact(kind: "app", values: ["/Applications/../tmp/Evil.app"], category: .installed,
+                                 application: .init(source: "Evil.app", target: "/Applications/../tmp/Evil.app")),
+            HomebrewCaskArtifact(kind: "app", values: ["/Applications/NotAnApp"], category: .installed,
+                                 application: .init(source: "NotAnApp", target: "/Applications/NotAnApp")),
+        ]
+        let installedCask = HomebrewPackage(
+            identity: .init(name: "alcove", kind: .cask), displayName: "Alcove", description: nil, homepage: nil,
+            installedVersions: ["1.0"], currentVersion: "1.0", tap: "vendor/tap", dependencies: [],
+            pinned: false, deprecated: false, disabled: false, artifacts: validArtifacts
+        )
+        let resolved = CatalogIcon.homebrew(installedCask, homeDirectory: home)
+        XCTAssertEqual(resolved, .localApp(
+            candidates: [
+                "/Applications/Alcove.app",
+                "/Users/fixture-user/Applications/Alcove.app",
+                "/Users/fixture-user/Applications/Custom.app",
+            ],
+            fallback: nil
+        ))
     }
 
     func testSuccessIsCachedAndSharedByStoreInstances() async throws {

@@ -111,8 +111,8 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(detailContent.lowerBound < splitViewStyle.lowerBound)
         XCTAssertTrue(shell.contains(".buttonStyle(.glass)"))
         XCTAssertFalse(cards.contains(".buttonStyle(.bordered)"))
-        XCTAssertTrue(cards.contains(".buttonStyle(.glass)") || cards.contains(".glassEffect("),
-                      "Catalog actions must use system glass, supplied by a button style or a glass effect.")
+        XCTAssertTrue(cards.contains("CatalogCardPillButtonStyle("),
+                      "Catalog actions should use the flat App Store-style capsule button.")
     }
 
     func testRefreshToolbarShowsProgressInPlaceWithoutAnActivityShortcut() throws {
@@ -157,13 +157,11 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(shell.contains(".controlGroupStyle(.navigation)"))
         XCTAssertFalse(shell.contains("ToolbarItemGroup(placement: .primaryAction)"))
         XCTAssertFalse(shell.contains("@FocusedValue(\\.libraryActions)"))
-        XCTAssertTrue(shell.contains("@FocusedValue(\\.discoverBatchAction)"))
-        XCTAssertTrue(shell.contains("@FocusedValue(\\.packageUpdateActions)"))
+        XCTAssertFalse(shell.contains("@FocusedValue(\\.libraryUpdateFilter)"))
         XCTAssertFalse(shell.contains("@FocusedValue(\\.activityActions)"))
-        XCTAssertTrue(shell.contains(".buttonStyle(.automatic)"))
         XCTAssertTrue(shell.contains("ToolbarSpacer(.fixed, placement: .primaryAction)"))
         XCTAssertTrue(shell.contains("ToolbarItem(id: \"library-actions-search\", placement: .primaryAction)"))
-        XCTAssertTrue(shell.contains(".frame(width: 360)"))
+        XCTAssertEqual(shell.components(separatedBy: ".frame(minWidth: 130, idealWidth: 240, maxWidth: 320)").count - 1, 2)
         let commands = try String(contentsOf: root.appending(path: "Features/AppCommands.swift"), encoding: .utf8)
         XCTAssertTrue(commands.contains("CommandGroup(replacing: .newItem) {}"))
         XCTAssertTrue(toolbarPages.allSatisfy { !$0.contains(".toolbar {") })

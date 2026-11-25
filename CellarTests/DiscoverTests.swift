@@ -330,7 +330,7 @@ final class DiscoverTests: XCTestCase {
         for (name, status) in zip(["behind", "current", "ahead", "unknown"], statuses) {
             let card = npmResult(name).card(homebrew: nil, node: node, activeIntent: nil, running: nil, canInstall: true)
             XCTAssertEqual(card.versionStatus, status)
-            XCTAssertNil(card.primaryAction)
+            XCTAssertEqual(card.primaryAction, .uninstall)
             XCTAssertEqual(card.nodeEnvironment, environment)
         }
         XCTAssertEqual(npmResult("missing").card(homebrew: nil, node: node, activeIntent: nil, running: nil, canInstall: true).primaryAction, .install)

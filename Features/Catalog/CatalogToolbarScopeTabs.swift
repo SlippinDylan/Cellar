@@ -93,41 +93,6 @@ struct CatalogToolbarScopeTabs: NSViewRepresentable {
     }
 }
 
-struct LibraryToolbarUpdateFilter: NSViewRepresentable {
-    @Binding var selection: LibraryUpdateFilter
-
-    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
-
-    func makeNSView(context: Context) -> NSSegmentedControl {
-        let control = NSSegmentedControl(labels: [String(localized: "Pending Updates")], trackingMode: .selectOne,
-                                         target: context.coordinator, action: #selector(Coordinator.toggleFilter(_:)))
-        control.segmentStyle = .automatic
-        control.segmentDistribution = .fit
-        control.setAccessibilityLabel(String(localized: "Update Status"))
-        updateNSView(control, context: context)
-        return control
-    }
-
-    func updateNSView(_ control: NSSegmentedControl, context: Context) {
-        context.coordinator.parent = self
-        control.setSelected(selection == .pendingUpdates, forSegment: 0)
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSSegmentedControl, context: Context) -> CGSize? {
-        nsView.fittingSize
-    }
-
-    @MainActor final class Coordinator: NSObject {
-        var parent: LibraryToolbarUpdateFilter
-        init(parent: LibraryToolbarUpdateFilter) { self.parent = parent }
-
-        @objc func toggleFilter(_ sender: NSSegmentedControl) {
-            parent.selection = parent.selection == .pendingUpdates ? .all : .pendingUpdates
-            sender.setSelected(parent.selection == .pendingUpdates, forSegment: 0)
-        }
-    }
-}
-
 private extension CatalogScopeTab {
     var title: String {
         switch self {

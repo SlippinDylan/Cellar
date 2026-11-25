@@ -57,11 +57,11 @@ enum DiscoverResult: Sendable {
         let icon: CatalogIcon
         switch self {
         case .homebrew(let package):
-            icon = .homebrew(package)
+            let current = homebrew?.packages.first { $0.identity == package.identity } ?? package
+            icon = .homebrew(current)
             name = package.displayName
             description = package.description
             available = package.currentVersion
-            let current = homebrew?.packages.first { $0.identity == package.identity } ?? package
             installed = current.isInstalled ? current.installedVersions.joined(separator: ", ") : nil
             let component = package.identity.kind == .formula ? "formula" : "cask"
             website = CatalogWebsites.url(host: "formulae.brew.sh", path: "/\(component)/\(package.identity.name)")
@@ -78,12 +78,17 @@ enum DiscoverResult: Sendable {
             item = .npm(package.identity)
         }
         let status = SemanticVersionStatus(current: installed, available: available)
-        // Discover installs missing software; Updates owns upgrading installed packages.
+        // Discover installs missing software and lets installed entries update or uninstall via the shared library flows.
+        let primaryAction: CatalogCardAction? = if installed != nil {
+            .uninstall
+        } else {
+            canInstall ? .install : nil
+        }
         guard let card = CatalogCardState(identity: identity, displayName: name, description: description,
                                            currentVersion: installed, availableVersion: available, versionStatus: status,
                                            websiteURL: website, progress: LibraryCatalog.progress(for: item, intent: activeIntent, running: running, stage: stage),
-                                           primaryAction: installed == nil && canInstall ? .install : nil, icon: icon)
-        else { preconditionFailure("An install card has no update invariant") }
+                                           primaryAction: primaryAction, icon: icon)
+        else { preconditionFailure("An install or uninstall card has no update invariant") }
         return card
     }
 }

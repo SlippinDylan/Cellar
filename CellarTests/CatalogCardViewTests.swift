@@ -6,13 +6,13 @@ import XCTest
 
 final class CatalogCardViewTests: XCTestCase {
     @MainActor
-    func testDescriptionReservesTwoLinesForMissingEmptyAndWrappedContent() {
-        let descriptions: [String?] = [nil, "", "Short description", "First line\nSecond line",
-            "A long description that wraps across several lines and must truncate after the second line."]
+    func testDescriptionUsesSingleLineTruncationAndCardKeepsUniformHeight() throws {
+        let descriptions: [String?] = ["Short description", "First line\nSecond line",
+            "A long description that wraps across several lines and must truncate after the first line."]
         for width: CGFloat in [160, 240, 360] {
-            let reference = NSHostingView(rootView: Text("First line\nSecond line")
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
+            let reference = NSHostingView(rootView: Text("Single line")
+                .font(.subheadline)
+                .lineLimit(1)
                 .frame(width: width))
             let expectedHeight = reference.fittingSize.height
             XCTAssertGreaterThan(expectedHeight, 0)
@@ -22,6 +22,13 @@ final class CatalogCardViewTests: XCTestCase {
                                "Description \(String(describing: description)) at width \(width)")
             }
         }
+        let environment = NodeEnvironmentContext(identifier: "nvm:v22.0.0", nodeVersion: "v22.0.0", npmVersion: "10.0.0")
+        let identity = CatalogItemIdentity.npm(.init(name: "codex", environment: environment))
+        let withDesc = try XCTUnwrap(CatalogCardState(identity: identity, displayName: "codex", description: "CLI coding agent", currentVersion: "1.0.0", availableVersion: nil, versionStatus: .current, websiteURL: nil, progress: .idle, primaryAction: .uninstall))
+        let withoutDesc = try XCTUnwrap(CatalogCardState(identity: identity, displayName: "codex", description: nil, currentVersion: "1.0.0", availableVersion: nil, versionStatus: .current, websiteURL: nil, progress: .idle, primaryAction: .uninstall))
+        let heightWith = NSHostingView(rootView: CatalogCardView(state: withDesc) { _ in }.frame(width: 360)).fittingSize.height
+        let heightWithout = NSHostingView(rootView: CatalogCardView(state: withoutDesc) { _ in }.frame(width: 360)).fittingSize.height
+        XCTAssertEqual(heightWith, heightWithout, accuracy: 0.5)
     }
 
     func testVerificationProgressIsExplicitAndDecorativeSpinnerIsHidden() throws {
@@ -44,13 +51,13 @@ final class CatalogCardViewTests: XCTestCase {
         }
     }
 
-    func testCardIsInertByConstructionWithTwoLineDescriptionAndExplicitControls() throws {
+    func testCardIsInertByConstructionWithSingleLineDescriptionAndExplicitControls() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appending(path: "Features/Catalog/CatalogCardView.swift"), encoding: .utf8)
         for forbidden in ["NavigationLink", ".onTapGesture", ".contextMenu", "AsyncImage", "Process("] {
             XCTAssertFalse(source.contains(forbidden), forbidden)
         }
-        XCTAssertTrue(source.contains(".lineLimit(2, reservesSpace: true)"))
+        XCTAssertTrue(source.contains(".lineLimit(1)"))
         XCTAssertTrue(source.contains(".truncationMode(.tail)"))
         XCTAssertTrue(source.contains("if let action = state.primaryAction"))
         XCTAssertTrue(source.contains("state.progress"))

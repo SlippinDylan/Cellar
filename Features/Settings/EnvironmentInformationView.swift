@@ -67,11 +67,10 @@ struct EnvironmentInformationView: View {
                     if let node = model.node {
                         LabeledContent("Default Version", value: node.installations.first(where: \.isDefault)?.version ?? String(localized: "Unresolved"))
                         ForEach(node.installations) { installation in
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(verbatim: installation.version).foregroundStyle(.secondary)
+                            LabeledContent {
                                 Text(verbatim: installation.directory)
-                                    .font(.system(.callout, design: .monospaced))
-                                    .fixedSize(horizontal: false, vertical: true)
+                            } label: {
+                                Text(verbatim: installation.version)
                             }
                         }
                         if node.maintenanceError != nil { Text("Some maintenance information could not be read.") }
@@ -86,8 +85,8 @@ struct EnvironmentInformationView: View {
                         if shell.ohMyZshInstalled {
                             pathRow("Oh My Zsh Directory", shell.ohMyZshPath)
                             LabeledContent("Local Theme", value: shell.currentTheme)
-                            pathRow("Active Plugins", shell.activePlugins.joined(separator: ", "))
-                            pathRow("Custom Plugins", shell.installedCustomPlugins.joined(separator: ", "))
+                            pluginBlock("Active Plugins", shell.activePlugins)
+                            pluginBlock("Custom Plugins", shell.installedCustomPlugins)
                         }
                         if model.shellRefreshFailed {
                             Text("Local Terminal refresh failed. Previously read information is retained.")
@@ -142,30 +141,82 @@ struct EnvironmentInformationView: View {
     }
 
     private func pathRow(_ title: LocalizedStringResource, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(title).foregroundStyle(.secondary)
+        LabeledContent(title) {
             Text(verbatim: value)
+        }
+    }
+
+    @ViewBuilder
+    private func pathList(_ title: LocalizedStringResource, _ value: String) -> some View {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let entries = trimmed.isEmpty ? [] : value.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+        if entries.isEmpty {
+            LabeledContent(title) {
+                Text("—")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            receiptBlock(title, count: entries.count, content: entries.joined(separator: "\n"))
+        }
+    }
+
+    @ViewBuilder
+    private func pluginBlock(_ title: LocalizedStringResource, _ plugins: [String]) -> some View {
+        if plugins.isEmpty {
+            LabeledContent(title) {
+                Text("—")
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            receiptBlock(title, count: plugins.count, content: plugins.joined(separator: ", "))
+        }
+    }
+
+    private func receiptBlock(_ title: LocalizedStringResource, count: Int, content: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text(verbatim: count.formatted())
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.tertiary)
+            }
+            Text(verbatim: content)
                 .font(.system(.callout, design: .monospaced))
+                .lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(.primary.opacity(0.035))
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(.primary.opacity(0.06), lineWidth: 0.75)
+                        .allowsHitTesting(false)
+                }
         }
         .padding(.top, 4)
     }
 
-    private func pathList(_ title: LocalizedStringResource, _ value: String) -> some View {
-        pathRow(title, value.split(separator: ":", omittingEmptySubsequences: false).joined(separator: "\n"))
-    }
-
     private func registryRow(_ title: LocalizedStringResource, _ value: String) -> some View {
-        pathRow(title, value.isEmpty || value == "undefined" || value == "null"
-                ? String(localized: "Not Set") : DiagnosticText.sanitized(value))
+        let isUnset = value.isEmpty || value == "undefined" || value == "null"
+        return LabeledContent(title) {
+            Text(verbatim: isUnset ? String(localized: "Not Set") : DiagnosticText.sanitized(value))
+                .foregroundStyle(isUnset ? .secondary : .primary)
+        }
     }
 }
 
 private struct ReceiptRowStyle: LabeledContentStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
-            configuration.label.foregroundStyle(.secondary)
-            Spacer(minLength: 0)
+            configuration.label
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: 8)
             configuration.content
                 .font(.system(.callout, design: .monospaced))
                 .multilineTextAlignment(.trailing)

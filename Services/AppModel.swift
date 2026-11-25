@@ -38,7 +38,6 @@ final class AppModel: ObservableObject {
     @Published var shellOperationError: String?
     @Published var isShellWorking = false
     @Published var selectedToolsCategory: ToolsCategory = .terminal
-    @Published var selectedMaintenanceCategory: MaintenanceCategory = .checks
     @Published var selectedSettingsCategory: SettingsCategory = .general
     @Published var terminalConfigurationPlan: ShellConfigurationPlan?
     @Published var terminalConfigurationResult: ShellConfigurationResult?

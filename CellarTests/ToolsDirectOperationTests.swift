@@ -100,7 +100,7 @@ final class ToolsDirectOperationTests: XCTestCase {
             (.init(action: .setRegistry, subject: "https://registry.example.test"), .npmSources),
             (.init(action: .setDefaultNode, subject: "v22.0.0"), .tools),
             (NodeMaintenanceAction.verify.request, nil),
-        ] + NodeMaintenanceAction.allCases.filter { $0.category == .cleanup }.map { ($0.request, .maintenance) }
+        ] + NodeMaintenanceAction.allCases.filter { $0 != .verify }.map { ($0.request, .maintenance) }
         for (request, expectedSurface) in cases {
             let plan = NodeActionPlan(id: UUID(), request: request, payload: payload, generatedAt: Date())
             model.nodePlan = plan

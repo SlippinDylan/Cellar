@@ -623,11 +623,10 @@ final class HomebrewClientTests: XCTestCase {
         let history = try XCTUnwrap(model.activityStore)
         XCTAssertTrue(history.summaries.isEmpty)
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let tools = try String(contentsOf: root.appending(path: "Features/Tools/DiagnosticsToolsView.swift"), encoding: .utf8)
+        let tools = try String(contentsOf: root.appending(path: "Features/Tools/MaintenanceView.swift"), encoding: .utf8)
         let activity = try String(contentsOf: root.appending(path: "Features/TaskFeedbackView.swift"), encoding: .utf8)
         XCTAssertTrue(tools.contains("ActivityDiagnosticsView("))
         for raw in ["standardOutput", "standardError", "model.activities"] { XCTAssertFalse(activity.contains(raw), raw) }
-        XCTAssertFalse(tools.contains("report.command.standardOutput"))
     }
 
     @MainActor

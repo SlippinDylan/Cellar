@@ -1,7 +1,7 @@
 import SwiftUI
 
 private struct CatalogSearchActionKey: FocusedValueKey { typealias Value = () -> Void }
-private struct DiscoverBatchActionKey: FocusedValueKey { typealias Value = () -> Void }
+private struct BatchInstallActionKey: FocusedValueKey { typealias Value = () -> Void }
 
 extension FocusedValues {
     var catalogSearchAction: (() -> Void)? {
@@ -9,8 +9,8 @@ extension FocusedValues {
         set { self[CatalogSearchActionKey.self] = newValue }
     }
 
-    var discoverBatchAction: (() -> Void)? {
-        get { self[DiscoverBatchActionKey.self] }
-        set { self[DiscoverBatchActionKey.self] = newValue }
+    var batchInstallAction: (() -> Void)? {
+        get { self[BatchInstallActionKey.self] }
+        set { self[BatchInstallActionKey.self] = newValue }
     }
 }

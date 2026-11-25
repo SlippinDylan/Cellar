@@ -2,7 +2,7 @@ import SwiftUI
 
 struct AppCommands: Commands {
     @FocusedValue(\.catalogSearchAction) private var catalogSearchAction
-    @FocusedValue(\.discoverBatchAction) private var discoverBatchAction
+    @FocusedValue(\.batchInstallAction) private var batchInstallAction
     @FocusedValue(\.packageUpdateActions) private var packageUpdateActions
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
@@ -39,8 +39,8 @@ struct AppCommands: Commands {
             Button("Find") { catalogSearchAction?() }
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(catalogSearchAction == nil)
-            Button("Batch Install") { discoverBatchAction?() }
-                .disabled(model.selectedDestination != .maintenance || discoverBatchAction == nil || model.isBusy
+            Button("Batch Install") { batchInstallAction?() }
+                .disabled(model.selectedDestination != .maintenance || batchInstallAction == nil || model.isBusy
                           || (!model.discoverContext.homebrewAvailable && model.discoverContext.npm == nil))
             Button("Update All") { packageUpdateActions?.updateAll() }
                 .disabled(model.selectedDestination != .library || packageUpdateActions?.canUpdateAll != true || model.isBusy)

@@ -122,24 +122,21 @@ struct HomeView: View {
                 detailTint: homebrewUpdateDetail != nil ? .orange : nil,
                 systemImage: "mug.fill",
                 brandAssetName: "HomebrewBrand",
-                tint: HomeMetricPalette.homebrew,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.homebrew
             )
             StatusMetric(
                 title: String(localized: "Formula"),
                 value: metricCount(summary?.formulaCount),
                 systemImage: "shippingbox.fill",
                 brandAssetName: "FormulaIcon",
-                tint: HomeMetricPalette.formula,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.formula
             )
             StatusMetric(
                 title: String(localized: "Cask"),
                 value: metricCount(summary?.caskCount),
                 systemImage: "app.grid",
                 brandAssetName: "CaskIcon",
-                tint: HomeMetricPalette.cask,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.cask
             )
             StatusMetric(
                 title: String(localized: "Updates"),
@@ -148,8 +145,7 @@ struct HomeView: View {
                 valueSystemImageHelp: hasHomebrewPackageUpdates ? "Update Available" : nil,
                 systemImage: "arrow.up.circle.fill",
                 brandAssetName: "UpdatesIcon",
-                tint: HomeMetricPalette.updates,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.updates
             )
         }
     }
@@ -175,8 +171,7 @@ struct HomeView: View {
                 titleLinkLabel: "Apple Installation Guide",
                 systemImage: "hammer.fill",
                 brandAssetName: "CommandLineToolsIcon",
-                tint: HomeMetricPalette.commandLineTools,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.commandLineTools
             )
             StatusMetric(
                 title: String(localized: "Zsh"),
@@ -184,8 +179,7 @@ struct HomeView: View {
                 detail: zshVersion.architecture,
                 systemImage: "terminal.fill",
                 brandAssetName: "ZshBrand",
-                tint: HomeMetricPalette.zsh,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.zsh
             )
             StatusMetric(
                 title: String(localized: "Oh My Zsh"),
@@ -194,8 +188,7 @@ struct HomeView: View {
                 statusDotColor: omzInstalled ? .green : nil,
                 systemImage: "bolt.fill",
                 brandAssetName: "OhMyZshBrand",
-                tint: HomeMetricPalette.ohMyZsh,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.ohMyZsh
             )
         }
     }
@@ -216,8 +209,7 @@ struct HomeView: View {
                 detailTint: nodeUpdateDetail != nil ? .orange : nil,
                 systemImage: "shippingbox.fill",
                 brandAssetName: "NodeBrand",
-                tint: HomeMetricPalette.node,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.node
             )
             StatusMetric(
                 title: String(localized: "npm"),
@@ -228,16 +220,14 @@ struct HomeView: View {
                 detailTint: npmUpdateDetail != nil ? .orange : nil,
                 systemImage: "shippingbox.circle.fill",
                 brandAssetName: "NPMBrand",
-                tint: HomeMetricPalette.npm,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.npm
             )
             StatusMetric(
                 title: String(localized: "Global Packages"),
                 value: metricCount(summary?.packageCount),
                 systemImage: "square.stack.3d.up.fill",
                 brandAssetName: "GlobalPackagesIcon",
-                tint: HomeMetricPalette.globalPackages,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.globalPackages
             )
             StatusMetric(
                 title: String(localized: "Updates"),
@@ -246,8 +236,7 @@ struct HomeView: View {
                 valueSystemImageHelp: hasNodePackageUpdates ? "Update Available" : nil,
                 systemImage: "arrow.up.circle.fill",
                 brandAssetName: "UpdatesIcon",
-                tint: HomeMetricPalette.updates,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.updates
             )
             StatusMetric(
                 title: String(localized: "nvm"),
@@ -259,8 +248,7 @@ struct HomeView: View {
                 detail: showsNvmDefault ? String(localized: "nvm Default") : nil,
                 systemImage: "point.3.connected.trianglepath.dotted",
                 brandAssetName: "NVMBrand",
-                tint: HomeMetricPalette.nvm,
-                isStandaloneCard: true
+                tint: HomeMetricPalette.nvm
             )
         }
     }

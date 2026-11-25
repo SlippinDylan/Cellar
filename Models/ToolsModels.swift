@@ -13,17 +13,6 @@ enum ToolsCategory: String, CaseIterable, Identifiable {
     }
 }
 
-enum MaintenanceCategory: String, CaseIterable, Identifiable {
-    case checks, cleanup
-    var id: Self { self }
-    var title: LocalizedStringResource {
-        switch self {
-        case .checks: LocalizedStringResource("Checks")
-        case .cleanup: LocalizedStringResource("Cleanup")
-        }
-    }
-}
-
 enum SettingsCategory: String, CaseIterable, Identifiable {
     case general, environment
     var id: Self { self }
@@ -43,7 +32,6 @@ enum NodeMaintenanceAction: String, CaseIterable, Identifiable {
     case oldNode = "nvm-old-versions"
     case logs
     var id: Self { self }
-    var category: MaintenanceCategory { self == .verify ? .checks : .cleanup }
     var title: LocalizedStringResource {
         switch self {
         case .verify: LocalizedStringResource("Verify npm Cache")

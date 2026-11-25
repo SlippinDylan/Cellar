@@ -602,7 +602,6 @@ final class HomeDashboardTests: XCTestCase {
         let home = try String(contentsOf: root.appending(path: "Features/Home/HomeView.swift"), encoding: .utf8)
 
         XCTAssertFalse(home.contains("StatusMetricDivider"))
-        XCTAssertEqual(home.components(separatedBy: "isStandaloneCard: true").count - 1, 12)
         XCTAssertTrue(home.contains("homebrewSection\n                nodeSection\n                terminalEnvironmentSection"))
         XCTAssertTrue(home.contains("private func homebrewMetrics"))
         XCTAssertTrue(home.contains("private func nodeMetrics(_ summary: NodeDashboardSummary?)"))

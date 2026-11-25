@@ -6,7 +6,6 @@ struct StatusMetric: View {
     let value: String
     let valueTint: Color?
     let statusDotColor: Color?
-    let valueSuffix: String?
     let valueSystemImage: String?
     let valueSystemImageTint: Color
     let valueSystemImageHelp: LocalizedStringResource?
@@ -16,16 +15,13 @@ struct StatusMetric: View {
     let detailTint: Color?
     let systemImage: String
     let brandAssetName: String?
-    let assetSize: CGFloat
     let tint: Color
-    let isStandaloneCard: Bool
 
     init(
         title: String,
         value: String,
         valueTint: Color? = nil,
         statusDotColor: Color? = nil,
-        valueSuffix: String? = nil,
         valueSystemImage: String? = nil,
         valueSystemImageTint: Color = .orange,
         valueSystemImageHelp: LocalizedStringResource? = nil,
@@ -35,15 +31,12 @@ struct StatusMetric: View {
         detailTint: Color? = nil,
         systemImage: String,
         brandAssetName: String? = nil,
-        assetSize: CGFloat = 30,
-        tint: Color,
-        isStandaloneCard: Bool = false
+        tint: Color
     ) {
         self.title = title
         self.value = value
         self.valueTint = valueTint
         self.statusDotColor = statusDotColor
-        self.valueSuffix = valueSuffix
         self.valueSystemImage = valueSystemImage
         self.valueSystemImageTint = valueSystemImageTint
         self.valueSystemImageHelp = valueSystemImageHelp
@@ -53,22 +46,12 @@ struct StatusMetric: View {
         self.detailTint = detailTint
         self.systemImage = systemImage
         self.brandAssetName = brandAssetName
-        self.assetSize = assetSize
         self.tint = tint
-        self.isStandaloneCard = isStandaloneCard
     }
 
     var body: some View {
-        if isStandaloneCard {
-            watermarkCard
-        } else {
-            inlineMetric
-        }
-    }
-
-    private var watermarkCard: some View {
         let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-        return VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .center, spacing: 6) {
                 LinkedTitle(title, destination: titleLink, linkLabel: titleLinkLabel, baseColor: .secondary)
                     .font(.callout.weight(.semibold))
@@ -96,22 +79,12 @@ struct StatusMetric: View {
                             .accessibilityHidden(true)
                     }
 
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(value)
-                            .font(.title2.weight(.semibold).monospacedDigit())
-                            .foregroundStyle(valueTint ?? .primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                            .truncationMode(.middle)
-
-                        if let valueSuffix {
-                            Text(valueSuffix)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                    }
+                    Text(value)
+                        .font(.title2.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(valueTint ?? .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .truncationMode(.middle)
                 }
 
                 if let detail {
@@ -191,58 +164,5 @@ struct StatusMetric: View {
                 .font(.system(size: 46, weight: .semibold))
                 .foregroundStyle(tint)
         }
-    }
-
-    private var inlineMetric: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Group {
-                if let brandAssetName {
-                    Image(brandAssetName)
-                        .renderingMode(.original)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: assetSize, height: assetSize)
-                } else {
-                    Image(systemName: systemImage)
-                        .font(.system(size: 20))
-                        .foregroundStyle(tint)
-                }
-            }
-            .frame(width: 28)
-            .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 4) {
-                LinkedTitle(title, destination: titleLink, linkLabel: titleLinkLabel, baseColor: .secondary)
-                    .font(.caption)
-
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(value)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .truncationMode(.middle)
-                    if let valueSuffix {
-                        Text(valueSuffix)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    if let valueSystemImage {
-                        Image(systemName: valueSystemImage)
-                            .foregroundStyle(valueSystemImageTint)
-                            .accessibilityHidden(true)
-                    }
-                }
-                .font(.headline)
-
-                if let detail {
-                    Text(detail)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-            .textSelection(.enabled)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -21,6 +21,8 @@ on:
         required: true
       SPARKLE_PUBLIC_KEY:
         required: true
+      DISCORD_WEBHOOK_URL:
+        required: false
   workflow_dispatch:
     inputs:
       tag:
@@ -60,6 +62,18 @@ jobs:
           ref: ${{ env.SOURCE_REF }}
           path: release-source
           persist-credentials: false
+
+      - name: Record released commit SHA
+        run: echo "RELEASE_SHA=$(git -C release-source rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Report actual stage start
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [[ -n "${DISCORD_WEBHOOK_URL:-}" ]]; then
+            node .github/scripts/discord-notify.mjs --stage-start "Publish Distribution Metadata"
+          fi
 
       - name: Read release manifest
         id: manifest
@@ -277,3 +291,12 @@ jobs:
           done
           echo 'Published appcast did not become available before the release deadline.' >&2
           exit 1
+
+      - name: Report distribution sync success
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          if [[ -n "${DISCORD_WEBHOOK_URL:-}" ]]; then
+            node .github/scripts/discord-notify.mjs --stage-result "Publish Distribution Metadata" success
+          fi

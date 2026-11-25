@@ -29,6 +29,7 @@ jobs:
     outputs:
       publish: ${{ steps.plan.outputs.publish || 'false' }}
       version: ${{ steps.manifest.outputs.version }}
+      build: ${{ steps.manifest.outputs.build }}
       marketing_version: ${{ steps.manifest.outputs.marketing_version }}
       channel: ${{ steps.manifest.outputs.channel }}
       tag: ${{ steps.manifest.outputs.tag }}
@@ -45,10 +46,12 @@ jobs:
 
       - name: Read release manifest
         id: manifest
-        run: node .github/scripts/release-manifest.mjs validate
+        run: |
+          node .github/scripts/sync-version.mjs --check
+          node .github/scripts/release-manifest.mjs validate
 
       - name: Check existing release
-        if: steps.manifest.outputs.release == 'true'
+        if: steps.manifest.outputs.packaging_enabled == 'true'
         id: existing
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,7 +76,7 @@ jobs:
           fi
 
       - name: Validate release request
-        if: steps.manifest.outputs.release == 'true' && steps.existing.outputs.exists == 'false'
+        if: steps.manifest.outputs.packaging_enabled == 'true' && steps.existing.outputs.exists == 'false'
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -96,6 +99,7 @@ jobs:
       contents: write
     env:
       VERSION: ${{ needs.plan.outputs.version }}
+      BUILD: ${{ needs.plan.outputs.build }}
       MARKETING_VERSION: ${{ needs.plan.outputs.marketing_version }}
       CHANNEL: ${{ needs.plan.outputs.channel }}
       TAG: ${{ needs.plan.outputs.tag }}
@@ -104,37 +108,28 @@ jobs:
       TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
 
     steps:
-      - name: Dispatch packaging notification
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          jq -n \
-            --arg version "$VERSION" \
-            --argjson prerelease "$PRERELEASE" \
-            --arg dmg_name "$DMG_NAME" \
-            --arg sha "$TESTED_SHA" \
-            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '{
-              event_type: "release_started",
-              client_payload: {
-                version: $version,
-                prerelease: $prerelease,
-                dmg_name: $dmg_name,
-                sha: $sha,
-                run_url: $run_url
-              }
-            }' \
-            | gh api --method POST "repos/${GITHUB_REPOSITORY}/dispatches" --input -
-
       - name: Checkout tested commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TESTED_SHA }}
           persist-credentials: false
 
+      - name: Report actual stage start
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node .github/scripts/discord-notify.mjs --stage-start "Release"
+
       - name: Select Xcode 26.6
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+
+      - name: Set up Python for DMG packaging
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Install DMG packaging dependency
+        run: python3 -m pip install 'dmgbuild==1.6.7'
 
       - name: Prepare release notes
         run: |
@@ -236,7 +231,7 @@ jobs:
             ARCHS=arm64 \
             ONLY_ACTIVE_ARCH=NO \
             MARKETING_VERSION="$MARKETING_VERSION" \
-            CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            CURRENT_PROJECT_VERSION="$BUILD" \
             CELLAR_UPDATE_CHANNEL="$CHANNEL" \
             CELLAR_UPDATER_ENABLED=YES \
             CELLAR_SPARKLE_PUBLIC_KEY="$SPARKLE_PUBLIC_KEY" \
@@ -263,7 +258,7 @@ jobs:
           done < <(find "$app" -type f -print0)
           test "$(vtool -show-build "$binary" | grep -c 'minos 26.0')" -eq 1
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")" = "$MARKETING_VERSION"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = '${{ github.run_number }}'
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist")" = "$BUILD"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")" = '26.0'
           test "$(/usr/libexec/PlistBuddy -c 'Print :CellarUpdateChannel' "$app/Contents/Info.plist")" = "$CHANNEL"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$app/Contents/Info.plist")" = 'https://slippindylan.github.io/homebrew-tap/cellar/appcast.xml'
@@ -337,7 +332,8 @@ jobs:
       - name: Package drag-to-install DMG
         run: |
           app="$RUNNER_TEMP/DerivedData/Build/Products/Release/Cellar.app"
-          tools/create-dmg.sh "$app" "$RUNNER_TEMP/$DMG_NAME" "Cellar $VERSION"
+          python3 tools/create-dmg.py "$app" --release --output "build/$DMG_NAME"
+          mv "build/$DMG_NAME" "$RUNNER_TEMP/$DMG_NAME"
 
       - name: Verify DMG
         run: |
@@ -415,6 +411,12 @@ jobs:
             exit 1
           fi
 
+      - name: Report installer ready
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node .github/scripts/discord-notify.mjs --stage-result Release success
+
       - name: Remove signing keychain
         if: always()
         run: |
@@ -484,8 +486,16 @@ jobs:
       TAG: ${{ needs.plan.outputs.tag }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
       DMG_NAME: ${{ needs.plan.outputs.dmg_name }}
+      TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
 
     steps:
+      - name: Checkout trusted notification script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
       - name: Publish verified GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -495,28 +505,8 @@ jobs:
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           test "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" = 'false'
 
-      - name: Dispatch release notification
+      - name: Report publication success
         continue-on-error: true
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          changelog="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body')"
-          jq -n \
-            --arg version "$VERSION" \
-            --argjson prerelease "$PRERELEASE" \
-            --arg dmg_name "$DMG_NAME" \
-            --arg changelog "$changelog" \
-            --arg release_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}" \
-            --arg download_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/${DMG_NAME}" \
-            '{
-              event_type: "release_published",
-              client_payload: {
-                version: $version,
-                prerelease: $prerelease,
-                dmg_name: $dmg_name,
-                changelog: $changelog,
-                release_url: $release_url,
-                download_url: $download_url
-              }
-            }' \
-            | gh api --method POST "repos/${GITHUB_REPOSITORY}/dispatches" --input -
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node .github/scripts/discord-notify.mjs --publication-success

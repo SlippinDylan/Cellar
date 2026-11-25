@@ -2,276 +2,194 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  buildDiscordPayload,
-  buildNotification,
-  escapeDiscordMarkdown,
-  extractReleaseHighlights,
-  sendDiscordNotification,
-  truncate,
+  ciStartNotifications,
+  enrichWorkflowResult,
+  notification,
+  publicationSuccessNotification,
+  reportsRun,
+  send,
+  stageResultNotification,
+  stageStartNotification,
 } from './discord-notify.mjs';
 
-const repository = { full_name: 'owner/Cellar' };
-const sender = { login: 'developer' };
+const repo = { full_name: 'SlippinDylan/Cellar' };
+const sha = 'a'.repeat(40);
+const env = {
+  GITHUB_REPOSITORY: 'SlippinDylan/Cellar',
+  GITHUB_REF_NAME: 'main',
+  GITHUB_SHA: sha,
+  GITHUB_RUN_ID: '42',
+  GITHUB_EVENT_NAME: 'push',
+  GITHUB_RUN_ATTEMPT: '1',
+};
 
-test('normalizes text and escapes Discord Markdown', () => {
-  assert.equal(truncate('line one\nline two', 30), 'line one line two');
-  assert.equal(truncate('A'.repeat(10), 5), 'AAAA…');
-  assert.equal(escapeDiscordMarkdown('*bold* [link](url) > quote'), '\\*bold\\* \\[link\\]\\(url\\) \\> quote');
+test('formats collaboration events with escaped text and disabled mentions', () => {
+  const push = notification('push', {
+    repository: repo,
+    ref: 'refs/heads/feat/test',
+    head_commit: { message: 'fix @everyone *bold*' },
+  });
+  assert.equal(push.username, 'Cellar');
+  assert.deepEqual(push.allowed_mentions, { parse: [] });
+  assert.match(push.embeds[0].title, /Cellar · 代码已推送/);
+  assert.match(push.embeds[0].description, /\\@everyone \\\*bold\\\*/);
+
+  const pr = notification('pull_request_target', {
+    repository: repo,
+    action: 'closed',
+    number: 12,
+    pull_request: { title: 'Ship 1.0', merged: true },
+  });
+  assert.equal(pr.embeds[0].title, 'Cellar · PR 已合并');
+  assert.equal(pr.embeds[0].url, 'https://github.com/SlippinDylan/Cellar/pull/12');
+
+  const reviewComment = notification('pull_request_review_comment', {
+    repository: repo,
+    pull_request: { number: 12, title: 'Ship 1.0' },
+  });
+  assert.equal(reviewComment.embeds[0].title, 'Cellar · PR 有代码评论');
 });
 
-test('builds a single embed with a primary URL, action links, colors, and disabled mentions', () => {
-  const sha = 'a'.repeat(40);
-  const notification = buildNotification('push', {
-    repository,
-    sender,
-    ref: 'refs/heads/main',
-    after: sha,
-    size: 2,
-    commits: [{ id: sha }],
-    head_commit: { message: '*release* [notes](https://example.test)' },
-  });
-  const payload = buildDiscordPayload(notification);
-  const embed = payload.embeds[0];
-
-  assert.equal(payload.username, 'Cellar');
-  assert.deepEqual(payload.allowed_mentions, { parse: [] });
-  assert.equal(payload.embeds.length, 1);
-  assert.equal(embed.color, 0x5865F2);
-  assert.equal(embed.url, `https://github.com/owner/Cellar/commit/${sha}`);
-  assert.ok(embed.description.includes('\\*release\\* \\[notes\\]\\(https://example.test\\)'));
-  assert.match(embed.description, /\[查看提交\]\(https:\/\/github\.com\/owner\/Cellar\/commit\//);
-});
-
-test('normalizes every configured collaboration event', () => {
-  const cases = [
-    ['pull_request_target', {
-      repository,
-      sender,
-      action: 'opened',
-      pull_request: { number: 1, title: 'PR', html_url: 'https://github.com/owner/Cellar/pull/1' },
-    }],
-    ['issues', {
-      repository,
-      sender,
-      action: 'opened',
-      issue: { number: 2, title: 'Issue', html_url: 'https://github.com/owner/Cellar/issues/2' },
-    }],
-    ['issue_comment', {
-      repository,
-      sender,
-      issue: { number: 2, title: 'Issue' },
-      comment: { body: 'Comment', html_url: 'https://github.com/owner/Cellar/issues/2#issuecomment-1' },
-    }],
-    ['pull_request_review', {
-      repository,
-      sender,
-      pull_request: { number: 3, title: 'PR', html_url: 'https://github.com/owner/Cellar/pull/3' },
-      review: { state: 'approved' },
-    }],
-  ];
-
-  for (const [eventName, event] of cases) {
-    const notification = buildNotification(eventName, event);
-    assert.match(notification.title, /^Cellar /);
-    assert.ok(notification.button.url);
-  }
-
-  const untrusted = buildNotification('issue_comment', {
-    repository,
-    sender,
-    issue: { number: 2, title: '<@everyone>' },
-    comment: { body: '**unsafe**', html_url: 'https://example.com/steal' },
-  });
-  const payload = buildDiscordPayload(untrusted);
-  assert.equal(payload.embeds[0].url, 'https://github.com/owner/Cellar');
-  assert.match(payload.embeds[0].description, /\\<@everyone\\>/);
-});
-
-test('keeps event filters and result colors', () => {
-  assert.equal(buildNotification('workflow_run', {
-    repository,
-    workflow_run: { name: 'CI', conclusion: 'success', event: 'push', head_branch: 'feature' },
-  }), null);
-  assert.equal(buildNotification('workflow_run', {
-    repository,
-    workflow_run: { name: 'Release', conclusion: 'success', event: 'workflow_run', head_branch: 'main' },
-  }), null);
-  const review = buildNotification('pull_request_review', {
-    repository,
-    sender,
-    pull_request: { number: 3, title: 'PR', html_url: 'https://github.com/owner/Cellar/pull/3' },
-    review: { state: 'changes_requested' },
-  });
-  assert.equal(buildDiscordPayload(review).embeds[0].color, 0xED4245);
-});
-
-test('builds release and packaging notifications with Cellar fields', () => {
-  const release = buildNotification('release', {
-    repository,
-    sender,
-    release: {
-      tag_name: 'v0.1.0-beta.1',
-      prerelease: true,
-      html_url: 'https://github.com/owner/Cellar/releases/tag/v0.1.0-beta.1',
-      body: '- Added automation.',
-      assets: [{
-        name: 'Cellar-0.1.0-beta.1.dmg',
-        browser_download_url: 'https://github.com/owner/Cellar/releases/download/v0.1.0-beta.1/Cellar-0.1.0-beta.1.dmg',
-      }],
-    },
-  });
-  const releaseEmbed = buildDiscordPayload(release).embeds[0];
-  assert.equal(releaseEmbed.color, 0x57F287);
-  assert.match(releaseEmbed.description, /架构：arm64/);
-  assert.match(releaseEmbed.description, /签名：Apple Development（未公证）/);
-  assert.match(releaseEmbed.description, /\[下载 DMG\]/);
-
-  const started = buildNotification('repository_dispatch', {
-    repository,
-    sender,
-    action: 'release_started',
-    client_payload: {
-      version: '0.1.0-beta.1',
-      prerelease: true,
-      dmg_name: 'Cellar-0.1.0-beta.1.dmg',
-      sha: 'a'.repeat(40),
-      run_url: 'https://github.com/owner/Cellar/actions/runs/12',
-    },
-  });
-  assert.equal(started.title, 'Cellar 0.1.0-beta.1 开始打包');
-  assert.equal(buildDiscordPayload(started).embeds[0].color, 0x5865F2);
-});
-
-test('builds a release-published dispatch with Cellar fields', () => {
-  const notification = buildNotification('repository_dispatch', {
-    repository,
-    sender,
-    action: 'release_published',
-    client_payload: {
-      version: '0.1.0-beta.1',
-      prerelease: true,
-      dmg_name: 'Cellar-0.1.0-beta.1.dmg',
-      changelog: '- Added automation.',
-      release_url: 'https://github.com/owner/Cellar/releases/tag/v0.1.0-beta.1',
-      download_url: 'https://github.com/owner/Cellar/releases/download/v0.1.0-beta.1/Cellar-0.1.0-beta.1.dmg',
-    },
-  });
-  const payload = buildDiscordPayload(notification);
-  assert.equal(notification.title, 'Cellar 0.1.0-beta.1 发布成功');
-  assert.equal(notification.color, 'green');
-  assert.ok(notification.details.includes('签名：Apple Development（未公证）'));
-  assert.match(payload.embeds[0].description, /\[下载 DMG\]/);
-});
-
-test('extracts at most three release highlights', () => {
-  assert.deepEqual(extractReleaseHighlights('- One\n- Two\nText\n* Three\n- Four'), [
-    '• One',
-    '• Two',
-    '• Three',
-  ]);
-});
-
-test('accepts every 2xx response and preserves existing webhook parameters while setting wait=true', async () => {
-  let request;
-  await sendDiscordNotification({ test: true }, 'https://discord.example/webhook?token=secret&thread_id=42', {
-    fetchImplementation: async (url, options) => {
-      request = { url, options };
-      return { ok: true, status: 204 };
-    },
-  });
-
-  const endpoint = new URL(request.url);
-  assert.equal(endpoint.searchParams.get('token'), 'secret');
-  assert.equal(endpoint.searchParams.get('thread_id'), '42');
-  assert.equal(endpoint.searchParams.get('wait'), 'true');
-  assert.ok(request.options.signal instanceof AbortSignal);
-});
-
-test('retries Discord rate limits using Retry-After and retry_after seconds', async () => {
-  const waits = [];
-  let attempts = 0;
-  await sendDiscordNotification({}, 'https://discord.example/webhook', {
-    fetchImplementation: async () => {
-      attempts += 1;
-      if (attempts === 1) {
-        return {
-          ok: false,
-          status: 429,
-          headers: { get: () => '0.5' },
-          json: async () => ({ retry_after: 1.5 }),
-        };
-      }
-      return { ok: true, status: 200 };
-    },
-    wait: async (milliseconds) => { waits.push(milliseconds); },
-  });
-  assert.equal(attempts, 2);
-  assert.deepEqual(waits, [500]);
-
-  attempts = 0;
-  waits.length = 0;
-  await sendDiscordNotification({}, 'https://discord.example/webhook', {
-    fetchImplementation: async () => {
-      attempts += 1;
-      if (attempts === 1) {
-        return {
-          ok: false,
-          status: 429,
-          headers: { get: () => null },
-          json: async () => ({ retry_after: 1.5 }),
-        };
-      }
-      return { ok: true, status: 200 };
-    },
-    wait: async (milliseconds) => { waits.push(milliseconds); },
-  });
-  assert.equal(attempts, 2);
-  assert.deepEqual(waits, [1_500]);
-});
-
-test('retries 5xx responses with exponential backoff but not 4xx responses', async () => {
-  const waits = [];
-  let attempts = 0;
-  await sendDiscordNotification({}, 'https://discord.example/webhook', {
-    fetchImplementation: async () => {
-      attempts += 1;
-      return attempts === 1 ? { ok: false, status: 503 } : { ok: true, status: 202 };
-    },
-    wait: async (milliseconds) => { waits.push(milliseconds); },
-  });
-  assert.equal(attempts, 2);
-  assert.deepEqual(waits, [250]);
-
-  attempts = 0;
-  await assert.rejects(sendDiscordNotification({}, 'https://discord.example/webhook', {
-    fetchImplementation: async () => {
-      attempts += 1;
-      return { ok: false, status: 400 };
-    },
-    wait: async () => { throw new Error('4xx must not retry'); },
-  }), /HTTP 400/);
-  assert.equal(attempts, 1);
-});
-
-test('retries transient network failures', async () => {
-  const waits = [];
-  let attempts = 0;
-  await sendDiscordNotification({}, 'https://discord.example/webhook', {
-    fetchImplementation: async () => {
-      attempts += 1;
-      if (attempts === 1) throw new Error('network');
-      return { ok: true, status: 204 };
-    },
-    wait: async (milliseconds) => { waits.push(milliseconds); },
-  });
-  assert.equal(attempts, 2);
-  assert.deepEqual(waits, [250]);
-});
-
-test('rejects an invalid webhook URL without echoing its value', async () => {
-  const invalidWebhook = 'not-a-url-with-secret-token';
-  await assert.rejects(
-    sendDiscordNotification({}, invalidWebhook),
-    (error) => error.message === 'DISCORD_WEBHOOK_URL is invalid.' && !error.message.includes(invalidWebhook),
+test('orders main push and CI start notifications and skips duplicate CI success in workflow_run', () => {
+  const startPayloads = ciStartNotifications(
+    { repository: repo, ref: 'refs/heads/main', head_commit: { message: 'feat: sync' } },
+    env,
   );
+  assert.equal(startPayloads.length, 2);
+  assert.equal(startPayloads[0].embeds[0].title, 'Cellar · 代码已推送');
+  assert.equal(startPayloads[1].embeds[0].title, 'Cellar · 检查已开始');
+
+  const ciDone = notification('workflow_run', {
+    action: 'completed',
+    repository: repo,
+    workflow_run: {
+      id: 42,
+      name: 'CI',
+      event: 'push',
+      head_branch: 'main',
+      head_sha: sha,
+      run_number: 5,
+      conclusion: 'success',
+      stageConclusion: 'success',
+    },
+  });
+  assert.equal(ciDone, null);
+
+  const ciFailed = notification('workflow_run', {
+    action: 'completed',
+    repository: repo,
+    workflow_run: {
+      id: 42,
+      name: 'CI',
+      event: 'push',
+      head_branch: 'main',
+      head_sha: sha,
+      run_number: 5,
+      conclusion: 'failure',
+      stageConclusion: 'failure',
+    },
+  });
+  assert.equal(ciFailed.embeds[0].title, 'Cellar · 检查失败');
+});
+
+test('builds distinct stage notifications for packaging, publication, and distribution sync', () => {
+  assert.equal(stageStartNotification('Release', env).embeds[0].title, 'Cellar · 打包已开始');
+  assert.equal(stageResultNotification('Release', 'success', env).embeds[0].title, 'Cellar · 打包成功');
+  assert.equal(publicationSuccessNotification(env).embeds[0].title, 'Cellar · 发行成功');
+  assert.equal(
+    stageStartNotification('Publish Distribution Metadata', env).embeds[0].title,
+    'Cellar · Sparkle 与 Homebrew 同步已开始',
+  );
+  assert.equal(
+    stageResultNotification('Publish Distribution Metadata', 'success', env).embeds[0].title,
+    'Cellar · Sparkle 与 Homebrew 同步成功',
+  );
+});
+
+test('enriches workflow_run stage conclusions and ignores skipped release runs', async () => {
+  const event = {
+    action: 'completed',
+    repository: repo,
+    workflow_run: {
+      id: 99,
+      run_attempt: 1,
+      name: 'Release',
+      event: 'workflow_run',
+      head_branch: 'main',
+      head_sha: sha,
+      run_number: 9,
+      conclusion: 'success',
+    },
+  };
+  assert.equal(reportsRun(event), true);
+  await enrichWorkflowResult(event, 'token', async () => ({
+    ok: true,
+    json: async () => ({
+      total_count: 2,
+      jobs: [
+        { name: 'Plan release', conclusion: 'success' },
+        { name: 'Publish GitHub Release', conclusion: 'skipped' },
+      ],
+    }),
+  }));
+  assert.equal(notification('workflow_run', event), null);
+
+  const verifyFailed = {
+    action: 'completed',
+    repository: repo,
+    workflow_run: {
+      id: 100,
+      run_attempt: 1,
+      name: 'Release',
+      event: 'workflow_run',
+      head_branch: 'main',
+      head_sha: sha,
+      run_number: 10,
+      conclusion: 'failure',
+    },
+  };
+  await enrichWorkflowResult(verifyFailed, 'token', async () => ({
+    ok: true,
+    json: async () => ({
+      total_count: 3,
+      jobs: [
+        { name: 'Plan release', conclusion: 'success' },
+        { name: 'Build signed draft release', conclusion: 'skipped' },
+        { name: 'Verify draft release', conclusion: 'failure' },
+      ],
+    }),
+  }));
+  assert.equal(notification('workflow_run', verifyFailed).embeds[0].title, 'Cellar · 打包校验失败');
+
+  const distSuccess = {
+    action: 'completed',
+    repository: repo,
+    workflow_run: {
+      id: 101,
+      run_attempt: 1,
+      name: 'Publish Distribution Metadata',
+      event: 'workflow_dispatch',
+      head_branch: 'main',
+      head_sha: sha,
+      run_number: 11,
+      conclusion: 'success',
+      stageConclusion: 'success',
+    },
+  };
+  assert.equal(notification('workflow_run', distSuccess), null);
+});
+
+test('validates Discord webhook URLs without echoing secrets on error', async () => {
+  const secret = 'https://example.invalid/api/webhooks/123/secret-token';
+  await assert.rejects(
+    () => send({ embeds: [] }, secret),
+    error => !error.message.includes('secret-token'),
+  );
+
+  let calledUrl;
+  await send({ embeds: [] }, 'https://discord.com/api/webhooks/123/abc', async (url) => {
+    calledUrl = String(url);
+    return { ok: true };
+  });
+  assert.equal(calledUrl, 'https://discord.com/api/webhooks/123/abc?wait=true');
 });

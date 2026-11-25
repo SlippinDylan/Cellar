@@ -14,7 +14,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   lightweight-check:
@@ -31,6 +31,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Report actual stage start
+        continue-on-error: true
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node .github/scripts/discord-notify.mjs --ci-start
+
       - name: Classify changes
         id: changes
         env:
@@ -43,11 +50,12 @@ jobs:
 
       - name: Validate automation
         run: |
-          bash -n tools/create-dmg.sh
+          python3 -m py_compile tools/create-dmg.py Config/DMG/settings.py
+          python3 tools/create-dmg.py --help >/dev/null
           bash -n tools/thin-sparkle.sh
-          tools/create-dmg.sh --help >/dev/null
           node .github/scripts/release-manifest.mjs validate
           node .github/scripts/sync-version.mjs --check
+          node .github/scripts/validate-localizations.mjs
           node --test .github/scripts/*.test.mjs
 
   macos-check:
@@ -141,3 +149,17 @@ jobs:
         run: |
           test "$LIGHTWEIGHT_RESULT" = 'success'
           [[ "$MACOS_RESULT" == 'success' || "$MACOS_RESULT" == 'skipped' ]]
+
+      - name: Checkout notification script
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Report checks passed before downstream packaging
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        continue-on-error: true
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: node .github/scripts/discord-notify.mjs --stage-result CI success

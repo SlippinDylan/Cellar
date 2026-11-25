@@ -3,7 +3,7 @@
 - Node source commit: `586d960040ddf82bb31b4a30f6668a474391e492`（25 个生产白名单文件）
 - Homebrew / frozen Zsh source commit: `1c9d71b3fbec98034b397d76babe47e459ad83f6`（19 个冻结生产文件）
 - Snapshot version: `586d960-app7`
-- Generated: 2026-11-14
+- Generated: 2026-11-24
 
 `node-manager` follows `scripts/node-manager/app-bundle-manifest.txt`.
 `homebrew-manager` contains `main.sh` and production `lib/*.sh` files.
@@ -46,3 +46,8 @@ Zsh 与现有 Cellar-owned Zsh adapters 的来源及内容不变。新 runtime �
 独立 `logs-cleanup [keep-count]` 的既有响应与 gate 语义不变。Homebrew、交互式 Zsh
 与现有 Cellar-owned Zsh adapters 的来源及内容不变。新 runtime 目录防止复用
 旧 `8aaa85d-app5` 运行副本；不迁移或删除旧版本目录。
+
+`app7`（2026-11-24）只更新 Cellar-owned Zsh adapter（`zsh-manager/lib/app_json_common.sh`、
+`app_json_execute.sh`、`app_json_plan.sh`、`app_json_query.sh`），收紧协议健壮性与边界校验。
+44 个冻结生产文件的来源 commit 与逐字节内容保持不变。新 runtime 目录防止复用
+旧 `586d960-app6` 运行副本；不迁移或删除旧版本目录。

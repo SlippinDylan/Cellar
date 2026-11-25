@@ -25,9 +25,9 @@ Cellar 把 Homebrew 软件、npm 全局包、Node.js 版本和终端配置集中
 |---|---|
 | 查看环境状态 | 在首页查看 Homebrew、Node.js、npm、nvm 和终端环境状态。 |
 | 管理已安装软件 | 在软件库浏览、搜索和筛选 Homebrew Formula、Cask 与 npm 全局包；单项更新、按筛选范围批量更新，以及单项卸载。 |
-| 查找新工具 | 在发现页面搜索 Homebrew 和 npm，单项安装或批量安装同一类型的软件包。 |
+| 查找新工具 | 在发现页面搜索 Homebrew 和 npm 并单项安装，或在维护页面批量安装同一类型的软件包。 |
 | 配置开发环境 | 通过 nvm 管理全局 Node.js 版本，管理 Homebrew Tap、npm 软件源，以及 Oh My Zsh 主题和插件。 |
-| 检查与清理 | 运行 Homebrew 诊断和 npm 缓存校验，查看并确认受支持的缓存、未使用 Node 版本及旧 Manager 日志清理任务。 |
+| 检查与清理 | 运行 Homebrew 诊断、npm 缓存校验与批量安装，查看并确认受支持的缓存、未使用 Node 版本及旧 Manager 日志清理任务。 |
 
 任务进度和最近结果会在切换页面后继续显示，批量任务部分成功时也能查看逐项结果。
 
@@ -80,7 +80,7 @@ xcodebuild build \
 
 Cellar 没有账户、遥测或自有服务端。工具查询、搜索、安装、插件和应用更新访问官方服务或你配置的来源。Homebrew 和 npm 查询也可能写入各自的缓存。
 
-官方 Homebrew Cask 图标由 [CaskFlow](https://github.com/alielsokary/CaskFlow) 提供，通过 `cdn.jsdelivr.net` 下载。CDN 会收到所请求的 Cask 标识和通常的连接信息。CaskFlow 的 MIT 许可随应用分发，软件 Logo 的权益归各自所有者。
+已安装的 Homebrew Cask 会优先读取 `/Applications` 和 `~/Applications` 中本地 `.app` 的图标；未命中时，官方 Homebrew Cask 图标由 [CaskFlow](https://github.com/alielsokary/CaskFlow) 提供，通过 `cdn.jsdelivr.net` 下载。CDN 会收到所请求的 Cask 标识和通常的连接信息。CaskFlow 的 MIT 许可随应用分发，软件 Logo 的权益归各自所有者。
 
 | 本地数据 | 位置 |
 |---|---|

@@ -25,9 +25,9 @@ Cellar regroupe les logiciels Homebrew, les paquets npm globaux, les versions de
 |---|---|
 | Vérifier votre environnement | Consultez l'état de Homebrew, Node.js, npm, nvm et du terminal sur la page d'accueil. |
 | Gérer les logiciels installés | Parcourez, recherchez et filtrez les Formulae et Casks Homebrew ainsi que les paquets npm globaux dans la bibliothèque. Mettez à jour un élément ou un lot filtré, et désinstallez les éléments individuellement. |
-| Trouver de nouveaux outils | Recherchez dans Homebrew et npm sur la page de découverte, puis installez un élément ou un lot de paquets du même type. |
+| Trouver de nouveaux outils | Recherchez dans Homebrew et npm sur la page de découverte pour installer un élément, ou installez un lot de paquets du même type dans Maintenance. |
 | Configurer votre environnement | Gérez les versions globales de Node.js avec nvm, les taps Homebrew, les registres npm, ainsi que les thèmes et plugins Oh My Zsh. |
-| Vérifier et nettoyer | Lancez les diagnostics Homebrew et la vérification du cache npm, puis examinez les tâches de nettoyage prises en charge pour les caches, les versions inutilisées de Node et les anciens journaux Manager. |
+| Vérifier et nettoyer | Lancez les diagnostics Homebrew, la vérification du cache npm et les installations par lot, puis examinez les tâches de nettoyage prises en charge pour les caches, les versions inutilisées de Node et les anciens journaux Manager. |
 
 La progression des tâches et leurs résultats récents restent visibles lorsque vous changez de page, y compris les résultats individuels lorsqu'un lot ne réussit que partiellement.
 
@@ -80,7 +80,7 @@ L'app compilée se trouve dans `build/DerivedData-Debug/Build/Products/Debug/Cel
 
 Cellar ne dispose d'aucun compte utilisateur, d'aucune télémétrie ni d'aucun serveur propre. Les requêtes sur les outils, recherches, installations, plugins et mises à jour de l'app contactent les services officiels ou les sources que vous configurez. Les requêtes Homebrew et npm peuvent aussi écrire dans leurs propres caches.
 
-Les icônes des Casks Homebrew officiels proviennent de [CaskFlow](https://github.com/alielsokary/CaskFlow), via `cdn.jsdelivr.net`. Le CDN reçoit l'identifiant du Cask demandé et les informations habituelles de connexion. La licence MIT de CaskFlow est incluse dans l'app ; les logos des logiciels restent la propriété de leurs détenteurs respectifs.
+Les Casks Homebrew installés lisent d'abord l'icône de leur `.app` locale dans `/Applications` et `~/Applications`. Lorsqu'aucune icône locale n'est disponible, les icônes des Casks Homebrew officiels proviennent de [CaskFlow](https://github.com/alielsokary/CaskFlow), via `cdn.jsdelivr.net`. Le CDN reçoit l'identifiant du Cask demandé et les informations habituelles de connexion. La licence MIT de CaskFlow est incluse dans l'app ; les logos des logiciels restent la propriété de leurs détenteurs respectifs.
 
 | Données locales | Emplacement |
 |---|---|

@@ -25,9 +25,9 @@ Cellar brings Homebrew software, npm global packages, Node.js versions, and term
 |---|---|
 | Check your environment | See Homebrew, Node.js, npm, nvm, and terminal status on Home. |
 | Manage installed software | Browse, search, and filter Homebrew Formulae, Casks, and npm global packages in Library. Update individual items or a filtered batch, and uninstall individual items. |
-| Find new tools | Search Homebrew and npm in Discover, then install individual items or a batch of the same package type. |
+| Find new tools | Search Homebrew and npm in Discover and install individual items, or install a batch of the same package type in Maintenance. |
 | Configure your environment | Manage global Node.js versions with nvm, Homebrew taps, npm registries, and Oh My Zsh themes and plugins. |
-| Check and clean up | Run Homebrew diagnostics and npm cache verification, then review supported cache, unused Node version, and old Manager log cleanup tasks. |
+| Check and clean up | Run Homebrew diagnostics, npm cache verification, and batch installs, then review supported cache, unused Node version, and old Manager log cleanup tasks. |
 
 Task progress and recent results stay visible as you move between pages, including individual results when a batch only partly succeeds.
 
@@ -80,7 +80,7 @@ The app is built at `build/DerivedData-Debug/Build/Products/Debug/Cellar.app`. S
 
 Cellar has no accounts, telemetry, or backend of its own. Tool queries, searches, installs, plugins, and app updates contact official services or sources you configure. Homebrew and npm queries may also write to their own caches.
 
-Official Homebrew Cask icons come from [CaskFlow](https://github.com/alielsokary/CaskFlow) through `cdn.jsdelivr.net`. The CDN receives the requested Cask identifier and normal connection information. CaskFlow's MIT license is included with the app; software logos remain the property of their respective owners.
+Installed Homebrew Casks first read their local `.app` icons from `/Applications` and `~/Applications`. When a local icon is unavailable, official Homebrew Cask icons come from [CaskFlow](https://github.com/alielsokary/CaskFlow) through `cdn.jsdelivr.net`. The CDN receives the requested Cask identifier and normal connection information. CaskFlow's MIT license is included with the app; software logos remain the property of their respective owners.
 
 | Local data | Location |
 |---|---|

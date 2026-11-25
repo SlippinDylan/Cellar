@@ -25,9 +25,9 @@ Cellar는 Homebrew 소프트웨어, npm 전역 패키지, Node.js 버전 및 터
 |---|---|
 | 환경 상태 확인 | 홈에서 Homebrew, Node.js, npm, nvm 및 터미널 상태를 확인합니다. |
 | 설치된 소프트웨어 관리 | 소프트웨어 보관함에서 Homebrew Formula, Cask 및 npm 전역 패키지를 살펴보고 검색하거나 필터링합니다. 개별 항목이나 필터링한 항목을 일괄 업데이트하고, 개별 항목을 제거합니다. |
-| 새로운 도구 찾기 | 탐색에서 Homebrew와 npm을 검색하고, 개별 항목 또는 같은 패키지 유형의 항목을 일괄 설치합니다. |
+| 새로운 도구 찾기 | 탐색에서 Homebrew와 npm을 검색해 개별 항목을 설치하거나, 유지 관리에서 같은 패키지 유형의 항목을 일괄 설치합니다. |
 | 개발 환경 설정 | nvm을 통한 전역 Node.js 버전, Homebrew Tap, npm 레지스트리, Oh My Zsh 테마 및 플러그인을 관리합니다. |
-| 검사 및 정리 | Homebrew 진단과 npm 캐시 검증을 실행하고, 지원되는 캐시·사용하지 않는 Node 버전·이전 Manager 로그 정리 작업을 검토합니다. |
+| 검사 및 정리 | Homebrew 진단, npm 캐시 검증 및 일괄 설치를 실행하고, 지원되는 캐시·사용하지 않는 Node 버전·이전 Manager 로그 정리 작업을 검토합니다. |
 
 페이지를 이동해도 작업 진행 상황과 최근 결과가 계속 표시됩니다. 일괄 작업이 일부만 성공한 경우에도 개별 결과를 확인할 수 있습니다.
 
@@ -80,7 +80,7 @@ xcodebuild build \
 
 Cellar에는 계정, 원격 측정 또는 자체 백엔드가 없습니다. 도구 조회, 검색, 설치, 플러그인 및 앱 업데이트는 공식 서비스 또는 사용자가 설정한 소스에 접속합니다. Homebrew와 npm 조회 시 각 도구의 캐시에 데이터가 기록될 수도 있습니다.
 
-공식 Homebrew Cask 아이콘은 [CaskFlow](https://github.com/alielsokary/CaskFlow)에서 제공하며 `cdn.jsdelivr.net`을 통해 가져옵니다. CDN은 요청한 Cask 식별자와 일반적인 연결 정보를 받습니다. CaskFlow의 MIT 라이선스는 앱에 포함되며, 소프트웨어 로고의 권리는 각 소유자에게 있습니다.
+설치된 Homebrew Cask는 먼저 `/Applications`와 `~/Applications`의 로컬 `.app` 아이콘을 읽습니다. 로컬 아이콘을 찾을 수 없는 경우 공식 Homebrew Cask 아이콘은 [CaskFlow](https://github.com/alielsokary/CaskFlow)에서 제공하며 `cdn.jsdelivr.net`을 통해 가져옵니다. CDN은 요청한 Cask 식별자와 일반적인 연결 정보를 받습니다. CaskFlow의 MIT 라이선스는 앱에 포함되며, 소프트웨어 로고의 권리는 각 소유자에게 있습니다.
 
 | 로컬 데이터 | 위치 |
 |---|---|

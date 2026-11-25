@@ -250,6 +250,9 @@ actor ProcessRunner {
                 continuation.finish()
                 source.cancel()
             }
+            continuation.onTermination = { _ in
+                source.cancel()
+            }
             source.activate()
         }
     }

@@ -57,5 +57,15 @@ final class ManagerSnapshotInstallerTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: installed.appending(path: "node-manager/lib/json_execute.sh")), try Data(contentsOf: bundled))
         let reused = try await installer.installIfNeeded()
         XCTAssertEqual(reused.location, installed.path)
+
+        try FileManager.default.removeItem(at: installed.appending(path: "node-manager/main.sh"))
+        let repaired = try await installer.installIfNeeded()
+        XCTAssertEqual(repaired.location, installed.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installed.appending(path: "node-manager/main.sh").path))
+
+        try FileManager.default.removeItem(at: installed)
+        let reinstalled = try await installer.installIfNeeded()
+        XCTAssertEqual(reinstalled.location, installed.path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: installed.appending(path: "node-manager/lib/json_execute.sh").path))
     }
 }

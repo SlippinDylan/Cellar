@@ -200,7 +200,7 @@ enum CaskRemovalFileSystem {
         var volume = statfs()
         guard fstat(descriptor, &opened) == 0, opened.st_dev == device, opened.st_ino == value.st_ino,
               fstatfs(descriptor, &volume) == 0, volume.f_flags & UInt32(MNT_LOCAL) != 0 else { throw POSIXError(.EXDEV) }
-        guard let directory = fdopendir(dup(descriptor)) else { throw POSIXError(.EIO) }
+        let directory = try openDirectoryStream(duplicating: descriptor)
         defer { closedir(directory) }
         while true {
             try budget.check()
@@ -310,7 +310,7 @@ enum CaskRemovalFileSystem {
             guard fstat(descriptor, &opened) == 0, opened.st_dev == value.st_dev, opened.st_ino == value.st_ino else {
                 throw HomebrewClientError.stateChanged
             }
-            guard let directory = fdopendir(dup(descriptor)) else { throw POSIXError(.EIO) }
+            let directory = try openDirectoryStream(duplicating: descriptor)
             defer { closedir(directory) }
             while true {
                 errno = 0
@@ -331,5 +331,18 @@ enum CaskRemovalFileSystem {
         guard unlinkat(parent, name, (value.st_mode & S_IFMT) == S_IFDIR ? AT_REMOVEDIR : 0) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
+    }
+
+    private static func openDirectoryStream(duplicating descriptor: Int32) throws -> UnsafeMutablePointer<DIR> {
+        let duplicated = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+        guard duplicated >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard let directory = fdopendir(duplicated) else {
+            let code = POSIXErrorCode(rawValue: errno) ?? .EIO
+            close(duplicated)
+            throw POSIXError(code)
+        }
+        return directory
     }
 }

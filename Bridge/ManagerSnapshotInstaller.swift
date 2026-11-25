@@ -18,16 +18,23 @@ actor ManagerSnapshotInstaller {
     }
 
     func installIfNeeded() throws -> SnapshotStatus {
-        guard let resourcesURL = bundle.resourceURL else {
-            throw BridgeError.invalidOutput("App bundle is missing the Resources directory")
-        }
-
-        let source = resourcesURL.appending(path: "Managers", directoryHint: .isDirectory)
         let managersRoot = applicationSupportDirectory
             .appending(path: "Cellar", directoryHint: .isDirectory)
             .appending(path: "Managers", directoryHint: .isDirectory)
         let destination = managersRoot.appending(path: Self.snapshotVersion, directoryHint: .isDirectory)
 
+        let installedStatus = status(at: destination)
+        if installedStatus.nodeAvailable,
+           installedStatus.homebrewAvailable,
+           installedStatus.shellAvailable {
+            return installedStatus
+        }
+
+        guard let resourcesURL = bundle.resourceURL else {
+            throw BridgeError.invalidOutput("App bundle is missing the Resources directory")
+        }
+
+        let source = resourcesURL.appending(path: "Managers", directoryHint: .isDirectory)
         let sourceStatus = status(at: source)
         guard sourceStatus.nodeAvailable,
               sourceStatus.homebrewAvailable,
@@ -36,27 +43,22 @@ actor ManagerSnapshotInstaller {
             throw BridgeError.invalidOutput("Bundled Manager snapshot is incomplete")
         }
 
-        let installedStatus = status(at: destination)
-        if !installedStatus.nodeAvailable
-            || !installedStatus.homebrewAvailable
-            || !installedStatus.shellAvailable {
-            try fileManager.createDirectory(at: managersRoot, withIntermediateDirectories: true)
-            if fileManager.fileExists(atPath: destination.path) {
-                try fileManager.removeItem(at: destination)
-            }
-            let staging = managersRoot.appending(
-                path: ".install-\(Self.snapshotVersion)-\(UUID().uuidString)",
-                directoryHint: .isDirectory
-            )
+        try fileManager.createDirectory(at: managersRoot, withIntermediateDirectories: true)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        let staging = managersRoot.appending(
+            path: ".install-\(Self.snapshotVersion)-\(UUID().uuidString)",
+            directoryHint: .isDirectory
+        )
 
-            do {
-                try fileManager.copyItem(at: source, to: staging)
-                try fileManager.moveItem(at: staging, to: destination)
-            } catch {
-                try? fileManager.removeItem(at: staging)
-                if !fileManager.fileExists(atPath: destination.path) {
-                    throw error
-                }
+        do {
+            try fileManager.copyItem(at: source, to: staging)
+            try fileManager.moveItem(at: staging, to: destination)
+        } catch {
+            try? fileManager.removeItem(at: staging)
+            if !fileManager.fileExists(atPath: destination.path) {
+                throw error
             }
         }
 

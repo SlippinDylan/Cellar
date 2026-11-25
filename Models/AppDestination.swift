@@ -4,6 +4,7 @@ enum MainWindowIdentity: String, Codable, Hashable { case main }
 
 enum AppScene {
     static let mainWindowID = "main"
+    static let onboardingWindowID = "onboarding"
 }
 
 enum AppDestination: String, CaseIterable, Identifiable {

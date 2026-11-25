@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
     @ObservedObject var relaunchController: ApplicationRelaunchController
     @ObservedObject var operationStore: OperationStore
@@ -72,6 +73,20 @@ struct SettingsView: View {
                 .frame(minHeight: AppLayout.minimumDescribedRowHeight)
             }
             FullDiskAccessSettingsView()
+            SettingsSection(title: "Setup Guide") {
+                HStack(spacing: 24) {
+                    Text("Review your developer tools and permissions with the setup guide.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Open Setup Guide") {
+                        openWindow(id: AppScene.onboardingWindowID)
+                    }
+                    .fixedSize()
+                }
+                .frame(minHeight: AppLayout.minimumDescribedRowHeight)
+            }
             if let logStore = model.logStore { LoggingSettingsView(store: logStore, diagnostics: model.activityDiagnostics) }
         }
     }

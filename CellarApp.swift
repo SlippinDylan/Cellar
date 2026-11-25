@@ -14,16 +14,23 @@ enum CellarEntryPoint {
 struct CellarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppModel.live()
+    @StateObject private var onboardingState = OnboardingState()
     private let updateController = ApplicationUpdateController()
 
     var body: some Scene {
         WindowGroup(id: AppScene.mainWindowID, for: MainWindowIdentity.self) { _ in
-            AppRootView(model: model, updateController: updateController)
-                .onAppear {
-                    appDelegate.logStore = model.logStore
-                    appDelegate.terminateAllProcesses = { await model.service.terminateAllProcesses() }
+            Group {
+                if onboardingState.shouldPresentOnLaunch {
+                    OnboardingView(model: model, onboardingState: onboardingState, isStandaloneWindow: false)
+                } else {
+                    AppRootView(model: model, updateController: updateController)
+                        .frame(minWidth: 1080, minHeight: 720)
                 }
-                .frame(minWidth: 1080, minHeight: 720)
+            }
+            .onAppear {
+                appDelegate.logStore = model.logStore
+                appDelegate.terminateAllProcesses = { await model.service.terminateAllProcesses() }
+            }
         } defaultValue: {
             .main
         }
@@ -31,8 +38,21 @@ struct CellarApp: App {
         .windowResizability(.contentMinSize)
         .commands {
             SidebarCommands()
-            AppCommands(model: model, updateController: updateController)
+            AppCommands(model: model, updateController: updateController, onboardingState: onboardingState)
         }
+
+        Window("Welcome to Cellar", id: AppScene.onboardingWindowID) {
+            OnboardingView(model: model, onboardingState: onboardingState, isStandaloneWindow: true)
+                .onAppear {
+                    appDelegate.logStore = model.logStore
+                    appDelegate.terminateAllProcesses = { await model.service.terminateAllProcesses() }
+                }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .defaultPosition(.center)
+        .restorationBehavior(.disabled)
+        .defaultLaunchBehavior(.suppressed)
     }
 }
 

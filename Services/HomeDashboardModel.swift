@@ -52,6 +52,7 @@ final class HomeDashboardModel: ObservableObject {
     private let diagnosticsStore: ActivityDiagnosticsStore
     private var checkedLocalRefresh: Date?
     private var activeRefreshID: UUID?
+    private var prerequisiteRefreshID: UUID?
 
     init(dependencies: HomeDashboardDependencies, operationStore: OperationStore, activityStore: ActivityStore? = nil,
          diagnosticsStore: ActivityDiagnosticsStore = ActivityDiagnosticsStore()) {
@@ -71,13 +72,15 @@ final class HomeDashboardModel: ObservableObject {
         guard environment["XCTestConfigurationFilePath"] == nil,
               let localRefresh, localRefresh != checkedLocalRefresh, !Task.isCancelled else { return }
         let refreshID = UUID()
+        let prereqID = UUID()
         activeRefreshID = refreshID
+        prerequisiteRefreshID = prereqID
         let previousTools = commandLineTools == .loading ? .notLoaded : commandLineTools
         commandLineTools = .loading
         let previousVersions = onlineVersions.mapValues { $0 == .loading ? .notLoaded : $0 }
         for source in HomeOnlineSource.allCases { onlineVersions[source] = .loading }
 
-        async let prerequisites: Void = refreshPrerequisites(refreshID: refreshID)
+        async let prerequisites: Void = refreshPrerequisites(prerequisiteID: prereqID)
         // Exactly four bounded requests; each publishes independently as it finishes.
         await withTaskGroup(of: (HomeOnlineSource, OnlineVersionState).self) { group in
             for source in HomeOnlineSource.allCases {
@@ -101,11 +104,14 @@ final class HomeDashboardModel: ObservableObject {
         await prerequisites
         guard activeRefreshID == refreshID else { return }
         activeRefreshID = nil
+        if prerequisiteRefreshID == prereqID { prerequisiteRefreshID = nil }
         if Task.isCancelled {
             for source in HomeOnlineSource.allCases where onlineVersions[source] == .loading {
                 onlineVersions[source] = previousVersions[source]
             }
-            if commandLineTools == .loading { commandLineTools = previousTools }
+            if prerequisiteRefreshID == nil && commandLineTools == .loading {
+                commandLineTools = previousTools
+            }
         } else { checkedLocalRefresh = localRefresh }
     }
 
@@ -172,16 +178,38 @@ final class HomeDashboardModel: ObservableObject {
         }
     }
 
-    private func refreshPrerequisites(refreshID: UUID) async {
+    func refreshPrerequisitesOnly(environment: [String: String] = ProcessInfo.processInfo.environment) async {
+        guard environment["XCTestConfigurationFilePath"] == nil, !Task.isCancelled else { return }
+        let prereqID = UUID()
+        prerequisiteRefreshID = prereqID
+        let previousTools = commandLineTools == .loading ? .notLoaded : commandLineTools
+        if case .available(.installed) = previousTools {
+            // Avoid flashing a loading state when CLT is already installed.
+        } else {
+            commandLineTools = .loading
+        }
+        await refreshPrerequisites(prerequisiteID: prereqID)
+        guard prerequisiteRefreshID == prereqID else { return }
+        prerequisiteRefreshID = nil
+        if Task.isCancelled && commandLineTools == .loading {
+            commandLineTools = previousTools
+        }
+    }
+
+    private func refreshPrerequisites(prerequisiteID: UUID) async {
         async let occupied = dependencies.homebrewLocationOccupied()
         do {
             let tools = try await dependencies.commandLineTools()
-            if !Task.isCancelled && activeRefreshID == refreshID { commandLineTools = .available(tools) }
+            if !Task.isCancelled && prerequisiteRefreshID == prerequisiteID {
+                commandLineTools = .available(tools)
+            }
         } catch {
-            if !Task.isCancelled && activeRefreshID == refreshID { commandLineTools = .failed }
+            if !Task.isCancelled && prerequisiteRefreshID == prerequisiteID {
+                commandLineTools = .failed
+            }
         }
         let locationOccupied = await occupied
-        if !Task.isCancelled && activeRefreshID == refreshID {
+        if !Task.isCancelled && prerequisiteRefreshID == prerequisiteID {
             homebrewLocationOccupied = locationOccupied
         }
     }

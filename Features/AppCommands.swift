@@ -7,10 +7,12 @@ struct AppCommands: Commands {
     @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
     @ObservedObject var updateController: ApplicationUpdateController
+    @ObservedObject var onboardingState: OnboardingState
 
-    init(model: AppModel, updateController: ApplicationUpdateController) {
+    init(model: AppModel, updateController: ApplicationUpdateController, onboardingState: OnboardingState) {
         self.model = model
         self.updateController = updateController
+        self.onboardingState = onboardingState
     }
 
     var body: some Commands {
@@ -19,20 +21,24 @@ struct AppCommands: Commands {
             Button("About Cellar") {
                 model.showDestination(.about) { openWindow(id: $0, value: $1) }
             }
+            .disabled(!onboardingState.isCompleted)
         }
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { updateController.checkForUpdates() }
                 .disabled(!updateController.canCheckForUpdates)
+            Button("Setup Guide…") { openWindow(id: AppScene.onboardingWindowID) }
         }
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { model.showDestination(.settings) { openWindow(id: $0, value: $1) } }
                 .keyboardShortcut(",", modifiers: .command)
+                .disabled(!onboardingState.isCompleted)
         }
         CommandMenu("Go") {
             ForEach(AppDestination.allCases) { destination in
                 Button {
                     model.showDestination(destination) { openWindow(id: $0, value: $1) }
                 } label: { Text(destination.title) }
+                    .disabled(!onboardingState.isCompleted)
             }
         }
         CommandGroup(after: .toolbar) {

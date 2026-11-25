@@ -227,6 +227,7 @@ final class DiscoverInstallationModel: ObservableObject {
         preparationTask = nil
         isPreparing = false
         preview = nil
+        error = nil
     }
 
     func dismissResult() {

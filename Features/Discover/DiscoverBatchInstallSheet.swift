@@ -5,6 +5,7 @@ struct DiscoverBatchInstallSheet: View {
     let context: DiscoverContext
     @State private var scope: CatalogProviderScope
     @State private var input = ""
+    @State private var activeTask: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
 
     init(installation: DiscoverInstallationModel, context: DiscoverContext, initialScope: CatalogProviderScope) {
@@ -14,69 +15,119 @@ struct DiscoverBatchInstallSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            GlassCategoryPicker(selection: $scope, label: "Install Scope", title: scopeTitle)
-                .disabled(installation.isPreparing || installation.preview != nil)
-                .frame(maxWidth: .infinity, alignment: .center)
-            if let preview = installation.preview {
-                Text(preview.intent.scope.libraryTitle).font(.headline)
-                if let npm = preview.npm { DiscoverNPMContextView(context: npm) }
-                else if case .npm(let environment) = preview.intent.scope {
-                    Text("Node Environment: \(environment.nodeVersion) · npm \(environment.npmVersion)")
-                }
-                let count = String(preview.plan.executableCount)
-                let total = String(preview.intent.items.count)
-                Text("\(count) of \(total) Items Can Be Installed").font(.headline)
-                Text("Installation runs one item at a time. A failure does not stop other items. Completed installations cannot be rolled back.")
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        if let binding = preview.plan.npmBindings.first { DiscoverNPMDestinationView(destination: binding.destination) }
-                        ForEach(preview.plan.items) { item in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.item.displayIdentifier).textSelection(.enabled)
-                                Text(item.status.discoverTitle).foregroundStyle(.secondary)
-                            }.accessibilityElement(children: .combine)
-                        }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: 260)
-                HStack {
-                    Button("Back", action: installation.dismissPreview)
-                    Spacer()
-                    Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
-                    Button("Install") { Task { dismiss(); await installation.confirmInstall() } }
-                        .keyboardShortcut(.defaultAction)
-                        .disabled(preview.plan.executableCount == 0)
-                }
+        MaintenanceModalFrame(
+            title: LocalizedStringResource("Batch Install"),
+            systemImage: "square.stack.3d.up.fill",
+            tint: .blue
+        ) {
+            if installation.isSubmitting {
+                Text("Running").foregroundStyle(.secondary)
+            } else if installation.result != nil {
+                Text("Installation Results").foregroundStyle(.secondary)
+            } else if let preview = installation.preview {
+                Text(preview.intent.scope.libraryTitle).foregroundStyle(.secondary)
             } else {
-                if scope == .npm, let npm = context.npm { DiscoverNPMContextView(context: npm, isDefault: true) }
-                Text("Enter one package per line. Blank lines and duplicate entries are removed. Maximum 100 items from one scope.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                BatchPackageEditor(text: $input, isEditable: !installation.isPreparing)
-                    .frame(height: 196)
-                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10)
-                            .strokeBorder(.separator, lineWidth: 1)
-                            .allowsHitTesting(false)
+                Text("Install Scope").foregroundStyle(.secondary)
+            }
+        } content: {
+            VStack(alignment: .leading, spacing: 12) {
+                if !installation.isSubmitting && installation.result == nil {
+                    GlassCategoryPicker(selection: $scope, label: "Install Scope", title: scopeTitle)
+                        .disabled(installation.isPreparing || installation.preview != nil)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                if installation.isSubmitting {
+                    MaintenanceLoadingState(title: "Running")
+                } else if let result = installation.result {
+                    DiscoverInstallResultView(result: result)
+                } else if let preview = installation.preview {
+                    if let npm = preview.npm { DiscoverNPMContextView(context: npm) }
+                    else if case .npm(let environment) = preview.intent.scope {
+                        Text("Node Environment: \(environment.nodeVersion) · npm \(environment.npmVersion)")
                     }
-                if installation.isPreparing { ProgressView("Checking Installation…") }
-                if let error = installation.error { Text(error.discoverMessage).foregroundStyle(.secondary) }
-                HStack {
-                    Spacer()
-                    Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
-                    Button("Review Installation") { Task { await installation.preview(input, scope: scope) } }
-                        .disabled(installation.isPreparing || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    let count = String(preview.plan.executableCount)
+                    let total = String(preview.intent.items.count)
+                    Text("\(count) of \(total) Items Can Be Installed").font(.headline)
+                    Text("Installation runs one item at a time. A failure does not stop other items. Completed installations cannot be rolled back.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    MaintenanceDetailWell(maxHeight: 220) {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            if let binding = preview.plan.npmBindings.first { DiscoverNPMDestinationView(destination: binding.destination) }
+                            ForEach(preview.plan.items) { item in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(item.item.displayIdentifier).textSelection(.enabled)
+                                    Text(item.status.discoverTitle).foregroundStyle(.secondary)
+                                }.accessibilityElement(children: .combine)
+                            }
+                        }
+                    }
+                } else {
+                    if scope == .npm, let npm = context.npm { DiscoverNPMContextView(context: npm, isDefault: true) }
+                    Text("Enter one package per line. Blank lines and duplicate entries are removed. Maximum 100 items from one scope.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    BatchPackageEditor(text: $input, isEditable: !installation.isPreparing)
+                        .frame(height: 184)
+                        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .strokeBorder(.separator.opacity(0.6), lineWidth: 0.5)
+                                .allowsHitTesting(false)
+                        }
+                    if installation.isPreparing { ProgressView("Checking Installation…") }
+                    if let error = installation.error { Text(error.discoverMessage).foregroundStyle(.secondary) }
                 }
             }
+        } footer: {
+            if installation.isSubmitting {
+                Spacer()
+                Button("Cancel", role: .cancel) {
+                    activeTask?.cancel()
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+            } else if installation.result != nil {
+                Spacer()
+                Button("OK") {
+                    installation.dismissResult()
+                    dismiss()
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.blue)
+                .keyboardShortcut(.defaultAction)
+            } else if let preview = installation.preview {
+                Button("Back", action: installation.dismissPreview)
+                Spacer()
+                Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
+                Button("Install") {
+                    activeTask?.cancel()
+                    activeTask = Task { await installation.confirmInstall() }
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.blue)
+                .keyboardShortcut(.defaultAction)
+                .disabled(preview.plan.executableCount == 0)
+            } else {
+                Spacer()
+                Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
+                Button("Review Installation") {
+                    activeTask?.cancel()
+                    activeTask = Task { await installation.preview(input, scope: scope) }
+                }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .disabled(installation.isPreparing || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
-        .padding(24)
-        .frame(width: 560)
-        .buttonStyle(.glass)
-        .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        .onDisappear {
+            activeTask?.cancel()
+            activeTask = nil
+            installation.dismissPreview()
+            installation.dismissResult()
+        }
     }
 
     private func scopeTitle(_ scope: CatalogProviderScope) -> LocalizedStringResource {

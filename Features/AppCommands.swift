@@ -40,7 +40,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("f", modifiers: .command)
                 .disabled(catalogSearchAction == nil)
             Button("Batch Install") { discoverBatchAction?() }
-                .disabled(model.selectedDestination != .discover || discoverBatchAction == nil || model.isBusy)
+                .disabled(model.selectedDestination != .maintenance || discoverBatchAction == nil || model.isBusy
+                          || (!model.discoverContext.homebrewAvailable && model.discoverContext.npm == nil))
             Button("Update All") { packageUpdateActions?.updateAll() }
                 .disabled(model.selectedDestination != .library || packageUpdateActions?.canUpdateAll != true || model.isBusy)
             Button("Check for Package Updates") { packageUpdateActions?.checkUpdates() }

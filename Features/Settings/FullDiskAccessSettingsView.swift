@@ -17,7 +17,9 @@ struct FullDiskAccessSettingsView: View {
                 Spacer(minLength: 0)
                 Button {
                     // Opening the settings pane does not establish whether access has been granted.
-                    openFailed = !guide.open(locale: locale)
+                    openFailed = !guide.open(locale: locale) {
+                        verificationRequestID = UUID()
+                    }
                 } label: {
                     if verification.isVerified {
                         Label("Access Verified", systemImage: "checkmark.circle.fill")

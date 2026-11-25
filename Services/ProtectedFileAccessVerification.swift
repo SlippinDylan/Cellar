@@ -42,7 +42,7 @@ final class ProtectedFileAccessVerification: ObservableObject {
         }
     }
 
-    private static func liveCheck() async -> ProtectedFileAccessResult {
+    static func liveCheck() async -> ProtectedFileAccessResult {
         guard !AppRuntime.isRunningTests else { return .unavailable }
         let directory = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Cookies")
         let worker = Task.detached(priority: .utility) { readResult(directory: directory) }

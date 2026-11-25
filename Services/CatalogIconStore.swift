@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -24,6 +25,12 @@ actor CatalogIconStore {
     private var failures: [URL: Date] = [:]
     private var activeRequests = 0
     private var queue: [Request] = []
+    private let localIconCache: NSCache<NSString, CGImage> = {
+        let cache = NSCache<NSString, CGImage>()
+        cache.countLimit = 256
+        return cache
+    }()
+    private var localIconMisses: [String: Date] = [:]
 
     var subscriberCount: Int { pending.values.reduce(0) { $0 + $1.subscribers.count } }
 
@@ -32,6 +39,43 @@ actor CatalogIconStore {
         self.cache = cache
         self.transport = transport
         self.now = now
+    }
+
+    func localAppIcon(for candidates: [String]) async -> CGImage? {
+        guard !AppRuntime.isRunningTests, !Task.isCancelled, !candidates.isEmpty else { return nil }
+        for path in candidates {
+            guard !Task.isCancelled else { return nil }
+            let key = path as NSString
+            if let cached = localIconCache.object(forKey: key) { return cached }
+            if let missedAt = localIconMisses[path], now().timeIntervalSince(missedAt) < 60 { continue }
+            let loaded = await Task.detached(priority: .userInitiated) { () -> CGImage? in
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                    return nil
+                }
+                let userApps = URL.homeDirectory.appending(path: "Applications").resolvingSymlinksInPath().path(percentEncoded: false)
+                let userAppsPrefix = userApps.hasSuffix("/") ? userApps : "\(userApps)/"
+                let resolved = URL(filePath: path).resolvingSymlinksInPath().path(percentEncoded: false)
+                guard resolved.hasPrefix("/Applications/") || resolved.hasPrefix(userAppsPrefix) else {
+                    return nil
+                }
+                let image = NSWorkspace.shared.icon(forFile: resolved)
+                var rect = NSRect(x: 0, y: 0, width: 112, height: 112)
+                return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+            }.value
+            if let loaded {
+                localIconCache.setObject(loaded, forKey: key)
+                localIconMisses[path] = nil
+                return loaded
+            }
+            recordLocalMiss(path)
+        }
+        return nil
+    }
+
+    private func recordLocalMiss(_ path: String) {
+        if localIconMisses.count >= 256 { localIconMisses.removeAll(keepingCapacity: true) }
+        localIconMisses[path] = now()
     }
 
     func data(for icon: CatalogIcon) async -> Data? {

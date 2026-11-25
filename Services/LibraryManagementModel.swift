@@ -65,6 +65,13 @@ final class LibraryUninstallModel: ObservableObject {
 
     func dismissResult() {
         result = nil
+        error = nil
+        failureReason = nil
+    }
+
+    func dismissError() {
+        error = nil
+        failureReason = nil
     }
     private let revealFile: (URL) -> Void
     private var preparationID: UUID?

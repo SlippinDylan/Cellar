@@ -113,7 +113,7 @@ struct HomeView: View {
             StatusMetric(
                 title: String(localized: "Homebrew"),
                 value: homebrewVersion(summary),
-                valueTint: installation == .notInstalled ? .secondary : nil,
+                valueTint: (installation == .notInstalled || installation == .commandLineToolsRequired) ? .secondary : nil,
                 valueSystemImage: homebrewUpdateDetail != nil ? "arrow.up.circle.fill" : nil,
                 valueSystemImageHelp: homebrewUpdateDetail != nil ? "Update Available" : nil,
                 titleLink: dashboard.officialHomebrewURL,
@@ -274,7 +274,8 @@ struct HomeView: View {
 
     private func homebrewVersion(_ summary: HomebrewDashboardSummary?) -> String {
         guard let current = summary?.version ?? model.homebrew?.version else {
-            return installation == .notInstalled ? String(localized: "Not Installed") : "—"
+            return (installation == .notInstalled || installation == .commandLineToolsRequired)
+                ? String(localized: "Not Installed") : "—"
         }
         return HomeVersion.normalized(current)
     }

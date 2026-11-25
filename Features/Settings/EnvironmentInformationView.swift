@@ -47,7 +47,9 @@ struct EnvironmentInformationView: View {
                         pathRow("Global Directory", node.summary.globalRoot)
                         pathRow("Cache Directory", node.configuration.cache)
                     } else {
-                        Text(model.nodeRefreshFailed ? LocalizedStringResource("Node Environment Unavailable") : LocalizedStringResource("Not Checked"))
+                        Text(model.nodeRefreshFailed || model.refreshedAt != nil
+                             ? LocalizedStringResource("Node Environment Unavailable")
+                             : LocalizedStringResource("Not Checked"))
                     }
                     if let nodePath { pathList("PATH", nodePath) }
                     if model.nodeRefreshFailed { Text("Local Node refresh failed. Previously read information is retained.") }

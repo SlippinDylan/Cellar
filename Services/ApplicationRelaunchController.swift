@@ -61,6 +61,10 @@ final class ApplicationRelaunchController: ObservableObject {
         selectedLanguage = previous.previousSelection
     }
 
+    var isRelaunchRequested: Bool {
+        pendingLanguageChange != nil
+    }
+
     func consumeRelaunchRequest() -> Bool {
         guard pendingLanguageChange != nil else { return false }
         pendingLanguageChange = nil

@@ -19,7 +19,10 @@ struct CellarApp: App {
     var body: some Scene {
         WindowGroup(id: AppScene.mainWindowID, for: MainWindowIdentity.self) { _ in
             AppRootView(model: model, updateController: updateController)
-                .onAppear { appDelegate.logStore = model.logStore }
+                .onAppear {
+                    appDelegate.logStore = model.logStore
+                    appDelegate.terminateAllProcesses = { await model.service.terminateAllProcesses() }
+                }
                 .frame(minWidth: 1080, minHeight: 720)
         } defaultValue: {
             .main
@@ -36,16 +39,19 @@ struct CellarApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var logStore: FileLogStore?
+    var terminateAllProcesses: (() async -> Void)?
     private var isTerminatingAsync = false
     private let operationStore: OperationStore
     private let relaunchController: ApplicationRelaunchController
     private let reopenApplication: () -> Void
+    private let reopenApplicationAsync: (() async -> Void)?
     private let replyToTermination: (Bool) -> Void
 
     override init() {
         operationStore = .shared
         relaunchController = .shared
         reopenApplication = Self.reopenCurrentApplication
+        reopenApplicationAsync = Self.reopenCurrentApplicationAsync
         replyToTermination = { NSApplication.shared.reply(toApplicationShouldTerminate: $0) }
         super.init()
     }
@@ -56,6 +62,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.operationStore = operationStore
         self.relaunchController = relaunchController
         self.reopenApplication = reopenApplication
+        self.reopenApplicationAsync = nil
         self.replyToTermination = replyToTermination
         super.init()
     }
@@ -66,7 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentBlockedTerminationNotice()
             return reply
         }
-        guard isTerminatingAsync || operationStore.hasActiveReadOnlyOperations || logStore != nil else {
+        guard isTerminatingAsync
+                || operationStore.hasActiveReadOnlyOperations
+                || logStore != nil
+                || terminateAllProcesses != nil
+                || (relaunchController.isRelaunchRequested && reopenApplicationAsync != nil) else {
             return reply
         }
         if !isTerminatingAsync {
@@ -76,15 +87,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             logStore?.record(level: .info, category: "application", message: message)
             Task {
                 await operationStore.cancelAndAwaitAllReadOnlyOperations()
+                if !operationStore.hasActiveOperations {
+                    await terminateAllProcesses?()
+                }
                 if let logStore {
                     await logStore.flush()
                 }
                 let canTerminate = !operationStore.hasActiveOperations
-                isTerminatingAsync = false
                 if !canTerminate {
                     operationStore.cancelTermination()
                     presentBlockedTerminationNotice()
+                } else if relaunchController.consumeRelaunchRequest() {
+                    if let reopenApplicationAsync {
+                        await reopenApplicationAsync()
+                    } else {
+                        reopenApplication()
+                    }
                 }
+                isTerminatingAsync = false
                 replyToTermination(canTerminate)
             }
         }
@@ -117,6 +137,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configuration.createsNewApplicationInstance = true
         configuration.activates = true
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
+    }
+
+    private static func reopenCurrentApplicationAsync() async {
+        guard !AppRuntime.isRunningTests else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.activates = true
+        _ = try? await NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration)
     }
 }
 

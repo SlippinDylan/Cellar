@@ -6,6 +6,8 @@ struct DiscoverBatchInstallSheet: View {
     @State private var scope: CatalogProviderScope
     @State private var input = ""
     @State private var activeTask: Task<Void, Never>?
+    @State private var isStartingPreview = false
+    @State private var isStartingInstall = false
     @Environment(\.dismiss) private var dismiss
 
     init(installation: DiscoverInstallationModel, context: DiscoverContext, initialScope: CatalogProviderScope) {
@@ -82,13 +84,8 @@ struct DiscoverBatchInstallSheet: View {
                 }
             }
         } footer: {
-            if installation.isSubmitting {
+            if installation.isSubmitting || isStartingInstall {
                 Spacer()
-                Button("Cancel", role: .cancel) {
-                    activeTask?.cancel()
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
             } else if installation.result != nil {
                 Spacer()
                 Button("OK") {
@@ -103,8 +100,12 @@ struct DiscoverBatchInstallSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
                 Button("Install") {
-                    activeTask?.cancel()
-                    activeTask = Task { await installation.confirmInstall() }
+                    guard !isStartingInstall, !installation.isSubmitting else { return }
+                    isStartingInstall = true
+                    activeTask = Task {
+                        await installation.confirmInstall()
+                        isStartingInstall = false
+                    }
                 }
                 .buttonStyle(.glassProminent)
                 .tint(.blue)
@@ -114,19 +115,26 @@ struct DiscoverBatchInstallSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
                 Button("Review Installation") {
-                    activeTask?.cancel()
-                    activeTask = Task { await installation.preview(input, scope: scope) }
+                    guard !isStartingPreview, !installation.isPreparing else { return }
+                    isStartingPreview = true
+                    activeTask = Task {
+                        await installation.preview(input, scope: scope)
+                        isStartingPreview = false
+                    }
                 }
                     .buttonStyle(.glassProminent)
                     .tint(.blue)
-                    .disabled(installation.isPreparing || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(installation.isPreparing || isStartingPreview || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
+        .interactiveDismissDisabled(installation.isSubmitting || isStartingInstall)
         .onDisappear {
-            activeTask?.cancel()
-            activeTask = nil
-            installation.dismissPreview()
-            installation.dismissResult()
+            if !installation.isSubmitting && !isStartingInstall {
+                activeTask?.cancel()
+                activeTask = nil
+                installation.dismissPreview()
+                installation.dismissResult()
+            }
         }
     }
 

@@ -154,7 +154,7 @@ extension AppModel {
             return nodePackageEnvironment != nil
         }
         // Explicit runtime selection can recover a failed read; project/log plans do not use npm.
-        if request.isIndependentOfNodeSnapshot || [.installNode, .useNode].contains(request.action) { return true }
+        if request.isIndependentOfNodeSnapshot || [.installNode, .useNode, .setDefaultNode].contains(request.action) { return true }
         return node != nil && !nodeRefreshFailed
     }
 

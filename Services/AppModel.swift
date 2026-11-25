@@ -102,7 +102,7 @@ final class AppModel: ObservableObject {
     }
 
     var isBusy: Bool {
-        operationStore.hasActiveOperations || isRefreshing || isHomebrewWorking || isNodeWorking || isShellWorking
+        operationStore.hasActiveOperations || operationStore.isTerminating || isRefreshing || isHomebrewWorking || isNodeWorking || isShellWorking
     }
 
     var currentNodeCacheVerification: NodeCacheVerification.State? {
@@ -253,9 +253,14 @@ final class AppModel: ObservableObject {
             nodeUpdateState = includingOutdated ? (snapshot.outdatedError == nil ? .available : .failed) : .notLoaded
             nodeOutdatedCheckedAt = includingOutdated ? Date() : nil
         case .failure(let error):
-            nodeRefreshFailed = true
-            nodeUpdateState = .failed
-            errorMessages.append(failureMessage(error))
+            if case BridgeError.managerFailure(let code, _) = error, code == "missing-dependency", node == nil {
+                nodeRefreshFailed = false
+                nodeUpdateState = .notLoaded
+            } else {
+                nodeRefreshFailed = true
+                nodeUpdateState = .failed
+                errorMessages.append(failureMessage(error))
+            }
         }
     }
 
@@ -298,7 +303,11 @@ final class AppModel: ObservableObject {
         }
         if result.refreshedState != nil {
             refreshedAt = Date()
-            checkedOutdatedRefresh = refreshedAt
+            let homebrewPending = homebrew?.isInstalled == true && homebrewUpdateState == .notLoaded
+            let nodePending = node != nil && nodeUpdateState == .notLoaded
+            if !homebrewPending && !nodePending {
+                checkedOutdatedRefresh = refreshedAt
+            }
         }
     }
 

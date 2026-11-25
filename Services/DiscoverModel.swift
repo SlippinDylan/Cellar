@@ -124,7 +124,8 @@ final class DiscoverSearchModel: ObservableObject {
             resultContext = effectiveContext
             unavailableScopes = unavailable
             partialScopes = partial
-            state = values.isEmpty ? (unavailable.isEmpty ? .empty : .failed) : .available
+            let allUnavailable = scope == .all ? unavailable.count == CatalogProviderScope.allCases.count : !unavailable.isEmpty
+            state = values.isEmpty ? (allUnavailable ? .failed : .empty) : .available
         } catch {
             guard latestRequest == request else { return }
             state = error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled ? .cancelled : .failed
@@ -192,7 +193,7 @@ final class DiscoverInstallationModel: ObservableObject {
     init(model: AppModel) { self.model = model }
 
     func preview(_ input: String, scope: CatalogProviderScope) async {
-        guard !isSubmitting, !isPreparing, !model.isBusy else { return }
+        guard !Task.isCancelled, !isSubmitting, !isPreparing, !model.isBusy else { return }
         let request = UUID()
         previewRequest = request
         preview = nil

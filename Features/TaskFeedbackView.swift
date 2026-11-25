@@ -63,7 +63,10 @@ struct TaskFeedbackView: View {
                         ForEach(errors, id: \.self) { error in
                             Label(error, systemImage: "exclamationmark.triangle")
                         }
-                        if let plan = model.nodePlan, !plan.canExecute { Text(plan.blockingMessage) }
+                        if let plan = model.nodePlan, !plan.canExecute,
+                           !errors.contains(String(localized: plan.blockingMessage)) {
+                            Text(plan.blockingMessage)
+                        }
                     }
                     Spacer()
                     Button("Dismiss Feedback") {

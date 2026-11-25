@@ -20,7 +20,11 @@ struct HomebrewSourcesView: View {
         SettingsSection(title: "Homebrew Taps", website: CatalogWebsites.homebrew, websiteTitle: "Homebrew Website",
                         action: .init(title: "Add Tap", isEnabled: model.homebrew?.isInstalled == true && !model.isBusy, perform: { showsAddTap = true })) {
             if let snapshot = model.homebrew?.snapshot {
-                if snapshot.sectionErrors[.taps] != nil { Text("Homebrew Tap Information Unavailable") }
+                if snapshot.sectionErrors[.taps] != nil {
+                    Text("Homebrew Tap Information Unavailable")
+                } else if snapshot.taps.isEmpty {
+                    Text("No Additional Taps").foregroundStyle(.secondary)
+                }
                 VStack(spacing: 0) {
                     ForEach(snapshot.taps) { tap in
                         HStack {

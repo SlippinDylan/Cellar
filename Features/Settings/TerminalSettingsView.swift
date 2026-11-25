@@ -26,7 +26,11 @@ struct TerminalSettingsView: View {
                         Text("Local Theme")
                         Spacer()
                         Picker("Local Theme", selection: $theme) {
-                            if !shell.availableThemes.contains(theme) { Text("Choose a Local Theme").tag("") }
+                            if theme.isEmpty {
+                                Text("Choose a Local Theme").tag("")
+                            } else if !shell.availableThemes.contains(theme) {
+                                Text(verbatim: theme).tag(theme)
+                            }
                             ForEach(shell.availableThemes, id: \.self) { Text($0).tag($0) }
                         }
                         .labelsHidden()
@@ -72,7 +76,7 @@ struct TerminalSettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         Button("Apply") { Task { await model.prepareTerminalConfiguration(plugins: plugins.sorted(), theme: theme) } }
-                            .disabled(model.isBusy || !hasChanges(shell) || !shell.availableThemes.contains(theme))
+                            .disabled(model.isBusy || !hasChanges(shell) || (!shell.availableThemes.contains(theme) && theme != shell.currentTheme))
                     }
                     .frame(minHeight: AppLayout.minimumControlRowHeight)
                 }

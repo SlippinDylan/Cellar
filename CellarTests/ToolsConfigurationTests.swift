@@ -4,9 +4,12 @@ import XCTest
 final class ToolsConfigurationTests: XCTestCase {
     func testMaintenanceRawErrorsAreOnlyAvailableInExplicitSessionDiagnostics() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appending(path: "Features/Tools/MaintenanceView.swift"), encoding: .utf8)
-        XCTAssertFalse(source.contains("DiagnosticText.sanitized(error)"))
-        XCTAssertTrue(source.contains("ActivityDiagnosticsView"))
+        let viewSource = try String(contentsOf: root.appending(path: "Features/Tools/MaintenanceView.swift"), encoding: .utf8)
+        let sheetsSource = try String(contentsOf: root.appending(path: "Features/Tools/MaintenanceSheets.swift"), encoding: .utf8)
+        XCTAssertFalse(viewSource.contains("DiagnosticText.sanitized(error)"))
+        XCTAssertFalse(sheetsSource.contains("report.command.standardOutput"))
+        XCTAssertFalse(sheetsSource.contains("report.command.standardError"))
+        XCTAssertTrue(viewSource.contains("ActivityDiagnosticsView"))
     }
 
     func testTapConfirmationBoundsAssociatedItemsAndKeepsActionsOutsideScrollingContent() throws {

@@ -36,8 +36,30 @@ struct DiscoverView: View {
                     }
                     if let error = installation.error { Label { Text(error.discoverMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
                     if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
-                    if let error = uninstall.error { Text(error.libraryMessage).foregroundStyle(.secondary) }
-                    if let reason = uninstall.failureReason { Text(reason.message).foregroundStyle(.secondary) }
+                    if let error = uninstall.error {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(error.libraryMessage).foregroundStyle(.secondary)
+                                if let reason = uninstall.failureReason {
+                                    Text(reason.message).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
+                                .labelStyle(.iconOnly).buttonStyle(.plain)
+                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
+                                .help("Dismiss Feedback")
+                        }
+                    } else if let reason = uninstall.failureReason {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(reason.message).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
+                                .labelStyle(.iconOnly).buttonStyle(.plain)
+                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
+                                .help("Dismiss Feedback")
+                        }
+                    }
                     if (installation.isSubmitting || updates.isSubmitting), let current = operationStore.currentOperation {
                         ProgressView { Text(current.context.stage.title) }
                     }

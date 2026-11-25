@@ -68,8 +68,30 @@ struct LibraryView: View {
                     }
                     if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
                     if let result = updates.result { UpdatesResultView(result: result, dismiss: updates.dismissResult) }
-                    if let error = uninstall.error { Text(error.libraryMessage).foregroundStyle(.secondary) }
-                    if let reason = uninstall.failureReason { Text(reason.message).foregroundStyle(.secondary) }
+                    if let error = uninstall.error {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(error.libraryMessage).foregroundStyle(.secondary)
+                                if let reason = uninstall.failureReason {
+                                    Text(reason.message).foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
+                                .labelStyle(.iconOnly).buttonStyle(.plain)
+                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
+                                .help("Dismiss Feedback")
+                        }
+                    } else if let reason = uninstall.failureReason {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text(reason.message).foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
+                                .labelStyle(.iconOnly).buttonStyle(.plain)
+                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
+                                .help("Dismiss Feedback")
+                        }
+                    }
                     if let result = uninstall.result { LibraryResultView(result: result, dismiss: uninstall.dismissResult) }
                     if !cards.isEmpty {
                         if !pendingCards.isEmpty {
@@ -136,7 +158,7 @@ struct LibraryView: View {
 
     private var nodeReadState: LibraryReadState {
         if model.nodeRefreshFailed { return .failed }
-        if model.node == nil { return model.refreshedAt == nil || model.isRefreshing ? .loading : .failed }
+        if model.node == nil { return model.refreshedAt == nil || model.isRefreshing ? .loading : .available }
         return .available
     }
 

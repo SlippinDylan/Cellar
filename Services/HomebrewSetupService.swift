@@ -110,7 +110,11 @@ actor HomebrewSetupService {
 
     func finishInstallerHandoff() throws {
         guard let directory = handedOffDirectory else { return }
-        try FileManager.default.removeItem(at: directory)
+        do {
+            try FileManager.default.removeItem(at: directory)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            // The temporary directory was already removed externally; clear handoff state so setup is not wedged.
+        }
         handedOffDirectory = nil
     }
 

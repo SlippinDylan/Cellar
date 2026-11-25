@@ -143,6 +143,7 @@ private struct NodeInstallationSheet: View {
     @StateObject private var runtime = RuntimeToolsModel()
     @State private var selectedRelease = ""
     @State private var didLoad = false
+    @State private var retryTask: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -153,10 +154,16 @@ private struct NodeInstallationSheet: View {
                 ProgressView("Loading Official Node Versions…")
             } else if let error = runtime.error {
                 Label { Text(error.message) } icon: { Image(systemName: "exclamationmark.triangle") }
-                Button("Retry") { Task { await runtime.refresh(model: model) } }.disabled(model.isBusy)
+                Button("Retry") {
+                    retryTask?.cancel()
+                    retryTask = Task { await runtime.refresh(model: model) }
+                }.disabled(model.isBusy)
             } else if runtime.releases.isEmpty {
                 Text("No Node releases are available. Try again.")
-                Button("Retry") { Task { await runtime.refresh(model: model) } }.disabled(model.isBusy)
+                Button("Retry") {
+                    retryTask?.cancel()
+                    retryTask = Task { await runtime.refresh(model: model) }
+                }.disabled(model.isBusy)
             } else {
                 Picker("Node Version", selection: $selectedRelease) {
                     Text("Choose a Version").tag("")
@@ -177,6 +184,10 @@ private struct NodeInstallationSheet: View {
             guard !AppRuntime.isRunningTests else { return }
             await runtime.refresh(model: model)
             didLoad = true
+        }
+        .onDisappear {
+            retryTask?.cancel()
+            retryTask = nil
         }
     }
 }

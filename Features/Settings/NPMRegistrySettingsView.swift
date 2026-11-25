@@ -136,10 +136,7 @@ struct NPMRegistrySettingsView: View {
             return
         } catch {
             guard scope == requestedScope, !model.nodeRefreshFailed, model.node?.summary == node.summary else { return }
-            let detail = DiagnosticText.sanitized(error.localizedDescription)
-            scopeReadError = detail.isEmpty
-                ? String(localized: "The scope Registry could not be read. Refresh and try again.")
-                : detail
+            scopeReadError = String(localized: ActivityItemReason(error: error).message)
         }
     }
 }

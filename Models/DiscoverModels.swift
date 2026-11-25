@@ -64,7 +64,10 @@ enum DiscoverResult: Sendable {
             available = package.currentVersion
             installed = current.isInstalled ? current.installedVersions.joined(separator: ", ") : nil
             let component = package.identity.kind == .formula ? "formula" : "cask"
-            website = CatalogWebsites.url(host: "formulae.brew.sh", path: "/\(component)/\(package.identity.name)")
+            let fallbackWebsite = package.identity.name.contains("/")
+                ? nil
+                : CatalogWebsites.url(host: "formulae.brew.sh", path: "/\(component)/\(package.identity.name)")
+            website = CatalogWebsites.safeWebsite(package.homepage.flatMap(URL.init(string:))) ?? fallbackWebsite
             item = .homebrew(package.identity)
         case .npm(let package):
             icon = .placeholder

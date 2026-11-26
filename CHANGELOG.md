@@ -4,6 +4,22 @@ All notable user-facing changes to Cellar are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-26
+
+### Added
+
+- One-click Node.js installation via Homebrew in the onboarding guide, Home, and Environment views.
+- Automatic background polling and cancellation detection for Command Line Tools installation in the onboarding guide.
+
+### Improved
+
+- Unified onboarding setup cards with trailing install actions, active spinners, right-aligned completion checkmarks, and inline progress bars for Homebrew, Node.js, and Oh My Zsh.
+- Constrained confirmation sheets across the app so dialogs never exceed their parent window width.
+
+### Fixed
+
+- Cleared onboarding setup feedback so entering the main window no longer leaves setup banners pinned across pages.
+
 ## [0.1.1] - 2026-11-26
 
 ### Added

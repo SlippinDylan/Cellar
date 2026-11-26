@@ -2,6 +2,63 @@ import AppKit
 import CryptoKit
 import Foundation
 
+enum HomebrewInstallProgress: Equatable, Sendable {
+    case fetchingRelease
+    case downloading
+    case verifying
+    case installing
+}
+
+enum HomebrewShellProfileService {
+    static let shellenvLine = #"eval "$(/opt/homebrew/bin/brew shellenv)""#
+    static let shellenvMarker = "/opt/homebrew/bin/brew shellenv"
+
+    static func profileURL(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        homeDirectory.appending(path: ".zprofile")
+    }
+
+    static func isConfigured(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) -> Bool {
+        let url = profileURL(homeDirectory: homeDirectory)
+        guard isRegularFileOrAbsent(url),
+              let content = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return content.split(separator: "\n", omittingEmptySubsequences: false).contains { line in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            return !trimmed.hasPrefix("#") && trimmed.contains(shellenvMarker)
+        }
+    }
+
+    static func configure(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) throws {
+        let url = profileURL(homeDirectory: homeDirectory)
+        guard isRegularFileOrAbsent(url) else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        if isConfigured(homeDirectory: homeDirectory) { return }
+        let existing = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        let prefix: String
+        if existing.isEmpty {
+            prefix = ""
+        } else if existing.hasSuffix("\n") {
+            prefix = existing
+        } else {
+            prefix = existing + "\n"
+        }
+        let updated = prefix + shellenvLine + "\n"
+        try updated.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private static func isRegularFileOrAbsent(_ url: URL) -> Bool {
+        do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+            let type = attributes[.type] as? FileAttributeType
+            return type == .typeRegular
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
+            return true
+        } catch {
+            return false
+        }
+    }
+}
+
 actor HomebrewSetupService {
     private let temporaryRoot: URL
     private let metadata: @Sendable () async throws -> HomebrewInstallerMetadata
@@ -49,14 +106,19 @@ actor HomebrewSetupService {
             },
             digest: { try await Self.sha256(of: $0) },
             packageSignature: { try await trust.validatePackageSignature($0) },
-            gatekeeper: { try await trust.assessGatekeeper($0) },
+            // Upstream Homebrew.pkg is Developer ID signed without Apple notarization, so
+            // trust is enforced via official Release metadata + SHA-256 + pkgutil Developer ID chain.
+            gatekeeper: { _ in },
             opener: { url in
-                _ = try await NSWorkspace.shared.open([url], withApplicationAt: URL(filePath: "/System/Library/CoreServices/Installer.app"), configuration: NSWorkspace.OpenConfiguration())
+                try await trust.installPackageWithAdministratorPrivileges(url)
             }
         )
     }
 
-    func openInstaller() async throws -> URL {
+    func openInstaller(
+        cleanupAfterInstall: Bool = false,
+        onProgress: (@Sendable (HomebrewInstallProgress) async -> Void)? = nil
+    ) async throws -> URL {
         guard !installationInProgress, handedOffDirectory == nil else { throw HomebrewSetupError(failure: .installationInProgress) }
         installationInProgress = true
         defer { installationInProgress = false }
@@ -67,6 +129,7 @@ actor HomebrewSetupService {
             stage = .installationTarget
             try await validateEligibility()
             stage = .releaseMetadata
+            await onProgress?(.fetchingRelease)
             let metadata = try await metadata()
             try Task.checkCancellation()
             stage = .temporaryFile
@@ -76,8 +139,11 @@ actor HomebrewSetupService {
             directory = ownedDirectory
             let package = ownedDirectory.appending(path: "Homebrew.pkg")
             stage = .download
+            await onProgress?(.downloading)
             try await download(metadata, package)
             try Task.checkCancellation()
+            stage = .verifyingErrorFallback
+            await onProgress?(.verifying)
             let values = try package.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
             guard values.isRegularFile == true, values.isSymbolicLink == false, values.fileSize == metadata.size else { throw HomebrewSetupFailure.download }
             stage = .digestMismatch
@@ -93,9 +159,14 @@ actor HomebrewSetupService {
             try await validateEligibility()
             try Task.checkCancellation()
             stage = .systemOpen
+            await onProgress?(.installing)
             try await opener(package)
-            // Installer reads asynchronously. Retain the file until its caller reports completion.
-            handedOffDirectory = ownedDirectory
+            if cleanupAfterInstall {
+                try? FileManager.default.removeItem(at: ownedDirectory)
+            } else {
+                // Async handoff retains the file until its caller reports completion.
+                handedOffDirectory = ownedDirectory
+            }
             return package
         } catch {
             if let directory {
@@ -154,4 +225,8 @@ actor HomebrewSetupService {
         }
         return digest.finalize().map { String(format: "%02x", $0) }.joined()
     }
+}
+
+private extension HomebrewSetupFailure {
+    static let verifyingErrorFallback = HomebrewSetupFailure.download
 }

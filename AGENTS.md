@@ -38,8 +38,8 @@ Cellar 是面向 macOS 26 及以上版本、仅支持 Apple Silicon 的原生开
 
 - Homebrew 可以查询、搜索和管理 Formula/Cask、诊断、配置和 Tap；支持 typed batch install/update 和单项 uninstall。批量一次只处理一个 provider/type，顺序执行并保留逐项结果。
 - 单项安装/更新从卡片直接开始；批量、卸载、zap、清理和配置修改按产品矩阵进行一次任务专用确认。内部计划、状态指纹和 post-refresh 继续作为安全边界。写操作不是事务，界面与本地日志必须保留部分完成语义；界面结果不受日志等级过滤。
-- Command Line Tools 只通过 `xcode-select --install` 请求系统对话框。Homebrew 只接受官方 latest stable Release 的精确 `Homebrew.pkg` 及其有效官方 SHA-256；digest、package signature 和 Gatekeeper assessment 任一缺失或失败都必须 fail closed、不得打开，并报告原因及 Homebrew 官方链接。全部通过后才交给系统 Installer；该安装流程不执行远端安装脚本、不收集密码、不调用 Cellar 自己的 `sudo` 或 Helper。
-- 不修改 `.zprofile`，不执行 Homebrew cleanup，不自动删除孤儿依赖。Library 的增强 Cask 卸载只在 Homebrew 卸载成功且复查确认目标已移除后，删除确认清单内可验证归属的关联数据和目标下载缓存；共享、归属未知或复验失败的路径保留。不得按名称模糊搜索后删除，也不得清空整个 Homebrew 缓存。
+- Command Line Tools 只通过 `xcode-select --install` 请求系统对话框。Homebrew 只接受官方 latest stable Release 的精确 `Homebrew.pkg` 及其有效官方 SHA-256；digest 或 `pkgutil` Apple Developer ID 签名链校验任一缺失或失败都必须 fail closed、不得执行，并报告原因及 Homebrew 官方链接。全部通过后通过 macOS 一次系统管理员授权静默执行 `/usr/sbin/installer -pkg ... -target /`；该安装流程不执行远端安装脚本、不收集密码、不安装常驻特权服务。
+- 仅在通过 Cellar 成功安装 Homebrew 后自动幂等追加 `brew shellenv` 到 `~/.zprofile`（拒绝符号链接，不覆盖原有内容），其他场景不修改 `.zprofile`；不执行 Homebrew cleanup，不自动删除孤儿依赖。Library 的增强 Cask 卸载只在 Homebrew 卸载成功且复查确认目标已移除后，删除确认清单内可验证归属的关联数据和目标下载缓存；共享、归属未知或复验失败的路径保留。不得按名称模糊搜索后删除，也不得清空整个 Homebrew 缓存。
 - Formula/Cask 卸载必须显式禁止 Homebrew 自动更新和 autoremove。增强 Cask 卸载使用 standard，不把整个 zap stanza 静默交给 Homebrew；应用本体仍由 Homebrew 处理，额外删除限于强类型确认计划。删除前复验文件身份，拒绝符号链接祖先和任意路径输入。
 - 受限 Cask 残留删除可通过 macOS 系统管理员授权执行一次性清理模式；只接受真实用户主目录下的允许路径、精确文件身份和有界请求，遵守任务取消及生命周期约束。Cellar 不收集密码、不安装常驻特权服务、不把整条 brew 命令提权。Homebrew 自身需 sudo 的卸载钩子仍按实际失败或部分完成报告。
 - Homebrew Manager 没有稳定 App JSON 契约，Homebrew 由 Bridge 使用绝对 `brew` 路径和受控环境调用。Zsh 原交互 Manager 同样不被驱动；App 只调用相邻的 Cellar-owned schema v1 adapter。

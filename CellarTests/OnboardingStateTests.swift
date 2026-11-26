@@ -114,4 +114,60 @@ final class OnboardingStateTests: XCTestCase {
         coordinator.teardown()
         XCTAssertTrue(window.delegate === original)
     }
+
+    func testDeveloperIDInstallerSignatureChainIsAcceptedAndUntrustedRejected() async throws {
+        let pkgURL = FileManager.default.temporaryDirectory.appending(path: "Homebrew.pkg")
+        let validOutput = """
+        Package "Homebrew.pkg":
+           Status: signed by a developer certificate issued by Apple for distribution
+           Certificate Chain:
+            1. Developer ID Installer: Patrick Linnane (927JGANW46)
+            2. Developer ID Certification Authority
+            3. Apple Root CA
+        """
+        let validClient = HomebrewInstallerTrustClient { _ in
+            ProcessResult(standardOutput: Data(validOutput.utf8), standardError: Data(), terminationStatus: 0, standardOutputWasTruncated: false, standardErrorWasTruncated: false)
+        }
+        try await validClient.validatePackageSignature(pkgURL)
+
+        let missingRootClient = HomebrewInstallerTrustClient { _ in
+            ProcessResult(standardOutput: Data("Status: signed by a developer certificate issued by Apple for distribution\n1. Developer ID Installer: Someone".utf8), standardError: Data(), terminationStatus: 0, standardOutputWasTruncated: false, standardErrorWasTruncated: false)
+        }
+        do {
+            try await missingRootClient.validatePackageSignature(pkgURL)
+            XCTFail("Expected missing Apple Root CA to fail closed")
+        } catch let failure as HomebrewSetupFailure {
+            XCTAssertEqual(failure, .packageSignature)
+        }
+
+        let cancelledInstallClient = HomebrewInstallerTrustClient { _ in
+            ProcessResult(standardOutput: Data(), standardError: Data("execution error: User canceled. (-128)".utf8), terminationStatus: 1, standardOutputWasTruncated: false, standardErrorWasTruncated: false)
+        }
+        do {
+            try await cancelledInstallClient.installPackageWithAdministratorPrivileges(pkgURL)
+            XCTFail("Expected user cancellation")
+        } catch is CancellationError {}
+    }
+
+    func testShellProfileServiceAppendsIdempotentlyAndRejectsSymlinks() throws {
+        let home = FileManager.default.temporaryDirectory.appending(path: "cellar-zprofile-test-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: home) }
+
+        XCTAssertFalse(HomebrewShellProfileService.isConfigured(homeDirectory: home))
+        try HomebrewShellProfileService.configure(homeDirectory: home)
+        XCTAssertTrue(HomebrewShellProfileService.isConfigured(homeDirectory: home))
+
+        let firstContent = try String(contentsOf: home.appending(path: ".zprofile"), encoding: .utf8)
+        try HomebrewShellProfileService.configure(homeDirectory: home)
+        let secondContent = try String(contentsOf: home.appending(path: ".zprofile"), encoding: .utf8)
+        XCTAssertEqual(firstContent, secondContent)
+
+        let symlinkHome = FileManager.default.temporaryDirectory.appending(path: "cellar-zprofile-symlink-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: symlinkHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: symlinkHome) }
+        try FileManager.default.createSymbolicLink(at: symlinkHome.appending(path: ".zprofile"), withDestinationURL: home.appending(path: ".zprofile"))
+        XCTAssertFalse(HomebrewShellProfileService.isConfigured(homeDirectory: symlinkHome))
+        XCTAssertThrowsError(try HomebrewShellProfileService.configure(homeDirectory: symlinkHome))
+    }
 }

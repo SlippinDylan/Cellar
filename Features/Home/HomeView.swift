@@ -58,7 +58,11 @@ struct HomeView: View {
             guard let request = setupRequest else { return }
             switch request {
             case .commandLineTools: await dashboard.requestCommandLineTools(installation: .commandLineToolsRequired)
-            case .homebrew: await dashboard.openHomebrewInstaller(installation: installation)
+            case .homebrew:
+                if await dashboard.installHomebrewSilently(installation: installation) {
+                    await model.refresh()
+                    dashboard.refreshShellProfileState()
+                }
             case .finishInstaller:
                 if await dashboard.finishInstallerHandoff() { await model.refresh() }
             }

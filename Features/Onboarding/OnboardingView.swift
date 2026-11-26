@@ -43,6 +43,8 @@ struct OnboardingView: View {
     @State private var introPhase: OnboardingIntroPhase = .playing(UUID())
     @State private var isWindowVisible = false
     @State private var needsResetOnAppear = false
+    @State private var hasCompletedInitialProbe = false
+    @State private var didConfigureTerminalBrew = false
     @State private var setupRequest: OnboardingSetupRequest?
     @State private var showsSkipConfirmation = false
     @State private var requestedOhMyZshInstall = false
@@ -116,7 +118,9 @@ struct OnboardingView: View {
             if model.refreshedAt == nil && !model.isRefreshing {
                 await model.refresh()
             }
-            await dashboard.refreshPrerequisitesOnly()
+            await dashboard.refreshPrerequisitesOnly(showLoading: !hasCompletedInitialProbe)
+            dashboard.refreshShellProfileState()
+            hasCompletedInitialProbe = true
         }
         .task(id: fdaVerificationRequestID) {
             guard !AppRuntime.isRunningTests else { return }
@@ -124,10 +128,8 @@ struct OnboardingView: View {
         }
         .task(id: reactivationRefreshID) {
             guard reactivationRefreshID != nil, isWindowVisible, !AppRuntime.isRunningTests else { return }
-            await dashboard.refreshPrerequisitesOnly()
-            if !model.isBusy && !dashboard.installerHandoffPending {
-                await model.refresh()
-            }
+            await dashboard.refreshPrerequisitesOnly(showLoading: false)
+            dashboard.refreshShellProfileState()
         }
         .task(id: setupRequest) {
             guard let request = setupRequest else { return }
@@ -135,15 +137,23 @@ struct OnboardingView: View {
             case .commandLineTools:
                 await dashboard.requestCommandLineTools(installation: .commandLineToolsRequired)
             case .homebrew:
-                await dashboard.openHomebrewInstaller(installation: homebrewInstallation)
+                if await dashboard.installHomebrewSilently(installation: homebrewInstallation) {
+                    if dashboard.isHomebrewInShellProfile {
+                        didConfigureTerminalBrew = true
+                    }
+                    await model.refresh()
+                    await dashboard.refreshPrerequisitesOnly(showLoading: false)
+                }
             case .finishInstaller:
                 if await dashboard.finishInstallerHandoff() {
                     await model.refresh()
-                    await dashboard.refreshPrerequisitesOnly()
+                    await dashboard.refreshPrerequisitesOnly(showLoading: false)
+                    dashboard.refreshShellProfileState()
                 }
             case .recheck:
                 await model.refresh()
-                await dashboard.refreshPrerequisitesOnly()
+                await dashboard.refreshPrerequisitesOnly(showLoading: false)
+                dashboard.refreshShellProfileState()
                 await fdaVerification.refresh()
             }
             setupRequest = nil
@@ -280,23 +290,21 @@ struct OnboardingView: View {
                 EmptyView()
             } else if dashboard.setupState == .commandLineToolsRequested {
                 Button("Recheck") { setupRequest = .recheck }
-                    .controlSize(.small)
                     .disabled(model.isBusy)
             } else if dashboard.commandLineTools == .available(.notInstalled) {
                 Button("Install…") { setupRequest = .commandLineTools }
-                    .controlSize(.small)
                     .disabled(model.isBusy || dashboard.setupState == .requestingCommandLineTools)
             } else if dashboard.commandLineTools == .failed {
                 Button("Recheck") { setupRequest = .recheck }
-                    .controlSize(.small)
                     .disabled(model.isBusy)
             }
         }
     }
 
     private var homebrewRow: some View {
+        let isInstalling = dashboard.setupState == .preparingInstaller
         let status: OnboardingItemStatus = {
-            if isProbing || dashboard.setupState == .preparingInstaller { return .checking }
+            if isProbing || isInstalling { return .checking }
             if isHomebrewInstalled { return .ready }
             if case .failed(.homebrew) = dashboard.setupState { return .warning }
             if case .unavailable = homebrewInstallation { return .warning }
@@ -307,30 +315,26 @@ struct OnboardingView: View {
             icon: AnyView(Image("HomebrewBrand").resizable().scaledToFit()),
             title: "Homebrew",
             subtitle: homebrewSubtitle,
-            status: status
+            status: status,
+            showsProgressBar: isInstalling
         ) {
             if isHomebrewInstalled {
                 EmptyView()
             } else if dashboard.installerHandoffPending {
                 Button("Recheck") { setupRequest = .finishInstaller }
-                    .controlSize(.small)
                     .disabled(model.isBusy)
             } else if homebrewInstallation == .notInstalled {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     if case .failed(.homebrew) = dashboard.setupState {
                         Button("Website") { openURL(CatalogWebsites.homebrew) }
-                            .controlSize(.small)
                     }
                     Button("Install…") { setupRequest = .homebrew }
-                        .controlSize(.small)
-                        .disabled(model.isBusy || dashboard.setupState == .preparingInstaller)
+                        .disabled(model.isBusy || isInstalling)
                 }
             } else if case .unavailable = homebrewInstallation {
                 Button("Website") { openURL(CatalogWebsites.homebrew) }
-                    .controlSize(.small)
             } else if homebrewInstallation == .commandLineToolsRequired {
                 Button("Install…") {}
-                    .controlSize(.small)
                     .disabled(true)
             }
         }
@@ -355,14 +359,11 @@ struct OnboardingView: View {
                 EmptyView()
             } else if model.nvmInstalled == true {
                 Button("Recheck") { setupRequest = .recheck }
-                    .controlSize(.small)
                     .disabled(model.isBusy)
             } else {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Button("Guide") { openURL(CatalogWebsites.nvm) }
-                        .controlSize(.small)
                     Button("Recheck") { setupRequest = .recheck }
-                        .controlSize(.small)
                         .disabled(model.isBusy)
                 }
             }
@@ -393,7 +394,6 @@ struct OnboardingView: View {
                         if model.shellPlan == nil { requestedOhMyZshInstall = false }
                     }
                 }
-                .controlSize(.small)
                 .disabled(model.isBusy || model.managers == nil)
             }
         }
@@ -425,7 +425,6 @@ struct OnboardingView: View {
                         fdaVerificationRequestID = UUID()
                     }
                 }
-                .controlSize(.small)
             }
         }
     }
@@ -521,11 +520,11 @@ struct OnboardingView: View {
     }
 
     private var isProbing: Bool {
-        model.isRefreshing || (model.refreshedAt == nil && !AppRuntime.isRunningTests)
+        !hasCompletedInitialProbe && model.refreshedAt == nil && !AppRuntime.isRunningTests
     }
 
     private var isCheckingCLT: Bool {
-        dashboard.commandLineTools == .notLoaded || dashboard.commandLineTools == .loading
+        !hasCompletedInitialProbe && (dashboard.commandLineTools == .notLoaded || dashboard.commandLineTools == .loading)
     }
 
     private var isCLTInstalled: Bool {
@@ -585,14 +584,25 @@ struct OnboardingView: View {
     private var homebrewSubtitle: Text {
         if isProbing { return Text("Checking…") }
         if case .installed(let info) = homebrewInstallation {
+            if didConfigureTerminalBrew {
+                return Text("Installed (\(info.version)) · Ready in new Terminal windows.")
+            }
             return Text("Installed (\(info.version))")
         }
-        if dashboard.setupState == .preparingInstaller { return Text("Verifying official package…") }
+        if dashboard.setupState == .preparingInstaller {
+            switch dashboard.homebrewInstallProgress {
+            case .fetchingRelease: return Text("Fetching official Homebrew release…")
+            case .downloading: return Text("Downloading official Homebrew installer…")
+            case .verifying: return Text("Verifying official package…")
+            case .installing: return Text("Installing Homebrew…")
+            case nil: return Text("Preparing System Installation")
+            }
+        }
         if dashboard.installerHandoffPending { return Text("Complete installation in macOS Installer, then recheck.") }
         if case .failed(.homebrew(let failure)) = dashboard.setupState { return Text(HomeSetupFailure.homebrew(failure).message) }
         if homebrewInstallation == .commandLineToolsRequired { return Text("Install Command Line Tools first.") }
         if case .unavailable = homebrewInstallation { return Text("Homebrew is unavailable. Check the official website for guidance.") }
-        return Text("Cellar verifies the official signed package before opening macOS Installer.")
+        return Text("Not Installed")
     }
 
     private var nodeSubtitle: Text {
@@ -682,29 +692,38 @@ private struct OnboardingSetupRow<Action: View>: View {
     let title: LocalizedStringResource
     let subtitle: Text
     let status: OnboardingItemStatus
+    var showsProgressBar: Bool = false
     @ViewBuilder let action: () -> Action
 
     var body: some View {
-        HStack(spacing: 12) {
-            icon
-                .frame(width: 30, height: 30)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                icon
+                    .frame(width: 30, height: 30)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 14, weight: .semibold))
-                    OnboardingStatusGlyph(status: status)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 14, weight: .semibold))
+                        OnboardingStatusGlyph(status: status)
+                    }
+                    subtitle
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                subtitle
-                    .font(.system(size: 12.5))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 8)
+
+                action()
+                    .controlSize(.large)
             }
 
-            Spacer(minLength: 8)
-
-            action()
-                .controlSize(.regular)
+            if showsProgressBar {
+                ProgressView()
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
@@ -718,29 +737,32 @@ private struct OnboardingStatusGlyph: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var breathing = false
 
+    @ViewBuilder
     var body: some View {
-        Image(systemName: symbolName)
-            .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(symbolColor)
-            .contentTransition(.symbolEffect(.replace))
-            .scaleEffect(breathing && !reduceMotion ? 1.14 : 1.0)
-            .animation(reduceMotion ? nil : .smooth, value: status)
-            .animation(
-                breathing && !reduceMotion
-                    ? .easeInOut(duration: 0.75).repeatForever(autoreverses: true)
-                    : .easeOut(duration: 0.2),
-                value: breathing
-            )
-            .onAppear { breathing = status == .checking }
-            .onChange(of: status) { _, newValue in breathing = newValue == .checking }
-            .accessibilityHidden(true)
+        if let symbolName {
+            Image(systemName: symbolName)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(symbolColor)
+                .contentTransition(.symbolEffect(.replace))
+                .scaleEffect(breathing && !reduceMotion ? 1.14 : 1.0)
+                .animation(reduceMotion ? nil : .smooth, value: status)
+                .animation(
+                    breathing && !reduceMotion
+                        ? .easeInOut(duration: 0.75).repeatForever(autoreverses: true)
+                        : .easeOut(duration: 0.2),
+                    value: breathing
+                )
+                .onAppear { breathing = status == .checking }
+                .onChange(of: status) { _, newValue in breathing = newValue == .checking }
+                .accessibilityHidden(true)
+        }
     }
 
-    private var symbolName: String {
+    private var symbolName: String? {
         switch status {
         case .checking: "arrow.trianglehead.2.clockwise.rotate.90.circle.fill"
         case .ready: "checkmark.circle.fill"
-        case .missing: "circle"
+        case .missing: nil
         case .actionRequired: "exclamationmark.circle.fill"
         case .warning: "exclamationmark.triangle.fill"
         }

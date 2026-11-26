@@ -7,6 +7,7 @@ struct HomeDashboardDependencies: Sendable {
     var latestVersion: @Sendable (HomeOnlineSource) async throws -> String
     var requestCommandLineTools: @Sendable () async throws -> Void
     var openInstaller: @Sendable () async throws -> Void
+    var installHomebrew: (@Sendable (@escaping @Sendable (HomebrewInstallProgress) async -> Void) async throws -> Void)? = nil
     var finishInstallerHandoff: @Sendable () async throws -> Void
 
     static func live(runner: ProcessRunner) -> Self {
@@ -26,7 +27,10 @@ struct HomeDashboardDependencies: Sendable {
                 }
             },
             requestCommandLineTools: { try await tools.requestInstallation() },
-            openInstaller: { _ = try await installer.openInstaller() },
+            openInstaller: { _ = try await installer.openInstaller(cleanupAfterInstall: true) },
+            installHomebrew: { onProgress in
+                _ = try await installer.openInstaller(cleanupAfterInstall: true, onProgress: onProgress)
+            },
             finishInstallerHandoff: { try await installer.finishInstallerHandoff() }
         )
     }
@@ -43,6 +47,9 @@ final class HomeDashboardModel: ObservableObject {
     @Published private(set) var onlineVersions = Dictionary(uniqueKeysWithValues: HomeOnlineSource.allCases.map { ($0, OnlineVersionState.notLoaded) })
     @Published private(set) var onlineCheckedAt: [HomeOnlineSource: Date] = [:]
     @Published private(set) var setupState = HomeSetupState.idle
+    @Published private(set) var homebrewInstallProgress: HomebrewInstallProgress?
+    @Published private(set) var isHomebrewInShellProfile = false
+    @Published private(set) var shellProfileError: String?
     @Published private(set) var installerHandoffPending = false
 
     let officialHomebrewURL = CatalogWebsites.homebrew
@@ -135,6 +142,56 @@ final class HomeDashboardModel: ObservableObject {
         if setupState == .requestingCommandLineTools { setupState = .commandLineToolsRequested }
     }
 
+    @discardableResult
+    func installHomebrewSilently(installation: HomebrewInstallationState) async -> Bool {
+        guard installation == .notInstalled, canBeginSetup else { return false }
+        setupState = .preparingInstaller
+        homebrewInstallProgress = .fetchingRelease
+        await performSetup(.openHomebrewInstaller) { [weak self, dependencies] in
+            let tools: CommandLineToolsState
+            do { tools = try await dependencies.commandLineTools() }
+            catch {
+                if error is CancellationError { throw error }
+                throw HomebrewSetupError(failure: .commandLineToolsRequired)
+            }
+            guard case .installed = tools else { throw HomebrewSetupError(failure: .commandLineToolsRequired) }
+            guard await !dependencies.homebrewLocationOccupied() else { throw HomebrewSetupError(failure: .installationTarget) }
+            try Task.checkCancellation()
+            if let installHomebrew = dependencies.installHomebrew {
+                try await installHomebrew { stage in
+                    await MainActor.run { self?.homebrewInstallProgress = stage }
+                }
+            } else {
+                try await dependencies.openInstaller()
+            }
+        }
+        homebrewInstallProgress = nil
+        if setupState == .preparingInstaller {
+            setupState = .idle
+            // Automatically configure ~/.zprofile after Cellar installs Homebrew so `brew` works in Terminal.
+            if !AppRuntime.isRunningTests {
+                configureHomebrewShellProfile()
+            }
+            return true
+        }
+        return false
+    }
+
+    func refreshShellProfileState(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        guard !AppRuntime.isRunningTests else { return }
+        isHomebrewInShellProfile = HomebrewShellProfileService.isConfigured(homeDirectory: homeDirectory)
+    }
+
+    func configureHomebrewShellProfile(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        shellProfileError = nil
+        do {
+            try HomebrewShellProfileService.configure(homeDirectory: homeDirectory)
+            isHomebrewInShellProfile = HomebrewShellProfileService.isConfigured(homeDirectory: homeDirectory)
+        } catch {
+            shellProfileError = error.localizedDescription
+        }
+    }
+
     func openHomebrewInstaller(installation: HomebrewInstallationState) async {
         guard installation == .notInstalled, canBeginSetup else { return }
         setupState = .preparingInstaller
@@ -178,15 +235,17 @@ final class HomeDashboardModel: ObservableObject {
         }
     }
 
-    func refreshPrerequisitesOnly(environment: [String: String] = ProcessInfo.processInfo.environment) async {
+    func refreshPrerequisitesOnly(showLoading: Bool = true, environment: [String: String] = ProcessInfo.processInfo.environment) async {
         guard environment["XCTestConfigurationFilePath"] == nil, !Task.isCancelled else { return }
         let prereqID = UUID()
         prerequisiteRefreshID = prereqID
         let previousTools = commandLineTools == .loading ? .notLoaded : commandLineTools
-        if case .available(.installed) = previousTools {
-            // Avoid flashing a loading state when CLT is already installed.
-        } else {
-            commandLineTools = .loading
+        if showLoading {
+            if case .available(.installed) = previousTools {
+                // Avoid flashing a loading state when CLT is already installed.
+            } else {
+                commandLineTools = .loading
+            }
         }
         await refreshPrerequisites(prerequisiteID: prereqID)
         guard prerequisiteRefreshID == prereqID else { return }

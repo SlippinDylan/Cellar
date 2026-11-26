@@ -414,7 +414,9 @@ enum ActivityOperationKind: String, Codable, CaseIterable, Sendable {
     case removeHomebrewTap
     case updateHomebrewMetadata
 
-    var showsTaskFeedback: Bool { self != .refresh && self != .search }
+    var showsTaskFeedback: Bool {
+        self != .refresh && self != .search && self != .requestCommandLineTools && self != .openHomebrewInstaller
+    }
 }
 
 enum ActivityItemReason: String, Codable, CaseIterable, Sendable {

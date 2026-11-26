@@ -27,7 +27,7 @@ struct ShellTaskConfirmation: View {
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
                 Button { confirm() } label: { Text(title) }.disabled(!plan.canExecute)
             }
-        }.padding(24).frame(width: 540)
+        }.padding(24).constrainedSheetWidth(540)
     }
     private var title: LocalizedStringResource {
         switch plan.request.action {

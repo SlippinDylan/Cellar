@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum AppLayout {
@@ -6,6 +7,67 @@ enum AppLayout {
     static let minimumInfoRowHeight: CGFloat = 32
     static let minimumControlRowHeight: CGFloat = 40
     static let minimumDescribedRowHeight: CGFloat = 52
+}
+
+extension View {
+    func constrainedSheetWidth(_ idealWidth: CGFloat, horizontalMargin: CGFloat = 56) -> some View {
+        modifier(ConstrainedSheetWidthModifier(idealWidth: idealWidth, horizontalMargin: horizontalMargin))
+    }
+}
+
+private struct ConstrainedSheetWidthModifier: ViewModifier {
+    let idealWidth: CGFloat
+    let horizontalMargin: CGFloat
+    @State private var resolvedWidth: CGFloat?
+
+    func body(content: Content) -> some View {
+        content
+            .frame(width: resolvedWidth ?? initialWidth)
+            .background(SheetParentWidthReader { parentWidth in
+                let clamped = min(idealWidth, max(320, parentWidth - horizontalMargin))
+                if resolvedWidth != clamped {
+                    resolvedWidth = clamped
+                }
+            })
+    }
+
+    private var initialWidth: CGFloat {
+        let parentWidth = NSApp.keyWindow?.frame.width ?? idealWidth + horizontalMargin
+        return min(idealWidth, max(320, parentWidth - horizontalMargin))
+    }
+}
+
+private struct SheetParentWidthReader: NSViewRepresentable {
+    let onWidth: @MainActor (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> ObserverView {
+        let view = ObserverView()
+        view.onWidth = onWidth
+        return view
+    }
+
+    func updateNSView(_ nsView: ObserverView, context: Context) {
+        nsView.onWidth = onWidth
+    }
+
+    @MainActor
+    final class ObserverView: NSView {
+        var onWidth: (@MainActor (CGFloat) -> Void)?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            reportWidth()
+        }
+
+        private func reportWidth() {
+            guard let window else { return }
+            let fallbackKeyWindow = NSApp.keyWindow === window ? nil : NSApp.keyWindow
+            guard let parentWidth = (window.sheetParent ?? window.parent ?? fallbackKeyWindow)?.frame.width else { return }
+            Task { @MainActor [weak self] in
+                self?.onWidth?(parentWidth)
+            }
+        }
+    }
 }
 
 struct DashboardSectionHeader<Trailing: View>: View {

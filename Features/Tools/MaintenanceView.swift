@@ -235,7 +235,7 @@ struct MaintenanceModalFrame<Subtitle: View, Content: View, Footer: View>: View 
             .buttonBorderShape(.capsule)
             .controlSize(.large)
         }
-        .frame(width: 560)
+        .constrainedSheetWidth(560)
     }
 }
 

@@ -55,7 +55,8 @@ struct LibraryUninstallConfirmation: View {
         }
         // Measure the intrinsic layout, before the host frame constrains it.
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { presentationHeight = $0 }
-        .frame(width: 700, height: presentationHeight)
+        .constrainedSheetWidth(700)
+        .frame(height: presentationHeight)
         .background(LibraryUninstallSheetSizing(height: presentationHeight))
         .presentationSizing(.fitted)
         .interactiveDismissDisabled(uninstall.isExecuting)

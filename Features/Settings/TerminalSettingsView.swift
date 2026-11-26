@@ -164,7 +164,7 @@ struct TerminalSettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 500)
+        .constrainedSheetWidth(500)
         .buttonStyle(.glass)
         .buttonBorderShape(.capsule)
         .controlSize(.large)
@@ -254,6 +254,6 @@ private struct TerminalApplyConfirmation: View {
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
                 Button("Apply", action: confirm).disabled(!plan.canExecute)
             }
-        }.padding(24).frame(width: 540)
+        }.padding(24).constrainedSheetWidth(540)
     }
 }

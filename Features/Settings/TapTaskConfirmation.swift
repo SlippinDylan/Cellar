@@ -27,6 +27,6 @@ struct TapTaskConfirmation: View {
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
                 Button(role: plan.action == .removeTap ? .destructive : nil) { confirm() } label: { Text(plan.action == .addTap ? LocalizedStringResource("Add Tap") : LocalizedStringResource("Remove Tap")) }.disabled(!plan.canExecute)
             }
-        }.padding(24).frame(width: 500)
+        }.padding(24).constrainedSheetWidth(500)
     }
 }

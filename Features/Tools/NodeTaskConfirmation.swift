@@ -40,7 +40,7 @@ struct NodeTaskConfirmation: View {
                 Button(role: isDestructive ? .destructive : nil) { confirm() } label: { Text(isDestructive ? LocalizedStringResource("Remove") : LocalizedStringResource("Save Changes")) }
                     .disabled(!plan.canExecute)
             }
-        }.padding(24).frame(width: 540)
+        }.padding(24).constrainedSheetWidth(540)
     }
     private var isDestructive: Bool { plan.request.action == .uninstallNode || plan.request.action == .cleanup || [.deleteRegistry, .deleteScopeRegistry].contains(plan.request.action) }
     private var title: LocalizedStringResource {

@@ -42,7 +42,7 @@ struct UpdatesConfirmationSheet: View {
                 Button("Update All") { Task { await updates.confirmUpdateAll() } }
                     .keyboardShortcut(.defaultAction).disabled(confirmation.plan.executableCount == 0)
             }
-        }.padding(24).frame(width: 520)
+        }.padding(24).constrainedSheetWidth(520)
     }
 }
 

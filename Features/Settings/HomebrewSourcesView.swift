@@ -58,7 +58,7 @@ struct HomebrewSourcesView: View {
             }
         }
         .padding(24)
-        .frame(width: 460)
+        .constrainedSheetWidth(460)
         .buttonStyle(.glass)
         .buttonBorderShape(.capsule)
         .controlSize(.large)

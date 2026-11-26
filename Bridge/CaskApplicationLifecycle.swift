@@ -137,14 +137,22 @@ struct CaskApplicationLifecycle: Sendable {
         defer { observation.cancel() }
         do {
             try checkApplicationsAreStopped(identities)
+            // Decouple operation cancellation from the parent task so caller cancellation always
+            // revokes the lease before the guarded operation can observe cancellation and unwind.
+            let operationTask = Task.detached(priority: Task.currentPriority) {
+                try await operation()
+            }
             return try await withTaskCancellationHandler {
                 try await withThrowingTaskGroup(of: Value.self) { tasks in
-                    tasks.addTask { try await operation() }
+                    tasks.addTask { try await operationTask.value }
                     tasks.addTask {
                         try await monitorApplications(identities, events: events,
                                                       onInvalidation: onInvalidation, returning: Value.self)
                     }
-                    defer { tasks.cancelAll() }
+                    defer {
+                        operationTask.cancel()
+                        tasks.cancelAll()
+                    }
                     do {
                         guard let value = try await tasks.next() else {
                             preconditionFailure("The guarded operation or its observer must complete")
@@ -154,11 +162,13 @@ struct CaskApplicationLifecycle: Sendable {
                     } catch {
                         // The final snapshot and operation failure must also revoke before cancellation.
                         onInvalidation()
+                        operationTask.cancel()
                         throw error
                     }
                 }
             } onCancel: {
                 onInvalidation()
+                operationTask.cancel()
             }
         } catch {
             onInvalidation()

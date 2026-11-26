@@ -4,6 +4,18 @@ All notable user-facing changes to Cellar are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-26
+
+### Added
+
+- First-run onboarding guide with animated intro and completion celebration, four-step environment check, and auto-closing Full Disk Access permission guidance.
+- In-app Homebrew installation progress indicator and automatic Terminal PATH setup (`~/.zprofile`) upon Homebrew installation.
+
+### Fixed
+
+- Fixed official `Homebrew.pkg` signature verification to recognize Apple Developer ID Installer certificate chains and run silent system-authorized installation without external installer windows.
+- Removed misleading uninstalled status circles and focus-switch spinner flashes in the onboarding guide, and enlarged setup action buttons.
+
 ## [0.1.0] - 2026-11-25
 
 ### Added

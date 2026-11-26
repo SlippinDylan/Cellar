@@ -93,6 +93,17 @@ struct HomeView: View {
             nodeMetrics(model.node.map(NodeDashboardSummary.init))
             if model.nodeUpdateState == .failed { inlineWarning("Updates could not be checked. Local information is still available.") }
             if model.nodeRefreshFailed { inlineWarning("Local Node refresh failed. Previously read information is retained.") }
+            if model.node == nil && model.homebrew?.isInstalled == true && model.refreshedAt != nil {
+                HStack(spacing: 12) {
+                    Text("Node.js is not installed. You can install it with Homebrew.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("Install Node with Homebrew") {
+                        Task { _ = await model.installNodeWithHomebrew() }
+                    }
+                        .disabled(model.isBusy)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

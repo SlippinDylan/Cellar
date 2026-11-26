@@ -3,15 +3,7 @@ import Combine
 import SwiftUI
 
 private enum OnboardingSetupRequest: Equatable {
-    case commandLineTools, homebrew, finishInstaller, recheck
-}
-
-private enum OnboardingItemStatus: Equatable {
-    case checking
-    case ready
-    case missing
-    case actionRequired
-    case warning
+    case commandLineTools, homebrew, node, finishInstaller
 }
 
 private enum OnboardingIntroPhase: Equatable {
@@ -44,10 +36,23 @@ struct OnboardingView: View {
     @State private var isWindowVisible = false
     @State private var needsResetOnAppear = false
     @State private var hasCompletedInitialProbe = false
+
+    @State private var isWaitingForCLT = false
+    @State private var cltStartedAt: Date?
+    @State private var cltNeedsReinstall = false
+
+    @State private var homebrewNeedsReinstall = false
     @State private var didConfigureTerminalBrew = false
+
+    @State private var isInstallingNode = false
+    @State private var nodeNeedsReinstall = false
+    @State private var nodeInstallError: String?
+
+    @State private var requestedOhMyZshInstall = false
+    @State private var omzNeedsReinstall = false
+
     @State private var setupRequest: OnboardingSetupRequest?
     @State private var showsSkipConfirmation = false
-    @State private var requestedOhMyZshInstall = false
     @State private var fdaOpenFailed = false
     @State private var fdaVerificationRequestID = UUID()
     @State private var reactivationRefreshID: UUID?
@@ -93,12 +98,16 @@ struct OnboardingView: View {
                 plan: plan,
                 cancel: {
                     requestedOhMyZshInstall = false
+                    omzNeedsReinstall = true
                     model.dismissShellPlan(confirmed: plan)
                 },
                 confirm: {
                     Task {
                         await model.executeShellPlan(confirmed: plan)
                         requestedOhMyZshInstall = false
+                        if model.shell?.ohMyZshInstalled != true {
+                            omzNeedsReinstall = true
+                        }
                     }
                 }
             )
@@ -130,31 +139,59 @@ struct OnboardingView: View {
             guard reactivationRefreshID != nil, isWindowVisible, !AppRuntime.isRunningTests else { return }
             await dashboard.refreshPrerequisitesOnly(showLoading: false)
             dashboard.refreshShellProfileState()
+            if isWaitingForCLT {
+                evaluateCLTWaitedState(onReactivation: true)
+            }
+        }
+        // Poll Command Line Tools while the macOS system installation dialog is active.
+        .task(id: isWaitingForCLT) {
+            guard isWaitingForCLT, !AppRuntime.isRunningTests else { return }
+            while !Task.isCancelled && isWaitingForCLT {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled && isWaitingForCLT else { return }
+                await dashboard.refreshPrerequisitesOnly(showLoading: false)
+                evaluateCLTWaitedState(onReactivation: false)
+            }
         }
         .task(id: setupRequest) {
             guard let request = setupRequest else { return }
             switch request {
             case .commandLineTools:
+                cltNeedsReinstall = false
+                isWaitingForCLT = true
+                cltStartedAt = Date()
                 await dashboard.requestCommandLineTools(installation: .commandLineToolsRequired)
+                if case .failed(.commandLineTools) = dashboard.setupState {
+                    isWaitingForCLT = false
+                    cltNeedsReinstall = true
+                }
             case .homebrew:
-                if await dashboard.installHomebrewSilently(installation: homebrewInstallation) {
+                homebrewNeedsReinstall = false
+                let installed = await dashboard.installHomebrewSilently(installation: homebrewInstallation)
+                if installed {
                     if dashboard.isHomebrewInShellProfile {
                         didConfigureTerminalBrew = true
                     }
                     await model.refresh()
                     await dashboard.refreshPrerequisitesOnly(showLoading: false)
+                } else {
+                    homebrewNeedsReinstall = true
+                }
+            case .node:
+                nodeNeedsReinstall = false
+                nodeInstallError = nil
+                isInstallingNode = true
+                defer { isInstallingNode = false }
+                let installed = await model.installNodeWithHomebrew()
+                if !installed {
+                    nodeNeedsReinstall = true
+                    nodeInstallError = model.homebrewOperationError
                 }
             case .finishInstaller:
                 if await dashboard.finishInstallerHandoff() {
                     await model.refresh()
                     await dashboard.refreshPrerequisitesOnly(showLoading: false)
-                    dashboard.refreshShellProfileState()
                 }
-            case .recheck:
-                await model.refresh()
-                await dashboard.refreshPrerequisitesOnly(showLoading: false)
-                dashboard.refreshShellProfileState()
-                await fdaVerification.refresh()
             }
             setupRequest = nil
         }
@@ -169,6 +206,15 @@ struct OnboardingView: View {
         .onDisappear {
             isWindowVisible = false
             needsResetOnAppear = true
+            isWaitingForCLT = false
+            cltStartedAt = nil
+            cltNeedsReinstall = false
+            homebrewNeedsReinstall = false
+            didConfigureTerminalBrew = false
+            isInstallingNode = false
+            nodeNeedsReinstall = false
+            nodeInstallError = nil
+            omzNeedsReinstall = false
             fdaGuide.close()
             fdaVerification.invalidate()
             closeController.allowsClose = false
@@ -272,69 +318,56 @@ struct OnboardingView: View {
     // MARK: - Step 2: Core Tools
 
     private var commandLineToolsRow: some View {
-        let status: OnboardingItemStatus = {
-            if isCheckingCLT || dashboard.setupState == .requestingCommandLineTools { return .checking }
-            if isCLTInstalled { return .ready }
-            if case .failed(.commandLineTools) = dashboard.setupState { return .warning }
-            if dashboard.commandLineTools == .failed { return .warning }
-            return .missing
-        }()
+        let isBusyInstalling = isWaitingForCLT || dashboard.setupState == .requestingCommandLineTools
 
         return OnboardingSetupRow(
             icon: AnyView(Image("CommandLineToolsIcon").resizable().scaledToFit()),
             title: "Command Line Tools",
             subtitle: cltSubtitle,
-            status: status
+            showsProgressBar: false
         ) {
             if isCLTInstalled {
-                EmptyView()
-            } else if dashboard.setupState == .commandLineToolsRequested {
-                Button("Recheck") { setupRequest = .recheck }
-                    .disabled(model.isBusy)
-            } else if dashboard.commandLineTools == .available(.notInstalled) {
-                Button("Install…") { setupRequest = .commandLineTools }
-                    .disabled(model.isBusy || dashboard.setupState == .requestingCommandLineTools)
-            } else if dashboard.commandLineTools == .failed {
-                Button("Recheck") { setupRequest = .recheck }
-                    .disabled(model.isBusy)
+                installedCheckmark
+            } else if isBusyInstalling || isCheckingCLT {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Button(cltNeedsReinstall ? LocalizedStringResource("Reinstall") : LocalizedStringResource("Install Now")) {
+                    setupRequest = .commandLineTools
+                }
+                .disabled(model.isBusy)
             }
         }
     }
 
     private var homebrewRow: some View {
         let isInstalling = dashboard.setupState == .preparingInstaller
-        let status: OnboardingItemStatus = {
-            if isProbing || isInstalling { return .checking }
-            if isHomebrewInstalled { return .ready }
-            if case .failed(.homebrew) = dashboard.setupState { return .warning }
-            if case .unavailable = homebrewInstallation { return .warning }
-            return .missing
-        }()
 
         return OnboardingSetupRow(
             icon: AnyView(Image("HomebrewBrand").resizable().scaledToFit()),
             title: "Homebrew",
             subtitle: homebrewSubtitle,
-            status: status,
             showsProgressBar: isInstalling
         ) {
             if isHomebrewInstalled {
-                EmptyView()
-            } else if dashboard.installerHandoffPending {
-                Button("Recheck") { setupRequest = .finishInstaller }
-                    .disabled(model.isBusy)
+                installedCheckmark
+            } else if isInstalling || isProbing {
+                ProgressView()
+                    .controlSize(.small)
             } else if homebrewInstallation == .notInstalled {
                 HStack(spacing: 8) {
                     if case .failed(.homebrew) = dashboard.setupState {
                         Button("Website") { openURL(CatalogWebsites.homebrew) }
                     }
-                    Button("Install…") { setupRequest = .homebrew }
-                        .disabled(model.isBusy || isInstalling)
+                    Button(homebrewNeedsReinstall ? LocalizedStringResource("Reinstall") : LocalizedStringResource("Install Now")) {
+                        setupRequest = .homebrew
+                    }
+                    .disabled(model.isBusy)
                 }
             } else if case .unavailable = homebrewInstallation {
                 Button("Website") { openURL(CatalogWebsites.homebrew) }
-            } else if homebrewInstallation == .commandLineToolsRequired {
-                Button("Install…") {}
+            } else {
+                Button("Install Now") {}
                     .disabled(true)
             }
         }
@@ -343,55 +376,53 @@ struct OnboardingView: View {
     // MARK: - Step 3: Optional Stack & Permissions
 
     private var nodeRow: some View {
-        let status: OnboardingItemStatus = {
-            if isProbing { return .checking }
-            if isNodeReady { return .ready }
-            return .missing
-        }()
-
-        return OnboardingSetupRow(
+        OnboardingSetupRow(
             icon: AnyView(Image("NodeBrand").resizable().scaledToFit()),
-            title: "Node.js & nvm",
+            title: "Node.js",
             subtitle: nodeSubtitle,
-            status: status
+            showsProgressBar: isInstallingNode
         ) {
             if isNodeReady {
-                EmptyView()
-            } else if model.nvmInstalled == true {
-                Button("Recheck") { setupRequest = .recheck }
-                    .disabled(model.isBusy)
-            } else {
-                HStack(spacing: 8) {
-                    Button("Guide") { openURL(CatalogWebsites.nvm) }
-                    Button("Recheck") { setupRequest = .recheck }
-                        .disabled(model.isBusy)
+                installedCheckmark
+            } else if isInstallingNode || isProbing {
+                ProgressView()
+                    .controlSize(.small)
+            } else if isHomebrewInstalled {
+                Button(nodeNeedsReinstall ? LocalizedStringResource("Reinstall") : LocalizedStringResource("Install Now")) {
+                    setupRequest = .node
                 }
+                .disabled(model.isBusy)
+            } else {
+                Button("Install Now") {}
+                    .disabled(true)
             }
         }
     }
 
     private var ohMyZshRow: some View {
-        let status: OnboardingItemStatus = {
-            if isProbing || model.isShellWorking { return .checking }
-            if isOhMyZshInstalled { return .ready }
-            if model.shellOperationError != nil { return .warning }
-            return .missing
-        }()
+        let isInstalling = model.isShellWorking
 
         return OnboardingSetupRow(
             icon: AnyView(Image("OhMyZshBrand").resizable().scaledToFit()),
             title: "Oh My Zsh",
             subtitle: ohMyZshSubtitle,
-            status: status
+            showsProgressBar: isInstalling
         ) {
             if isOhMyZshInstalled {
-                EmptyView()
+                installedCheckmark
+            } else if isInstalling || isProbing {
+                ProgressView()
+                    .controlSize(.small)
             } else {
-                Button("Install…") {
+                Button(omzNeedsReinstall ? LocalizedStringResource("Reinstall") : LocalizedStringResource("Install Now")) {
+                    omzNeedsReinstall = false
                     requestedOhMyZshInstall = true
                     Task {
                         await model.prepareShellAction(.init(action: .installOhMyZsh))
-                        if model.shellPlan == nil { requestedOhMyZshInstall = false }
+                        if model.shellPlan == nil {
+                            requestedOhMyZshInstall = false
+                            omzNeedsReinstall = true
+                        }
                     }
                 }
                 .disabled(model.isBusy || model.managers == nil)
@@ -400,14 +431,7 @@ struct OnboardingView: View {
     }
 
     private var fullDiskAccessRow: some View {
-        let status: OnboardingItemStatus = {
-            if fdaVerification.result == nil { return .checking }
-            if fdaVerification.isVerified { return .ready }
-            if fdaOpenFailed { return .warning }
-            return .actionRequired
-        }()
-
-        return OnboardingSetupRow(
+        OnboardingSetupRow(
             icon: AnyView(
                 Image(systemName: "lock.shield.fill")
                     .font(.system(size: 18))
@@ -415,10 +439,13 @@ struct OnboardingView: View {
             ),
             title: "Full Disk Access",
             subtitle: fdaSubtitle,
-            status: status
+            showsProgressBar: false
         ) {
             if fdaVerification.isVerified {
-                EmptyView()
+                installedCheckmark
+            } else if fdaVerification.result == nil {
+                ProgressView()
+                    .controlSize(.small)
             } else {
                 Button("Authorize…") {
                     fdaOpenFailed = !fdaGuide.open(locale: locale) {
@@ -429,38 +456,45 @@ struct OnboardingView: View {
         }
     }
 
+    private var installedCheckmark: some View {
+        Image(systemName: "checkmark.circle.fill")
+            .font(.system(size: 22))
+            .foregroundStyle(Color.green)
+            .transition(.scale.combined(with: .opacity))
+            .accessibilityLabel("Installed")
+    }
+
     // MARK: - Step 4: Complete Summary
 
     private var completeSummaryCard: some View {
         VStack(spacing: 10) {
-            summaryRow(title: "Command Line Tools", ready: isCLTInstalled, checking: false)
-            summaryRow(title: "Homebrew", ready: isHomebrewInstalled, checking: false)
-            summaryRow(title: "Node.js & nvm", ready: isNodeReady, checking: false)
-            summaryRow(title: "Oh My Zsh", ready: isOhMyZshInstalled, checking: false)
-            summaryRow(title: "Full Disk Access", ready: fdaVerification.isVerified, checking: false)
+            summaryRow(title: "Command Line Tools", ready: isCLTInstalled)
+            summaryRow(title: "Homebrew", ready: isHomebrewInstalled)
+            summaryRow(title: "Node.js", ready: isNodeReady)
+            summaryRow(title: "Oh My Zsh", ready: isOhMyZshInstalled)
+            summaryRow(title: "Full Disk Access", ready: fdaVerification.isVerified)
         }
         .padding(16)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.top, 2)
     }
 
-    private func summaryRow(title: LocalizedStringResource, ready: Bool, checking: Bool) -> some View {
+    private func summaryRow(title: LocalizedStringResource, ready: Bool) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: checking ? "circle.dotted" : (ready ? "checkmark.circle.fill" : "circle"))
-                .foregroundStyle(checking ? Color.secondary : (ready ? Color.green : Color.secondary.opacity(0.6)))
-                .font(.system(size: 15))
-                .contentTransition(.symbolEffect(.replace))
             Text(title)
                 .font(.system(size: 13.5))
             Spacer(minLength: 0)
-            Text(checking
-                 ? LocalizedStringResource("Checking…")
-                 : (ready ? LocalizedStringResource("Ready") : LocalizedStringResource("Not Set Up")))
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundStyle(ready ? Color.green : Color.secondary)
+            if ready {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(Color.green)
+                    .font(.system(size: 16))
+                    .accessibilityLabel("Ready")
+            } else {
+                Text("Not Set Up")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
         }
-        .animation(reduceMotion ? nil : .smooth, value: ready)
-        .animation(reduceMotion ? nil : .smooth, value: checking)
     }
 
     // MARK: - Footer Navigation (Buckle-inspired circular controls)
@@ -574,8 +608,9 @@ struct OnboardingView: View {
     private var cltSubtitle: Text {
         if isCheckingCLT { return Text("Checking…") }
         if isCLTInstalled { return Text("Installed") }
-        if dashboard.setupState == .requestingCommandLineTools { return Text("Preparing System Installation") }
-        if dashboard.setupState == .commandLineToolsRequested { return Text("Finish in the system dialog, then recheck.") }
+        if isWaitingForCLT || dashboard.setupState == .requestingCommandLineTools {
+            return Text("Waiting for macOS Command Line Tools installation…")
+        }
         if case .failed(.commandLineTools) = dashboard.setupState { return Text(HomeSetupFailure.commandLineTools.message) }
         if dashboard.commandLineTools == .failed { return Text("Command Line Tools could not be checked.") }
         return Text("Required before installing Homebrew. macOS handles the installation.")
@@ -598,7 +633,6 @@ struct OnboardingView: View {
             case nil: return Text("Preparing System Installation")
             }
         }
-        if dashboard.installerHandoffPending { return Text("Complete installation in macOS Installer, then recheck.") }
         if case .failed(.homebrew(let failure)) = dashboard.setupState { return Text(HomeSetupFailure.homebrew(failure).message) }
         if homebrewInstallation == .commandLineToolsRequired { return Text("Install Command Line Tools first.") }
         if case .unavailable = homebrewInstallation { return Text("Homebrew is unavailable. Check the official website for guidance.") }
@@ -607,13 +641,15 @@ struct OnboardingView: View {
 
     private var nodeSubtitle: Text {
         if isProbing { return Text("Checking…") }
+        if isInstallingNode { return Text("Installing Node.js with Homebrew…") }
         if let node = model.node {
             return Text("Node \(HomeVersion.normalized(node.summary.nodeVersion))")
         }
-        if model.nvmInstalled == true {
-            return Text("nvm is installed. Add a Node version in Environment after setup.")
+        if let nodeInstallError { return Text(verbatim: nodeInstallError) }
+        if !isHomebrewInstalled {
+            return Text("Install Homebrew first to install Node.js automatically.")
         }
-        return Text("Optional. Install nvm using the official guide to manage Node versions.")
+        return Text("Not Installed")
     }
 
     private var ohMyZshSubtitle: Text {
@@ -643,6 +679,7 @@ struct OnboardingView: View {
                 if newValue == nil {
                     requestedOhMyZshInstall = false
                     if let plan = model.shellPlan, plan.request.action == .installOhMyZsh {
+                        omzNeedsReinstall = true
                         model.dismissShellPlan(confirmed: plan)
                     }
                 }
@@ -651,6 +688,28 @@ struct OnboardingView: View {
     }
 
     // MARK: - Actions
+
+    private func evaluateCLTWaitedState(onReactivation: Bool) {
+        if isCLTInstalled {
+            isWaitingForCLT = false
+            cltNeedsReinstall = false
+            return
+        }
+        let elapsed = cltStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        guard elapsed >= 4 else { return }
+        if !Self.isSystemCLTInstallerRunning() && (onReactivation || elapsed >= 6) {
+            isWaitingForCLT = false
+            cltNeedsReinstall = true
+        }
+    }
+
+    private static func isSystemCLTInstallerRunning() -> Bool {
+        NSWorkspace.shared.runningApplications.contains { app in
+            if app.bundleIdentifier == "com.apple.dt.CommandLineTools.installondemand" { return true }
+            if let name = app.localizedName, name.localizedCaseInsensitiveContains("Command Line Developer Tools") { return true }
+            return false
+        }
+    }
 
     private func advance() {
         if let next = step.next {
@@ -673,7 +732,13 @@ struct OnboardingView: View {
     }
 
     private func finishAndOpenMainWindow() {
+        isWaitingForCLT = false
         fdaGuide.close()
+        // Clear any setup banners generated during onboarding so the main window opens clean.
+        model.activityStore?.dismissResult()
+        model.dismissHomebrewFeedback()
+        model.dismissShellFeedback()
+        model.dismissNodeFeedback()
         onboardingState.markCompleted()
         if isStandaloneWindow {
             closeController.allowsClose = true
@@ -685,28 +750,24 @@ struct OnboardingView: View {
     }
 }
 
-// MARK: - Reusable Row & Morphing Status Glyph
+// MARK: - Unified Onboarding Setup Row
 
-private struct OnboardingSetupRow<Action: View>: View {
+private struct OnboardingSetupRow<Trailing: View>: View {
     let icon: AnyView
     let title: LocalizedStringResource
     let subtitle: Text
-    let status: OnboardingItemStatus
     var showsProgressBar: Bool = false
-    @ViewBuilder let action: () -> Action
+    @ViewBuilder let trailing: () -> Trailing
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 icon
                     .frame(width: 30, height: 30)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(.system(size: 14, weight: .semibold))
-                        OnboardingStatusGlyph(status: status)
-                    }
+                    Text(title)
+                        .font(.system(size: 14, weight: .semibold))
                     subtitle
                         .font(.system(size: 12.5))
                         .foregroundStyle(.secondary)
@@ -715,7 +776,7 @@ private struct OnboardingSetupRow<Action: View>: View {
 
                 Spacer(minLength: 8)
 
-                action()
+                trailing()
                     .controlSize(.large)
             }
 
@@ -729,52 +790,5 @@ private struct OnboardingSetupRow<Action: View>: View {
         .padding(.vertical, 14)
         .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-}
-
-private struct OnboardingStatusGlyph: View {
-    let status: OnboardingItemStatus
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var breathing = false
-
-    @ViewBuilder
-    var body: some View {
-        if let symbolName {
-            Image(systemName: symbolName)
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(symbolColor)
-                .contentTransition(.symbolEffect(.replace))
-                .scaleEffect(breathing && !reduceMotion ? 1.14 : 1.0)
-                .animation(reduceMotion ? nil : .smooth, value: status)
-                .animation(
-                    breathing && !reduceMotion
-                        ? .easeInOut(duration: 0.75).repeatForever(autoreverses: true)
-                        : .easeOut(duration: 0.2),
-                    value: breathing
-                )
-                .onAppear { breathing = status == .checking }
-                .onChange(of: status) { _, newValue in breathing = newValue == .checking }
-                .accessibilityHidden(true)
-        }
-    }
-
-    private var symbolName: String? {
-        switch status {
-        case .checking: "arrow.trianglehead.2.clockwise.rotate.90.circle.fill"
-        case .ready: "checkmark.circle.fill"
-        case .missing: nil
-        case .actionRequired: "exclamationmark.circle.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        }
-    }
-
-    private var symbolColor: Color {
-        switch status {
-        case .checking: .accentColor
-        case .ready: .green
-        case .missing: .secondary
-        case .actionRequired: .orange
-        case .warning: .orange
-        }
     }
 }

@@ -17,6 +17,22 @@ struct RuntimeToolsView: View {
     var body: some View {
         SettingsPage(fillsViewport: true) {
             SettingsSection(title: "nvm", website: CatalogWebsites.nvm, websiteTitle: "nvm Installation Guide") {
+                if model.node == nil && model.homebrew?.isInstalled == true {
+                    HStack(spacing: 12) {
+                        Text("Install Node.js directly with Homebrew without setting up nvm.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button("Install Node with Homebrew") {
+                            Task { _ = await model.installNodeWithHomebrew() }
+                        }
+                        .disabled(model.isBusy)
+                        .fixedSize()
+                    }
+                    .frame(minHeight: AppLayout.minimumControlRowHeight)
+                    Divider()
+                }
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 8) {
                         switch nvmAvailable {

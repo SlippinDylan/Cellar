@@ -1,6 +1,29 @@
 import Foundation
 
 extension AppModel {
+    @discardableResult
+    func installNodeWithHomebrew() async -> Bool {
+        guard !isBusy, homebrew?.isInstalled == true else { return false }
+        let identity = HomebrewPackageIdentity(name: "node", kind: .formula)
+        do {
+            let plan = try await createHomebrewPlan(context: .init(operation: .install, scope: .homebrew(.formula), targets: [identity.name], stage: .preparing)) {
+                try await self.service.planHomebrewInstall(identity)
+            }
+            guard plan.canExecute else { return false }
+            await executeHomebrewAction(plan)
+            if case .succeeded = homebrewActionResult?.outcome {
+                await refresh()
+                return node != nil
+            }
+            return false
+        } catch {
+            if !(error is CancellationError) {
+                homebrewOperationError = failureMessage(error)
+            }
+            return false
+        }
+    }
+
     func performHomebrewMetadataUpdate() async {
         do {
             let plan = try await createHomebrewPlan(context: .init(operation: .updateHomebrewMetadata, scope: .homebrewMetadata, targets: [], stage: .preparing)) {

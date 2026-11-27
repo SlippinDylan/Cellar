@@ -129,6 +129,26 @@ final class AppShellTests: XCTestCase {
         XCTAssertTrue(shell.contains("private struct RefreshToolbarButton: View"))
         XCTAssertTrue(shell.contains("@ObservedObject private var operationStore: OperationStore"))
         XCTAssertTrue(shell.contains(".allowsHitTesting(false)"))
+
+        let rootURL = FileManager.default.temporaryDirectory.appending(path: "CellarRefreshActive-\(UUID().uuidString)")
+        let runner = ProcessRunner()
+        let service = SystemProbeService(
+            runner: runner,
+            installer: ManagerSnapshotInstaller(applicationSupportDirectory: rootURL),
+            nodeClient: NodeManagerClient(runner: runner, environmentResolver: .init(homeDirectory: rootURL)),
+            shellClient: ShellManagerClient(runner: runner),
+            environmentResolver: .init(homeDirectory: rootURL)
+        )
+        let store = OperationStore()
+        let appModel = AppModel(service: service, operationStore: store)
+        XCTAssertFalse(toolbarRefreshActive(model: appModel, operationStore: store))
+        appModel.homebrewUpdateState = .loading
+        XCTAssertTrue(toolbarRefreshActive(model: appModel, operationStore: store))
+        appModel.homebrewUpdateState = .notLoaded
+        appModel.nodeUpdateState = .loading
+        XCTAssertTrue(toolbarRefreshActive(model: appModel, operationStore: store))
+        appModel.nodeUpdateState = .notLoaded
+        XCTAssertFalse(toolbarRefreshActive(model: appModel, operationStore: store))
         XCTAssertFalse(home.contains("Reading Local Environment"))
         XCTAssertFalse(library.contains("ProgressView(\"Loading Installed Software…\")"))
         XCTAssertFalse(library.contains("ProgressView(\"Checking Package Updates…\")"))

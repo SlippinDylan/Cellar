@@ -68,7 +68,12 @@ struct TapTaskConfirmation: View {
         } footer: {
             Spacer()
             if isRunning {
-                Text("Running").foregroundStyle(.secondary)
+                Button {} label: {
+                    Text(plan.action == .addTap ? LocalizedStringResource("Adding") : LocalizedStringResource("Removing"))
+                }
+                .buttonStyle(.glassProminent)
+                .tint(plan.action == .removeTap ? .red : .blue)
+                .disabled(true)
             } else if hasFinished {
                 Button("OK", action: cancel)
                     .buttonStyle(.glassProminent)

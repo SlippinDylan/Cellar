@@ -35,8 +35,8 @@ final class LibraryUninstallLayoutTests: XCTestCase {
                 let summary = try XCTUnwrap(frames["summary"])
                 let list = try XCTUnwrap(frames["list"])
                 let footer = try XCTUnwrap(frames["footer"])
-                XCTAssertEqual(identity.midY, footer.minY / 2, accuracy: 0.5,
-                               "The icon and name must stay centered above the footer")
+                XCTAssertEqual(size.width, 500, accuracy: 0.5)
+                XCTAssertLessThanOrEqual(identity.maxY, summary.minY)
                 XCTAssertGreaterThan(list.height, 0)
                 XCTAssertLessThanOrEqual(summary.maxY, list.minY)
                 XCTAssertLessThanOrEqual(list.maxY, footer.minY)
@@ -47,6 +47,8 @@ final class LibraryUninstallLayoutTests: XCTestCase {
                     shortHeight = size.height
                 } else {
                     XCTAssertGreaterThan(size.height, shortHeight)
+                    XCTAssertEqual(frames["identity"], shortListFrames["identity"],
+                                   "List length changed fixed identity placement")
                     XCTAssertEqual(frames["summary"], shortListFrames["summary"],
                                    "List length changed fixed summary placement")
                     XCTAssertGreaterThan(try XCTUnwrap(frames["contents"]).height, list.height)
@@ -70,6 +72,105 @@ final class LibraryUninstallLayoutTests: XCTestCase {
             let host = NSHostingView(rootView: LibraryUninstallPathStatusIndicator(status: status))
             XCTAssertEqual(host.fittingSize.width, 24, accuracy: 0.5)
             XCTAssertEqual(host.fittingSize.height, 20, accuracy: 0.5)
+        }
+    }
+
+    func testEmptySummaryCollapsesWithoutExtraGap() throws {
+        let host = NSHostingView(rootView: EmptySummaryFixture())
+        let size = host.fittingSize
+        XCTAssertEqual(size.width, 500, accuracy: 0.5)
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+        let identity = try XCTUnwrap(findMarker("identity", in: host))
+        let list = try XCTUnwrap(findMarker("list", in: host))
+        var identityRect = host.convert(identity.bounds, from: identity)
+        var listRect = host.convert(list.bounds, from: list)
+        if !host.isFlipped {
+            identityRect.origin.y = host.bounds.height - identityRect.maxY
+            listRect.origin.y = host.bounds.height - listRect.maxY
+        }
+        XCTAssertEqual(listRect.minY - identityRect.maxY, 12, accuracy: 0.5,
+                       "Empty summary must not insert extra sectionSpacing above the list")
+    }
+
+    func testPrimaryDisplayNameAndAbbreviatedParentDirectoryFormatting() {
+        let home = URL(filePath: "/Users/fixture", directoryHint: .isDirectory)
+        let sha = String(repeating: "a1b2c3d4", count: 8)
+        let cacheEntry = CaskRemovalEntry(
+            path: "/Users/fixture/Library/Caches/Homebrew/downloads/\(sha)--Itsycal-0.29.0.zip",
+            category: .homebrewCache,
+            estimatedBytes: 2_400_000,
+            disposition: .remove,
+            fingerprint: "fixture"
+        )
+        XCTAssertEqual(LibraryUninstallConfirmation.primaryDisplayName(for: cacheEntry), "Itsycal-0.29.0.zip")
+        XCTAssertEqual(
+            LibraryUninstallConfirmation.abbreviatedParentDirectory(cacheEntry.path, homeDirectory: home),
+            "~/Library/Caches/Homebrew/downloads"
+        )
+
+        let nonCacheWithHashPrefix = CaskRemovalEntry(
+            path: "/Applications/Itsycal.app",
+            category: .application,
+            estimatedBytes: 3_900_000,
+            disposition: .remove,
+            fingerprint: "fixture"
+        )
+        XCTAssertEqual(LibraryUninstallConfirmation.primaryDisplayName(for: nonCacheWithHashPrefix), "Itsycal.app")
+        XCTAssertEqual(
+            LibraryUninstallConfirmation.abbreviatedParentDirectory(nonCacheWithHashPrefix.path, homeDirectory: home),
+            "/Applications"
+        )
+
+        let shortPrefixCache = CaskRemovalEntry(
+            path: "/Users/fixture/deadbeef--Tool.dmg",
+            category: .homebrewCache,
+            estimatedBytes: 1_000,
+            disposition: .remove,
+            fingerprint: "fixture"
+        )
+        XCTAssertEqual(LibraryUninstallConfirmation.primaryDisplayName(for: shortPrefixCache), "deadbeef--Tool.dmg")
+        XCTAssertEqual(
+            LibraryUninstallConfirmation.abbreviatedParentDirectory(shortPrefixCache.path, homeDirectory: home),
+            "~"
+        )
+    }
+
+    func testLongWarningsAndSizeFailureTitlesStayWithin500ptSheetBounds() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarLayoutWarn-\(UUID().uuidString)")
+        let runner = ProcessRunner()
+        let service = SystemProbeService(runner: runner,
+            installer: ManagerSnapshotInstaller(applicationSupportDirectory: root),
+            nodeClient: NodeManagerClient(runner: runner, environmentResolver: .init(homeDirectory: root)),
+            shellClient: ShellManagerClient(runner: runner), environmentResolver: .init(homeDirectory: root))
+        let removal = CaskRemovalPlan(
+            displayName: "Very Long Fixture Application Name",
+            appURL: nil,
+            entries: [
+                CaskRemovalEntry(
+                    path: "/Users/fixture/Library/Application Support/com.fixture.long.bundle.identifier/DataStore.sqlite",
+                    category: .applicationData,
+                    estimatedBytes: nil,
+                    disposition: .remove,
+                    fingerprint: "fixture",
+                    sizeFailure: .permissionDenied
+                )
+            ],
+            warnings: [.sharedData, .incompleteScan, .uninstallerRequiresAuthorization],
+            ownershipFingerprint: "fixture"
+        )
+        let model = AppModel(service: service, operationStore: OperationStore(), batchProvider: FakeBatchProvider(caskRemoval: removal))
+        let uninstall = LibraryUninstallModel(model: model, loadIconData: { _ in nil })
+        await uninstall.prepare(.homebrew(.init(name: "fixture-app", kind: .cask)))
+        let maximumHeight: CGFloat = 640 * 0.7
+        for localeID in ["en", "de"] {
+            let host = NSHostingView(rootView: LibraryUninstallConfirmation(uninstall: uninstall, maximumHeight: maximumHeight)
+                .environment(\.locale, Locale(identifier: localeID)))
+            let size = host.fittingSize
+            XCTAssertEqual(size.width, 500, accuracy: 0.5, localeID)
+            XCTAssertGreaterThan(size.height, 0, localeID)
+            XCTAssertLessThanOrEqual(size.height, maximumHeight, localeID)
+            withExtendedLifetime(host) {}
         }
     }
 
@@ -153,15 +254,21 @@ private struct LayoutFixture: View {
 
     var body: some View {
         LibraryUninstallLayout(maximumHeight: maximumHeight, forcedHeight: forcedHeight) {
-            VStack(spacing: 12) {
-                Color.blue.frame(width: 88, height: 88)
-                Text("Fixture App").font(.headline)
+            HStack(alignment: .center, spacing: 14) {
+                Color.blue.frame(width: 56, height: 56)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Uninstall Software").font(.headline)
+                    Text("Fixture App").font(.subheadline.weight(.medium))
+                }
+                Spacer(minLength: 0)
             }
+            .fixedSize(horizontal: false, vertical: true)
             .background(LayoutMarker(name: "identity"))
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Uninstall Software").font(.title2.bold())
+            VStack(alignment: .leading, spacing: 10) {
                 LibraryUninstallSizeSummary(applicationSize: Text("120 MB"), estimatedRemoval: Text("180 MB"))
+                Divider()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .fixedSize(horizontal: false, vertical: true)
             .background(LayoutMarker(name: "summary"))
             ScrollView {
@@ -186,6 +293,25 @@ private struct LayoutFixture: View {
             .padding(.vertical, 16)
             .fixedSize(horizontal: false, vertical: true)
             .background(LayoutMarker(name: "footer"))
+        }
+    }
+}
+
+private struct EmptySummaryFixture: View {
+    var body: some View {
+        LibraryUninstallLayout(maximumHeight: 500) {
+            Text("Uninstall Software")
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(LayoutMarker(name: "identity"))
+            VStack(alignment: .leading, spacing: 0) {}
+            Text("Scanning Related Files…")
+                .frame(maxWidth: .infinity, minHeight: 80)
+                .background(LayoutMarker(name: "list"))
+            HStack {
+                Spacer()
+                Button("Cancel") {}
+            }
+            .padding(12)
         }
     }
 }

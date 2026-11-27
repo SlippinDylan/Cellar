@@ -85,7 +85,8 @@ struct MaintenanceView: View {
                 DiscoverBatchInstallSheet(
                     installation: batchInstallation,
                     context: model.discoverContext,
-                    initialScope: .homebrewFormula
+                    initialScope: .homebrewFormula,
+                    isBusy: model.isBusy
                 )
             case .homebrewHealth:
                 HomebrewHealthSheet(model: model, clipboard: clipboard)
@@ -191,17 +192,64 @@ struct MaintenanceLoadingState: View {
     }
 }
 
-struct MaintenanceModalFrame<Subtitle: View, Content: View, Footer: View>: View {
+struct MaintenanceModalFrame<Subtitle: View, HeaderTrailing: View, Content: View, Footer: View>: View {
     let title: LocalizedStringResource
     let systemImage: String
     let tint: Color
     var width: CGFloat = 460
+    var showsFooter: Bool = true
     @ViewBuilder let subtitle: Subtitle
+    @ViewBuilder let headerTrailing: HeaderTrailing
     @ViewBuilder let content: Content
     @ViewBuilder let footer: Footer
 
+    init(
+        title: LocalizedStringResource,
+        systemImage: String,
+        tint: Color,
+        width: CGFloat = 460,
+        showsFooter: Bool = true,
+        @ViewBuilder subtitle: () -> Subtitle,
+        @ViewBuilder headerTrailing: () -> HeaderTrailing,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder footer: () -> Footer
+    ) {
+        self.title = title
+        self.systemImage = systemImage
+        self.tint = tint
+        self.width = width
+        self.showsFooter = showsFooter
+        self.subtitle = subtitle()
+        self.headerTrailing = headerTrailing()
+        self.content = content()
+        self.footer = footer()
+    }
+
+    init(
+        title: LocalizedStringResource,
+        systemImage: String,
+        tint: Color,
+        width: CGFloat = 460,
+        showsFooter: Bool = true,
+        @ViewBuilder subtitle: () -> Subtitle,
+        @ViewBuilder content: () -> Content,
+        @ViewBuilder footer: () -> Footer
+    ) where HeaderTrailing == EmptyView {
+        self.init(
+            title: title,
+            systemImage: systemImage,
+            tint: tint,
+            width: width,
+            showsFooter: showsFooter,
+            subtitle: subtitle,
+            headerTrailing: { EmptyView() },
+            content: content,
+            footer: footer
+        )
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 12) {
                 MaintenanceIconBadge(systemImage: systemImage, tint: tint)
 
@@ -213,6 +261,7 @@ struct MaintenanceModalFrame<Subtitle: View, Content: View, Footer: View>: View 
                         .font(.subheadline)
                 }
                 Spacer(minLength: 0)
+                headerTrailing
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -220,19 +269,22 @@ struct MaintenanceModalFrame<Subtitle: View, Content: View, Footer: View>: View 
             Divider()
 
             content
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 20)
                 .padding(.vertical, 14)
 
-            Divider()
+            if showsFooter {
+                Divider()
 
-            HStack(spacing: 10) {
-                footer
+                HStack(spacing: 10) {
+                    footer
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .buttonStyle(.glass)
-            .buttonBorderShape(.capsule)
-            .controlSize(.large)
         }
         .constrainedSheetWidth(width)
     }

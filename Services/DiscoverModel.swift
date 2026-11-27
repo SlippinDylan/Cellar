@@ -418,6 +418,8 @@ final class DiscoverInstallationModel: ObservableObject {
     @Published private(set) var isPreparing = false
     @Published private(set) var isSubmitting = false
     @Published private(set) var submittingPlan: BatchPlan?
+    @Published private(set) var submittingNPM: DiscoverNPMContext?
+    @Published private(set) var resultNPM: DiscoverNPMContext?
     @Published private(set) var queuedItems: [BatchItem] = []
     @Published private(set) var activeItem: BatchItem?
     private let model: AppModel
@@ -493,6 +495,8 @@ final class DiscoverInstallationModel: ObservableObject {
         let request = UUID()
         previewRequest = request
         preview = nil
+        result = nil
+        resultNPM = nil
         error = nil
         isPreparing = true
         defer {
@@ -529,13 +533,19 @@ final class DiscoverInstallationModel: ObservableObject {
 
     func dismissResult() {
         result = nil
+        resultNPM = nil
     }
 
     func confirmInstall() async {
-        guard !isSubmitting, !model.isBusy, let preview else { return }
-        isSubmitting = true
-        defer { isSubmitting = false }
+        guard !isSubmitting, let preview else { return }
         self.preview = nil
+        guard !model.isBusy else { error = .installationFailed; return }
+        isSubmitting = true
+        submittingNPM = preview.npm
+        defer {
+            isSubmitting = false
+            submittingNPM = nil
+        }
         // The confirmation consumes only the plans and destinations already shown.
         let currentContextMatches = switch preview.intent.scope {
         case .npm: preview.context.npm == model.discoverContext.npm
@@ -587,11 +597,14 @@ final class DiscoverInstallationModel: ObservableObject {
     private func execute(_ plan: BatchPlan) async {
         error = nil
         result = nil
+        resultNPM = nil
         submittingPlan = plan
         defer { submittingPlan = nil }
         do {
             guard valid(plan.intent), !Task.isCancelled else { throw DiscoverInputError.staleContext }
-            result = try await model.executeBatch(plan)
+            let completed = try await model.executeBatch(plan)
+            resultNPM = submittingNPM
+            result = completed
         } catch is CancellationError { return }
         catch let error as DiscoverInputError { self.error = error }
         catch let error as BatchOperationError where error == .planUnavailable || error == .reconciliationUnavailable {

@@ -81,7 +81,12 @@ struct NodeTaskConfirmation: View {
         } footer: {
             Spacer()
             if isRunning {
-                Text("Running").foregroundStyle(.secondary)
+                Button {} label: {
+                    Text(isDestructive ? LocalizedStringResource("Removing") : LocalizedStringResource("Saving"))
+                }
+                .buttonStyle(.glassProminent)
+                .tint(isDestructive ? .red : .blue)
+                .disabled(true)
             } else if hasFinished {
                 Button("OK", action: cancel)
                     .buttonStyle(.glassProminent)

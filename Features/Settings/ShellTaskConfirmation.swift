@@ -93,7 +93,10 @@ struct ShellTaskConfirmation: View {
         } footer: {
             Spacer()
             if isRunning {
-                Text(runningMessage).foregroundStyle(.secondary)
+                Button {} label: { Text(runningButtonTitle) }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .disabled(true)
             } else if hasFinished {
                 Button("OK", action: cancel)
                     .buttonStyle(.glassProminent)
@@ -131,6 +134,13 @@ struct ShellTaskConfirmation: View {
         case .installOhMyZsh: LocalizedStringResource("Install Oh My Zsh")
         case .tidy: LocalizedStringResource("Tidy Zsh Files")
         default: LocalizedStringResource("Install Terminal Plugin")
+        }
+    }
+
+    private var runningButtonTitle: LocalizedStringResource {
+        switch plan.request.action {
+        case .tidy: LocalizedStringResource("Tidying")
+        default: LocalizedStringResource("Installing")
         }
     }
 

@@ -246,7 +246,8 @@ private struct NodeDirectActionSheet: View {
             title: request.action == .installNode ? LocalizedStringResource("Install Node Version") : LocalizedStringResource("Use for Cellar"),
             systemImage: "shippingbox.fill",
             tint: .green,
-            width: 420
+            width: 420,
+            showsFooter: !isRunning
         ) {
             Text(verbatim: request.subject).foregroundStyle(.secondary)
         } content: {
@@ -274,9 +275,7 @@ private struct NodeDirectActionSheet: View {
             }
         } footer: {
             Spacer()
-            if isRunning {
-                Text("Running").foregroundStyle(.secondary)
-            } else {
+            if !isRunning {
                 Button("OK") { dismiss() }
                     .buttonStyle(.glassProminent)
                     .tint(.blue)
@@ -311,7 +310,8 @@ private struct NodeHomebrewInstallSheet: View {
             title: LocalizedStringResource("Install Node with Homebrew"),
             systemImage: "shippingbox.fill",
             tint: .green,
-            width: 420
+            width: 420,
+            showsFooter: !isRunning
         ) {
             if isRunning {
                 Text("Running").foregroundStyle(.secondary)
@@ -348,9 +348,7 @@ private struct NodeHomebrewInstallSheet: View {
             }
         } footer: {
             Spacer()
-            if isRunning {
-                Text("Running").foregroundStyle(.secondary)
-            } else {
+            if !isRunning {
                 Button("OK") { dismiss() }
                     .buttonStyle(.glassProminent)
                     .tint(.blue)

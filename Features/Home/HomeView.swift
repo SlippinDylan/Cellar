@@ -394,7 +394,8 @@ private struct HomeSetupSheet: View {
             title: title,
             systemImage: systemImage,
             tint: tint,
-            width: 420
+            width: 420,
+            showsFooter: !isRunning
         ) {
             if isRunning {
                 Text("Running").foregroundStyle(.secondary)
@@ -433,9 +434,7 @@ private struct HomeSetupSheet: View {
             }
         } footer: {
             Spacer()
-            if isRunning {
-                Text("Running").foregroundStyle(.secondary)
-            } else {
+            if !isRunning {
                 Button("OK") { dismiss() }
                     .buttonStyle(.glassProminent)
                     .tint(.blue)

@@ -23,7 +23,8 @@ struct HomebrewHealthSheet: View {
             title: LocalizedStringResource("Homebrew Health"),
             systemImage: "stethoscope.circle.fill",
             tint: .orange,
-            width: 540
+            width: 540,
+            showsFooter: !isChecking
         ) {
             if isChecking {
                 Text("Checking Homebrew…").foregroundStyle(.secondary)
@@ -128,6 +129,10 @@ struct NodeMaintenanceSheet: View {
             case .ready, .completed, .failed: false
             }
         }
+
+        var isPreparing: Bool {
+            if case .preparing = self { true } else { false }
+        }
     }
 
     @ObservedObject var model: AppModel
@@ -141,7 +146,8 @@ struct NodeMaintenanceSheet: View {
             title: action.title,
             systemImage: action.symbolName,
             tint: action.tint,
-            width: 540
+            width: 540,
+            showsFooter: !phase.isPreparing
         ) {
             switch phase {
             case .preparing:
@@ -155,8 +161,7 @@ struct NodeMaintenanceSheet: View {
                 Text("Running")
                     .foregroundStyle(.secondary)
             case .completed(let result):
-                let status: BatchItemStatus = result.operation.batchItemStatus == .succeeded && result.postflightError != nil
-                    ? .partiallySucceeded : result.operation.batchItemStatus
+                let status = completedStatus(result)
                 Label { Text(status.activityTitle) } icon: {
                     Image(systemName: status.systemImage)
                 }
@@ -213,10 +218,40 @@ struct NodeMaintenanceSheet: View {
                 MaintenanceLoadingState(title: "Running")
 
             case .completed(let result):
-                MaintenanceDetailWell(maxHeight: 260) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        resultDetailView(result)
+                if hasStructuredCompletionDetail(result) {
+                    MaintenanceDetailWell(maxHeight: 260) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            resultDetailView(result)
+                        }
                     }
+                } else {
+                    let status = completedStatus(result)
+                    HStack(alignment: .center, spacing: 10) {
+                        Image(systemName: status == .succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                            .font(.title3)
+                            .foregroundStyle(status == .succeeded ? .green : .orange)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(action == .verify && status == .succeeded
+                                 ? LocalizedStringResource("npm cache verified successfully.")
+                                 : (status == .succeeded
+                                    ? LocalizedStringResource("All actions finished successfully.")
+                                    : status.activityTitle))
+                                .font(.body.weight(.medium))
+                            if result.postflightError != nil {
+                                Text(ActivityItemReason.stateUnavailable.message)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else if let reason = result.operation.activityReason {
+                                Text(reason.message)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.vertical, 4)
                 }
 
             case .failed(let message):
@@ -230,8 +265,13 @@ struct NodeMaintenanceSheet: View {
         } footer: {
             Spacer()
             switch phase {
-            case .preparing, .executing:
+            case .preparing:
                 EmptyView()
+            case .executing:
+                Button {} label: { Text("Removing") }
+                    .buttonStyle(.glassProminent)
+                    .tint(.red)
+                    .disabled(true)
             case .ready(let plan):
                 Button("Cancel", role: .cancel) {
                     model.dismissNodePlan(confirmed: plan)
@@ -302,11 +342,33 @@ struct NodeMaintenanceSheet: View {
         }
     }
 
+    private func completedStatus(_ result: NodeActionResult) -> BatchItemStatus {
+        result.operation.batchItemStatus == .succeeded && result.postflightError != nil
+            ? .partiallySucceeded : result.operation.batchItemStatus
+    }
+
+    private func hasStructuredCompletionDetail(_ result: NodeActionResult) -> Bool {
+        if let items = result.operation.cleanupItems, !items.isEmpty {
+            return true
+        }
+        guard result.postflightError == nil, result.operation.activityReason == nil else {
+            return false
+        }
+        let detail = result.operation.detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !detail.isEmpty
+    }
+
     @ViewBuilder
     private func resultDetailView(_ result: NodeActionResult) -> some View {
         if let items = result.operation.cleanupItems, !items.isEmpty {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 NodeCleanupItemView(item: item)
+            }
+            if result.postflightError != nil {
+                Text(ActivityItemReason.stateUnavailable.message)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         } else if result.postflightError != nil {
             Text(ActivityItemReason.stateUnavailable.message)

@@ -40,6 +40,45 @@
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "檢查官方 Homebrew 安裝程式時觸發了 GitHub API 速率限制，請稍候或切換網路後重試。" } }
       }
     },
+    "Adding": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Hinzufügen" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Adding" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Añadiendo" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Ajout" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "追加中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "추가 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "添加中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "新增中" } }
+      }
+    },
+    "Applying": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Anwenden" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Applying" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Aplicando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Application" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "適用中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "적용 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "应用中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "套用中" } }
+      }
+    },
+    "Installing": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Installieren" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Installing" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Instalando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Installation" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "インストール中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "설치 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "安装中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "安裝中" } }
+      }
+    },
     "Installing…": {
       "extractionState": "manual",
       "localizations": {
@@ -51,6 +90,84 @@
         "ko": { "stringUnit": { "state": "translated", "value": "설치 중…" } },
         "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在安装…" } },
         "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在安裝…" } }
+      }
+    },
+    "Removing": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Entfernen" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Removing" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Eliminando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Suppression" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "削除中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "제거 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "移除中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "移除中" } }
+      }
+    },
+    "Saving": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Sichern" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Saving" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Guardando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Enregistrement" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "保存中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "저장 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "保存中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "儲存中" } }
+      }
+    },
+    "Tidying": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Aufräumen" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Tidying" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Ordenando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Rangement" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "整理中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "정리 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "整理中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "整理中" } }
+      }
+    },
+    "Uninstalling": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Deinstallieren" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Uninstalling" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Desinstalando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Désinstallation" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アンインストール中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "제거 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "卸载中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "解除安裝中" } }
+      }
+    },
+    "Updating": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Aktualisieren" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Updating" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Actualizando" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Mise à jour" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "アップデート中" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "업데이트 중" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "更新中" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "更新中" } }
+      }
+    },
+    "npm cache verified successfully.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "npm-Cache erfolgreich überprüft." } },
+        "en": { "stringUnit": { "state": "translated", "value": "npm cache verified successfully." } },
+        "es": { "stringUnit": { "state": "translated", "value": "La caché de npm se verificó correctamente." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Le cache npm a bien été vérifié." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "npm キャッシュの検証に成功しました。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "npm 캐시 확인이 완료되었습니다." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "npm 缓存校验通过。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "npm 快取驗證通過。" } }
       }
     },
     "Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into %@.": {

@@ -325,7 +325,10 @@ private struct TerminalApplyConfirmation: View {
         } footer: {
             Spacer()
             if isRunning {
-                Text("Running").foregroundStyle(.secondary)
+                Button {} label: { Text("Applying") }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .disabled(true)
             } else if hasFinished {
                 Button("OK", action: cancel)
                     .buttonStyle(.glassProminent)

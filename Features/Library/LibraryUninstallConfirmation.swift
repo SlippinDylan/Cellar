@@ -11,21 +11,21 @@ struct LibraryUninstallConfirmation: View {
     private var removal: CaskRemovalPlan? { plan?.homebrewImpacts.first?.caskRemoval }
     private var displayName: String { removal?.displayName ?? uninstall.displayName ?? uninstall.presentedItem?.displayIdentifier ?? "" }
 
+    private var scopeTitle: LocalizedStringResource? {
+        uninstall.presentedItem?.scope.libraryTitle ?? plan?.intent.scope.libraryTitle
+    }
+
     var body: some View {
         LibraryUninstallLayout(maximumHeight: maximumHeight, forcedHeight: executionHeight) {
             identity
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Uninstall Software").font(.title2.bold())
-                summary
-            }
-            .fixedSize(horizontal: false, vertical: true)
+            summary
             ScrollView {
                 details.frame(maxWidth: .infinity, alignment: .leading).padding(.trailing, 24)
             }
             .clipped()
-            VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
                 Divider()
-                HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let removal, !removal.warnings.isEmpty {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(removal.warnings.enumerated()), id: \.offset) { _, warning in
@@ -40,25 +40,33 @@ struct LibraryUninstallConfirmation: View {
                             }
                         }
                     }
-                    Spacer(minLength: 12)
-                    if uninstall.hasFinished {
-                        Button("OK", action: uninstall.dismissConfirmation)
-                            .keyboardShortcut(.defaultAction)
-                    } else if uninstall.isExecuting {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text("Uninstalling…").foregroundStyle(.secondary)
+                    HStack(alignment: .center, spacing: 12) {
+                        Spacer(minLength: 0)
+                        if uninstall.hasFinished {
+                            Button("OK", action: uninstall.dismissConfirmation)
+                                .fixedSize()
+                                .buttonStyle(.glassProminent)
+                                .tint(.blue)
+                                .keyboardShortcut(.defaultAction)
+                        } else if uninstall.isExecuting {
+                            Button {} label: { Text("Uninstalling") }
+                                .fixedSize()
+                                .buttonStyle(.glassProminent)
+                                .tint(.red)
+                                .disabled(true)
+                        } else {
+                            Button("Cancel", role: .cancel, action: uninstall.dismissConfirmation)
+                                .fixedSize()
+                                .keyboardShortcut(.cancelAction)
+                            Button("Uninstall", role: .destructive) {
+                                if removal != nil, executionHeight == nil { executionHeight = presentationHeight }
+                                Task { await uninstall.confirmUninstall() }
+                            }
+                            .fixedSize()
+                            .buttonStyle(.glassProminent)
+                            .tint(.red)
+                            .disabled(uninstall.isPreparing || plan == nil || plan?.executableCount == 0 || uninstall.isExecuting)
                         }
-                    } else {
-                        Button("Cancel", role: .cancel, action: uninstall.dismissConfirmation)
-                            .keyboardShortcut(.cancelAction)
-                            .disabled(uninstall.isExecuting)
-                        Button("Uninstall", role: .destructive) {
-                            if executionHeight == nil { executionHeight = presentationHeight }
-                            Task { await uninstall.confirmUninstall() }
-                        }
-                        .tint(.red)
-                        .disabled(uninstall.isPreparing || plan == nil || plan?.executableCount == 0 || uninstall.isExecuting)
                     }
                 }
                 .buttonStyle(.glass)
@@ -71,42 +79,65 @@ struct LibraryUninstallConfirmation: View {
         }
         // Measure the intrinsic layout, before the host frame constrains it.
         .onGeometryChange(for: CGFloat.self, of: { $0.size.height }) { presentationHeight = $0 }
-        .constrainedSheetWidth(700)
+        .constrainedSheetWidth(500)
         .frame(height: presentationHeight)
         .background(LibraryUninstallSheetSizing(height: presentationHeight))
         .presentationSizing(.fitted)
         .interactiveDismissDisabled(uninstall.isExecuting)
         .onChange(of: uninstall.isExecuting) { _, executing in
-            if executing && executionHeight == nil { executionHeight = presentationHeight }
+            if removal != nil, executing, executionHeight == nil { executionHeight = presentationHeight }
         }
     }
 
     private var identity: some View {
-        VStack(spacing: 12) {
+        HStack(alignment: .center, spacing: 14) {
             if let icon = uninstall.appIcon {
-                Image(nsImage: icon).resizable().scaledToFit().frame(width: 88, height: 88)
+                Image(nsImage: icon).resizable().scaledToFit()
+                    .frame(width: 56, height: 56)
                     .accessibilityHidden(true)
             } else {
-                Image(systemName: "shippingbox").font(.system(size: 64)).foregroundStyle(.secondary)
-                    .frame(width: 88, height: 88).accessibilityHidden(true)
+                Image(systemName: "shippingbox")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 56, height: 56)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+                    .accessibilityHidden(true)
             }
-            Text(displayName).font(.headline).multilineTextAlignment(.center).lineLimit(3)
-                .help(displayName).textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Uninstall Software")
+                    .font(.headline)
+                Text(displayName)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(2)
+                    .help(displayName)
+                    .textSelection(.enabled)
+                if let scopeTitle {
+                    Text(scopeTitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
-    @ViewBuilder private var summary: some View {
-        if removal != nil || (uninstall.isPreparing && uninstall.presentedItem?.scope == .homebrew(.cask)) {
-            LibraryUninstallSizeSummary(
-                applicationSize: byteCount(removal?.applicationBytes),
-                estimatedRemoval: byteCount(removal?.removalBytes)
-            )
-            Divider()
-        } else if let plan {
-            Text(plan.intent.scope.libraryTitle).font(.headline)
-            Text("This item will be removed. This cannot be rolled back.")
-                .font(.callout).foregroundStyle(.secondary)
+    private var summary: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if removal != nil || (uninstall.isPreparing && uninstall.presentedItem?.scope == .homebrew(.cask)) {
+                LibraryUninstallSizeSummary(
+                    applicationSize: byteCount(removal?.applicationBytes),
+                    estimatedRemoval: byteCount(removal?.removalBytes)
+                )
+                Divider()
+            } else if plan != nil {
+                Text("This item will be removed. This cannot be rolled back.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder private var details: some View {
@@ -114,14 +145,25 @@ struct LibraryUninstallConfirmation: View {
             ProgressView("Scanning Related Files…")
                 .frame(maxWidth: .infinity, minHeight: 100)
         } else if let removal {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 ForEach([CaskRemovalCategory.application, .cache, .applicationData, .homebrewCache], id: \.self) { category in
                     let entries = removal.entries.filter { $0.category == category }
                     if !entries.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(category.uninstallTitle).font(.headline)
-                            ForEach(entries) { entry in
-                                removalRow(entry)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(category.uninstallTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(entries) { entry in
+                                    removalRow(entry)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .strokeBorder(.separator.opacity(0.6), lineWidth: 0.5)
                             }
                         }
                     }
@@ -171,6 +213,7 @@ struct LibraryUninstallConfirmation: View {
                             } else {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .foregroundStyle(.orange)
+                                    .accessibilityLabel(Text(uninstall.result?.outcome.status.libraryTitle ?? LocalizedStringResource("Operation Failed")))
                             }
                         }
                     }
@@ -211,30 +254,48 @@ struct LibraryUninstallConfirmation: View {
 
     private func removalRow(_ entry: CaskRemovalEntry) -> some View {
         let status = uninstall.pathStatus(entry)
-        return HStack(alignment: .firstTextBaseline, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+        return HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
                 Button { uninstall.revealInFinder(entry) } label: {
-                    Text(entry.path).font(.callout)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Self.primaryDisplayName(for: entry))
+                            .font(.callout.weight(.medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Text(Self.abbreviatedParentDirectory(entry.path))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Show in Finder")
+                .help(entry.path)
                 .disabled(status == .removed)
                 if let guidance = uninstall.guidance(for: entry) {
                     Text(guidance.message)
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 0)
             Group {
                 if let failure = entry.sizeFailure {
-                    Text(failure.title).foregroundStyle(.secondary).help(Text(failure.explanation))
+                    Text(failure.title)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 160, alignment: .trailing)
+                        .layoutPriority(1)
+                        .help(Text(failure.explanation))
                 } else {
                     byteCount(entry.estimatedBytes)
+                        .fixedSize()
                 }
             }
-            .font(.callout).monospacedDigit().fixedSize()
+            .font(.callout).monospacedDigit()
             LibraryUninstallPathStatusIndicator(status: status)
         }
         .contextMenu {
@@ -243,6 +304,37 @@ struct LibraryUninstallConfirmation: View {
                 NSPasteboard.general.setString(entry.path, forType: .string)
             }
         }
+    }
+
+    static func primaryDisplayName(for entry: CaskRemovalEntry) -> String {
+        let filename = URL(filePath: entry.path).lastPathComponent
+        guard entry.category == .homebrewCache,
+              let splitIndex = filename.index(filename.startIndex, offsetBy: 64, limitedBy: filename.endIndex),
+              filename[splitIndex...].hasPrefix("--")
+        else {
+            return filename
+        }
+        let prefix = filename[..<splitIndex]
+        let suffix = filename[splitIndex...].dropFirst(2)
+        guard !suffix.isEmpty,
+              prefix.allSatisfy({ $0.isASCII && $0.isHexDigit })
+        else {
+            return filename
+        }
+        return String(suffix)
+    }
+
+    static func abbreviatedParentDirectory(_ path: String, homeDirectory: URL = .homeDirectory) -> String {
+        let parent = URL(filePath: path).deletingLastPathComponent().path
+        let home = homeDirectory.path
+        if parent == home {
+            return "~"
+        }
+        let homePrefix = home.hasSuffix("/") ? home : home + "/"
+        if parent.hasPrefix(homePrefix) {
+            return "~/" + parent.dropFirst(homePrefix.count)
+        }
+        return parent
     }
 
     @ViewBuilder private func byteCount(_ bytes: Int64?) -> some View {
@@ -331,7 +423,7 @@ private struct LibraryUninstallSheetSizing: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in
                 guard let self, let height = self.height, let window = self.window,
                       window.sheetParent != nil else { return }
-                let size = NSSize(width: 700, height: height)
+                let size = NSSize(width: 500, height: height)
                 let current = window.contentLayoutRect.size
                 if abs(current.width - size.width) > 0.5 || abs(current.height - size.height) > 0.5 {
                     window.setContentSize(size)
@@ -386,37 +478,38 @@ private extension CaskRemovalWarning {
 struct LibraryUninstallLayout: Layout {
     let maximumHeight: CGFloat
     var forcedHeight: CGFloat? = nil
-    private let width: CGFloat = 700
+    private let width: CGFloat = 500
     private let padding: CGFloat = 24
-    private let identityWidth: CGFloat = 144
-    private let columnSpacing: CGFloat = 24
+    private let sectionSpacing: CGFloat = 14
     private let listSpacing: CGFloat = 12
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let detailWidth = width - 2 * padding - identityWidth - columnSpacing
-        let identity = subviews[0].sizeThatFits(.init(width: identityWidth, height: nil))
-        let summary = subviews[1].sizeThatFits(.init(width: detailWidth, height: nil))
-        let list = subviews[2].sizeThatFits(.init(width: detailWidth + padding, height: nil))
+        let contentWidth = width - 2 * padding
+        let identity = subviews[0].sizeThatFits(.init(width: contentWidth, height: nil))
+        let summary = subviews[1].sizeThatFits(.init(width: contentWidth, height: nil))
+        let list = subviews[2].sizeThatFits(.init(width: contentWidth + padding, height: nil))
         let footer = subviews[3].sizeThatFits(.init(width: width, height: nil))
-        let contentHeight = max(identity.height, summary.height + listSpacing + list.height)
+        let summaryBlockHeight = summary.height > 0 ? sectionSpacing + summary.height + listSpacing : listSpacing
+        let contentHeight = identity.height + summaryBlockHeight + list.height
         return CGSize(width: width, height: min(maximumHeight, forcedHeight ?? (contentHeight + 2 * padding + footer.height)))
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let detailX = bounds.minX + padding + identityWidth + columnSpacing
-        let detailWidth = bounds.width - 2 * padding - identityWidth - columnSpacing
-        let summarySize = subviews[1].sizeThatFits(.init(width: detailWidth, height: nil))
+        let contentWidth = bounds.width - 2 * padding
+        let identitySize = subviews[0].sizeThatFits(.init(width: contentWidth, height: nil))
+        let summarySize = subviews[1].sizeThatFits(.init(width: contentWidth, height: nil))
         let footerSize = subviews[3].sizeThatFits(.init(width: bounds.width, height: nil))
         let footerY = bounds.maxY - footerSize.height
-        let listY = bounds.minY + padding + summarySize.height + listSpacing
+        let hasSummary = summarySize.height > 0
+        let summaryY = bounds.minY + padding + identitySize.height + (hasSummary ? sectionSpacing : 0)
+        let listY = summaryY + summarySize.height + listSpacing
         let listHeight = max(0, footerY - padding - listY)
-        subviews[0].place(at: .init(x: bounds.minX + padding + identityWidth / 2,
-                                     y: (bounds.minY + footerY) / 2), anchor: .center,
-                          proposal: .init(width: identityWidth, height: nil))
-        subviews[1].place(at: .init(x: detailX, y: bounds.minY + padding), anchor: .topLeading,
-                          proposal: .init(width: detailWidth, height: summarySize.height))
-        subviews[2].place(at: .init(x: detailX, y: listY), anchor: .topLeading,
-                          proposal: .init(width: detailWidth + padding, height: listHeight))
+        subviews[0].place(at: .init(x: bounds.minX + padding, y: bounds.minY + padding), anchor: .topLeading,
+                          proposal: .init(width: contentWidth, height: identitySize.height))
+        subviews[1].place(at: .init(x: bounds.minX + padding, y: summaryY), anchor: .topLeading,
+                          proposal: .init(width: contentWidth, height: summarySize.height))
+        subviews[2].place(at: .init(x: bounds.minX + padding, y: listY), anchor: .topLeading,
+                          proposal: .init(width: contentWidth + padding, height: listHeight))
         subviews[3].place(at: .init(x: bounds.minX, y: footerY), anchor: .topLeading,
                           proposal: .init(width: bounds.width, height: footerSize.height))
     }

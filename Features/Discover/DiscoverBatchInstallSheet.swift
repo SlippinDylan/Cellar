@@ -4,6 +4,7 @@ struct DiscoverBatchInstallSheet: View {
     @ObservedObject var installation: DiscoverInstallationModel
     @ObservedObject private var coordinator: BatchOperationCoordinator
     let context: DiscoverContext
+    var isBusy: Bool = false
     @State private var scope: CatalogProviderScope
     @State private var input = ""
     @State private var activeTask: Task<Void, Never>?
@@ -16,10 +17,11 @@ struct DiscoverBatchInstallSheet: View {
         GridItem(.flexible(), spacing: 10),
     ]
 
-    init(installation: DiscoverInstallationModel, context: DiscoverContext, initialScope: CatalogProviderScope) {
+    init(installation: DiscoverInstallationModel, context: DiscoverContext, initialScope: CatalogProviderScope, isBusy: Bool = false) {
         self.installation = installation
         coordinator = installation.coordinator
         self.context = context
+        self.isBusy = isBusy
         _scope = State(initialValue: initialScope)
     }
 
@@ -43,36 +45,36 @@ struct DiscoverBatchInstallSheet: View {
             } else {
                 Text("Install Scope").foregroundStyle(.secondary)
             }
+        } headerTrailing: {
+            if let headerCount {
+                Text(verbatim: headerCount)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         } content: {
             VStack(alignment: .leading, spacing: 12) {
                 if !installation.isSubmitting && installation.result == nil && installation.preview == nil {
                     GlassCategoryPicker(selection: $scope, label: "Install Scope", title: scopeTitle)
-                        .disabled(installation.isPreparing)
+                        .disabled(installation.isPreparing || isStartingPreview)
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
                 if installation.isSubmitting {
                     executingContent
                 } else if let result = installation.result {
-                    DiscoverInstallResultView(result: result)
+                    DiscoverInstallResultView(result: result, npm: installation.resultNPM)
                 } else if let preview = installation.preview {
-                    reviewContent(preview)
+                    planContent(preview.plan, items: preview.plan.items, npm: preview.npm, isExecuting: false)
                 } else {
                     inputContent
                 }
             }
         } footer: {
             if installation.isSubmitting || isStartingInstall {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Installing…").foregroundStyle(.secondary)
-                }
                 Spacer()
-                if let plan = installation.submittingPlan {
-                    let progressCounter = "\(coordinator.liveItemOutcomes.count)/\(plan.items.count)"
-                    Text(verbatim: progressCounter)
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                Button {} label: { Text("Installing") }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .disabled(true)
             } else if installation.result != nil {
                 Spacer()
                 Button("OK") {
@@ -83,11 +85,17 @@ struct DiscoverBatchInstallSheet: View {
                 .tint(.blue)
                 .keyboardShortcut(.defaultAction)
             } else if let preview = installation.preview {
-                Button("Back", action: installation.dismissPreview)
+                Button("Back") {
+                    guard !isStartingInstall else { return }
+                    installation.dismissPreview()
+                }
+                .disabled(isStartingInstall)
                 Spacer()
-                Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
+                Button("Cancel", role: .cancel, action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isStartingInstall)
                 Button("Install") {
-                    guard !isStartingInstall, !installation.isSubmitting else { return }
+                    guard !isStartingInstall, !installation.isSubmitting, !isBusy else { return }
                     isStartingInstall = true
                     activeTask = Task {
                         await installation.confirmInstall()
@@ -98,6 +106,7 @@ struct DiscoverBatchInstallSheet: View {
                 .tint(.blue)
                 .keyboardShortcut(.defaultAction)
                 .disabled(preview.plan.executableCount == 0)
+                .disabled(isBusy)
             } else {
                 if installation.isPreparing || isStartingPreview {
                     HStack(spacing: 8) {
@@ -108,7 +117,7 @@ struct DiscoverBatchInstallSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
                 Button("Review Installation") {
-                    guard !isStartingPreview, !installation.isPreparing else { return }
+                    guard !isStartingPreview, !installation.isPreparing, !isBusy else { return }
                     isStartingPreview = true
                     activeTask = Task {
                         await installation.preview(input, scope: scope)
@@ -117,7 +126,7 @@ struct DiscoverBatchInstallSheet: View {
                 }
                     .buttonStyle(.glassProminent)
                     .tint(.blue)
-                    .disabled(installation.isPreparing || isStartingPreview || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(installation.isPreparing || isStartingPreview || isBusy || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .interactiveDismissDisabled(installation.isSubmitting || isStartingInstall)
@@ -131,14 +140,29 @@ struct DiscoverBatchInstallSheet: View {
         }
     }
 
+    private var headerCount: String? {
+        if installation.isSubmitting {
+            guard let plan = installation.submittingPlan else { return nil }
+            return "\(coordinator.liveItemOutcomes.count)/\(plan.items.count)"
+        }
+        if let result = installation.result {
+            let succeeded = result.outcome.itemOutcomes.count { $0.status == .succeeded }
+            return "\(succeeded)/\(result.outcome.itemOutcomes.count)"
+        }
+        if let preview = installation.preview {
+            return "\(preview.plan.executableCount)/\(preview.intent.items.count)"
+        }
+        return nil
+    }
+
     @ViewBuilder private var inputContent: some View {
         if scope == .npm, let npm = context.npm { DiscoverNPMContextView(context: npm, isDefault: true) }
         Text("Enter one package per line. Blank lines and duplicate entries are removed. Maximum 100 items from one scope.")
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-        BatchPackageEditor(text: $input, isEditable: !installation.isPreparing)
-            .frame(height: 184)
+        BatchPackageEditor(text: $input, isEditable: !installation.isPreparing && !isStartingPreview)
+            .frame(height: 248)
             .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay {
@@ -149,67 +173,63 @@ struct DiscoverBatchInstallSheet: View {
         if let error = installation.error { Text(error.discoverMessage).foregroundStyle(.secondary) }
     }
 
-    @ViewBuilder private func reviewContent(_ preview: DiscoverInstallPreview) -> some View {
-        if let npm = preview.npm { DiscoverNPMContextView(context: npm) }
-        else if case .npm(let environment) = preview.intent.scope {
+    @ViewBuilder private func planContent(_ plan: BatchPlan, items: [BatchPreparedItem], npm: DiscoverNPMContext?, isExecuting: Bool) -> some View {
+        if let npm { DiscoverNPMContextView(context: npm) }
+        else if case .npm(let environment) = plan.intent.scope {
             Text("Node Environment: \(environment.nodeVersion) · npm \(environment.npmVersion)")
         }
-        let count = String(preview.plan.executableCount)
-        let total = String(preview.intent.items.count)
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(count) of \(total) Items Can Be Installed").font(.headline)
-            Text("Installation runs one item at a time. A failure does not stop other items. Completed installations cannot be rolled back.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        MaintenanceDetailWell(maxHeight: 240) {
+        MaintenanceDetailWell(maxHeight: 260) {
             VStack(alignment: .leading, spacing: 10) {
-                if let binding = preview.plan.npmBindings.first {
+                if let binding = plan.npmBindings.first {
                     DiscoverNPMDestinationView(destination: binding.destination)
                     Divider()
                 }
                 LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
-                    ForEach(preview.plan.items) { item in
+                    ForEach(items) { item in
                         BatchItemStatusTile(name: item.item.displayIdentifier) {
-                            Image(systemName: item.status.symbolName)
-                                .foregroundStyle(item.status.tint)
-                            Text(item.status.compactTitle)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        .accessibilityElement(children: .combine)
-                    }
-                }
-            }
-        }
-    }
-
-    @ViewBuilder private var executingContent: some View {
-        if let plan = installation.submittingPlan {
-            MaintenanceDetailWell(maxHeight: 240) {
-                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 8) {
-                    ForEach(plan.items) { item in
-                        BatchItemStatusTile(name: item.item.displayIdentifier) {
-                            if coordinator.runningItem == item.item {
-                                CatalogCircularProgressView(tint: .accentColor, size: 18, horizontalPadding: 0)
-                                    .accessibilityLabel(Text("Installing…"))
-                            } else if let status = coordinator.liveItemOutcomes[item.item] {
-                                Image(systemName: status.resultSymbolName)
-                                    .foregroundStyle(status.resultTint)
-                                    .accessibilityLabel(Text(status.discoverTitle))
+                            if isExecuting {
+                                if item.status != .ready {
+                                    Image(systemName: item.status.symbolName)
+                                        .foregroundStyle(item.status.tint)
+                                        .frame(width: 18, height: 18)
+                                        .accessibilityLabel(Text(item.status.compactTitle))
+                                } else if coordinator.runningItem == item.item {
+                                    CatalogCircularProgressView(tint: .accentColor, size: 18, horizontalPadding: 0)
+                                        .accessibilityLabel(Text("Installing…"))
+                                } else if let status = coordinator.liveItemOutcomes[item.item] {
+                                    Image(systemName: status.resultSymbolName)
+                                        .foregroundStyle(status.resultTint)
+                                        .frame(width: 18, height: 18)
+                                        .accessibilityLabel(Text(status.discoverTitle))
+                                } else {
+                                    Circle()
+                                        .stroke(.quaternary, lineWidth: 2)
+                                        .frame(width: 18, height: 18)
+                                        .accessibilityLabel(Text("Queued"))
+                                }
                             } else {
-                                Circle()
-                                    .stroke(.quaternary, lineWidth: 2)
-                                    .frame(width: 18, height: 18)
-                                    .accessibilityLabel(Text("Queued"))
+                                Image(systemName: item.status.symbolName)
+                                    .foregroundStyle(item.status.tint)
+                                Text(item.status.compactTitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
                             }
                         }
                         .accessibilityElement(children: .combine)
                     }
                 }
             }
+        }
+        Text("Installation runs one item at a time. A failure does not stop other items. Completed installations cannot be rolled back.")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder private var executingContent: some View {
+        if let plan = installation.submittingPlan {
+            planContent(plan, items: plan.items, npm: installation.submittingNPM, isExecuting: true)
         } else {
             MaintenanceLoadingState(title: "Running")
         }
@@ -223,7 +243,11 @@ struct DiscoverBatchInstallSheet: View {
         }
     }
 
-    private func cancel() { installation.dismissPreview(); dismiss() }
+    private func cancel() {
+        guard !isStartingInstall, !installation.isSubmitting else { return }
+        installation.dismissPreview()
+        dismiss()
+    }
 }
 
 private struct BatchItemStatusTile<Trailing: View>: View {
@@ -241,6 +265,7 @@ private struct BatchItemStatusTile<Trailing: View>: View {
             HStack(spacing: 4) {
                 trailing
             }
+            .frame(minHeight: 18)
             .fixedSize()
         }
         .padding(.horizontal, 10)
@@ -257,6 +282,7 @@ private struct BatchItemStatusTile<Trailing: View>: View {
 
 struct DiscoverInstallResultView: View {
     let result: BatchExecutionResult
+    var npm: DiscoverNPMContext? = nil
     var dismiss: (() -> Void)? = nil
 
     private let gridColumns = [
@@ -266,6 +292,11 @@ struct DiscoverInstallResultView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let npm {
+                DiscoverNPMContextView(context: npm)
+            } else if case .npm(let environment) = result.outcome.intent.scope {
+                Text("Node Environment: \(environment.nodeVersion) · npm \(environment.npmVersion)")
+            }
             if result.refreshStatus == .failed {
                 Label("Installation finished, but the environment could not be refreshed. Use Refresh to check the current state.", systemImage: "exclamationmark.circle")
                     .font(.callout)
@@ -289,16 +320,17 @@ struct DiscoverInstallResultView: View {
                     let notes = result.outcome.itemOutcomes.filter { $0.reason != nil }
                     if !notes.isEmpty {
                         Divider()
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 6) {
                             ForEach(notes, id: \.item) { outcome in
                                 if let reason = outcome.reason {
-                                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    VStack(alignment: .leading, spacing: 2) {
                                         Text(verbatim: outcome.item.displayIdentifier)
                                             .font(.caption.weight(.medium))
                                             .textSelection(.enabled)
                                         Text(reason.message)
                                             .font(.caption)
                                             .foregroundStyle(.secondary)
+                                            .fixedSize(horizontal: false, vertical: true)
                                             .textSelection(.enabled)
                                     }
                                 }

@@ -581,6 +581,32 @@ final class DiscoverTests: XCTestCase {
         XCTAssertFalse(model.isBusy)
     }
 
+    func testBatchConfirmInstallRetainsNPMContextAcrossSubmissionAndRejectsBusyEnvironment() async throws {
+        let registry = CatalogWebsites.npmRegistry
+        let provider = FakeBatchProvider()
+        let model = fixtureModel(provider)
+        let installation = DiscoverInstallationModel(model: model)
+        await installation.preview("eslint", scope: .npm)
+        XCTAssertEqual(installation.preview?.npm?.registryURL, registry)
+
+        await installation.confirmInstall()
+        XCTAssertEqual(installation.result?.outcome.status, .succeeded)
+        XCTAssertEqual(installation.resultNPM?.registryURL, registry)
+        XCTAssertNil(installation.submittingNPM)
+        installation.dismissResult()
+        XCTAssertNil(installation.resultNPM)
+
+        // When environment becomes busy after preview, confirmInstall surfaces installationFailed cleanly.
+        await installation.preview("prettier", scope: .npm)
+        XCTAssertNotNil(installation.preview)
+        let opID = model.operationStore.begin(context: .init(operation: .refresh, scope: nil, targets: [], stage: .executing))
+        defer { model.operationStore.end(opID) }
+        await installation.confirmInstall()
+        XCTAssertNil(installation.preview)
+        XCTAssertNil(installation.resultNPM)
+        XCTAssertEqual(installation.error, .installationFailed)
+    }
+
     func testDiscoverUsesSharedNativeSearchIntentInertCardsAndLocalizedConfirmation() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let view = try String(contentsOf: root.appending(path: "Features/Discover/DiscoverView.swift"), encoding: .utf8)

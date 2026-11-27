@@ -63,7 +63,10 @@ struct UpdatesConfirmationSheet: View {
         } footer: {
             Spacer()
             if updates.isSubmitting {
-                Text("Updating…").foregroundStyle(.secondary)
+                Button {} label: { Text("Updating") }
+                    .buttonStyle(.glassProminent)
+                    .tint(.green)
+                    .disabled(true)
             } else if hasFinished {
                 Button("OK") { updates.dismissConfirmation(); dismiss() }
                     .buttonStyle(.glassProminent)

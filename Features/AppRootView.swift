@@ -234,8 +234,7 @@ struct AppRootView: View {
     }
 
     private var isRefreshActive: Bool {
-        model.isRefreshing || operationStore.currentOperation?.context.operation == .refresh
-            || operationStore.currentOperation?.context.operation == .updateHomebrewMetadata
+        toolbarRefreshActive(model: model, operationStore: operationStore)
     }
 
     @ViewBuilder private var destinationContent: some View {
@@ -316,6 +315,15 @@ struct AppRootView: View {
     }
 }
 
+@MainActor
+func toolbarRefreshActive(model: AppModel, operationStore: OperationStore) -> Bool {
+    model.isRefreshing
+        || model.homebrewUpdateState == .loading
+        || model.nodeUpdateState == .loading
+        || operationStore.currentOperation?.context.operation == .refresh
+        || operationStore.currentOperation?.context.operation == .updateHomebrewMetadata
+}
+
 private struct RefreshToolbarButton: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
@@ -332,6 +340,7 @@ private struct RefreshToolbarButton: View {
             }
             .accessibilityLabel("Refresh")
             .help("Refresh Local Environment (⌘R)")
+            .disabled(true)
             .allowsHitTesting(false)
             .buttonStyle(.automatic)
         } else {
@@ -348,7 +357,6 @@ private struct RefreshToolbarButton: View {
     }
 
     private var isRefreshActive: Bool {
-        model.isRefreshing || operationStore.currentOperation?.context.operation == .refresh
-            || operationStore.currentOperation?.context.operation == .updateHomebrewMetadata
+        toolbarRefreshActive(model: model, operationStore: operationStore)
     }
 }

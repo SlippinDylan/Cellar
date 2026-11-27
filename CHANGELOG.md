@@ -4,6 +4,22 @@ All notable user-facing changes to Cellar are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-beta.2] - 2026-11-27
+
+### Improved
+
+- Compacted confirmation, completion, and progress sheets across Terminal, Tap, npm, Node, Home setup, and Maintenance views so short content hugs tightly without excess blank boxes.
+- Simplified the Oh My Zsh and Zsh tidy confirmation sheets by folding target paths directly into the description when no file list is needed.
+- Redesigned all Batch Install stages (checking indicator in footer, compact two-column review grid, live per-item spinners during execution, and unified result tiles).
+- Removed the duplicate spinner inside the Formula and npm uninstall modal.
+
+### Fixed
+
+- Retried transient GitHub API errors, shared ETag caching when verifying the official Homebrew installer, and reported API rate limits explicitly.
+- Fixed installing uninstalled global npm packages (such as `@antfu/ni`) on npm 11 when `npm ls -g <pkg> --depth=0 --json` omits the `dependencies` object.
+- Preserved Discover search query, scope, and results across sidebar switches, fixed Homebrew cards remaining stuck on Uninstall after removal, and tinted uninstall card spinners red.
+- Prevented the Batch Install package editor from clipping the last line horizontally after deleting rows.
+
 ## [0.1.0-beta.1] - 2026-11-27
 
 ### Added

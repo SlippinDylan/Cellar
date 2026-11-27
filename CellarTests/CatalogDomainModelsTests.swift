@@ -270,9 +270,9 @@ final class CatalogDomainModelsTests: XCTestCase {
     }
 
     func testNodeActionPlanCanExecuteFailsClosedWhenRequiredFlagsAreMissing() throws {
-        func makePlan(action: NodeAction, json: String) throws -> NodeActionPlan {
+        func makePlan(action: NodeAction, subject: String = "22.0.0", json: String) throws -> NodeActionPlan {
             let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(json.utf8))
-            let request = NodeActionRequest(action: action, subject: "22.0.0")
+            let request = NodeActionRequest(action: action, subject: subject)
             return NodeActionPlan(id: UUID(), request: request, payload: payload, generatedAt: Date())
         }
         let base = #"{"action":"node-install","mode":"dry-run","command":["nvm","install","22"],"requiresConfirmation":true,"warnings":[]}"#
@@ -290,5 +290,24 @@ final class CatalogDomainModelsTests: XCTestCase {
         // Non-runtime action with missing executeSupported fails closed
         let packageMissingSupported = #"{"action":"install","mode":"dry-run","command":["npm","install","-g","eslint"],"requiresConfirmation":true,"warnings":[]}"#
         XCTAssertFalse(try makePlan(action: .installPackage, json: packageMissingSupported).canExecute)
+        // Install action with alreadyInstalled=true stays non-executable
+        let packageAlreadyInstalled = #"{"action":"install","mode":"dry-run","packageName":"eslint","installedVersion":"9.0.0","targetVersion":"9.0.0","alreadyInstalled":true,"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .installPackage, json: packageAlreadyInstalled).canExecute)
+        // Uninstall action allows frozen manager alreadyInstalled=true when an installed version is present
+        let uninstallSupported = #"{"action":"uninstall","mode":"dry-run","packageName":"serve","installedVersion":"14.2.8","targetVersion":"","alreadyInstalled":true,"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertTrue(try makePlan(action: .uninstallPackage, subject: "serve", json: uninstallSupported).canExecute)
+        // Uninstall action fails closed when installedVersion is missing, empty, whitespace-only, or packageName mismatches
+        let uninstallMissingVersion = #"{"action":"uninstall","mode":"dry-run","packageName":"serve","installedVersion":"","targetVersion":"","alreadyInstalled":true,"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .uninstallPackage, subject: "serve", json: uninstallMissingVersion).canExecute)
+        let uninstallWhitespaceVersion = #"{"action":"uninstall","mode":"dry-run","packageName":"serve","installedVersion":"   ","targetVersion":"","alreadyInstalled":true,"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .uninstallPackage, subject: "serve", json: uninstallWhitespaceVersion).canExecute)
+        let uninstallOmittedVersion = #"{"action":"uninstall","mode":"dry-run","packageName":"serve","targetVersion":"","alreadyInstalled":true,"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .uninstallPackage, subject: "serve", json: uninstallOmittedVersion).canExecute)
+        XCTAssertFalse(try makePlan(action: .uninstallPackage, subject: "other", json: uninstallSupported).canExecute)
+        // Update action fails closed when already at target version or when alreadyInstalled=true
+        let updateAlreadyAtTarget = #"{"action":"update-latest","mode":"dry-run","packageName":"eslint","installedVersion":"9.0.0","targetVersion":"9.0.0","alreadyInstalled":true,"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .updatePackage, subject: "eslint", json: updateAlreadyAtTarget).canExecute)
+        let updateUnexpectedAlreadyInstalled = #"{"action":"update-latest","mode":"dry-run","packageName":"eslint","installedVersion":"9.0.0","targetVersion":"10.0.0","alreadyInstalled":true,"requiresConfirmation":true,"executeSupported":true,"warnings":[]}"#
+        XCTAssertFalse(try makePlan(action: .updatePackage, subject: "eslint", json: updateUnexpectedAlreadyInstalled).canExecute)
     }
 }

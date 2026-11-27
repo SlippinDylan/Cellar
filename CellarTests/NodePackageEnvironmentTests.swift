@@ -666,7 +666,9 @@ private struct PackageManagerFixture {
           package_name="$4"
           case "$4" in *@next|*@latest|*@[0-9]*) package_name="${4%@*}" ;; esac
           if [ "$package_name" = npm ]; then target_version=11.0.0; installed_version=10.0.0; fi
-          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","targetVersion":"%s","executeSupported":true,"executable":true}}\n' "$3" "$4" "$package_name" "$installed_version" "$target_version"
+          already_installed=false
+          if [ "$3" = uninstall ]; then already_installed=true; fi
+          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"%s","installedVersion":"%s","targetVersion":"%s","alreadyInstalled":%s,"executeSupported":true,"executable":true}}\n' "$3" "$4" "$package_name" "$installed_version" "$target_version" "$already_installed"
         elif [ "$2" = execute ]; then
           if [ "$4" = npm@11.0.0 ]; then
             if [ -e '\#(root.path)/npm-self-fails' ]; then

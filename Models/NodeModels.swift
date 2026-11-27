@@ -283,7 +283,13 @@ struct NodeActionPlan: Identifiable, Sendable {
     var canExecute: Bool {
         let requiresExplicitExecutable = [NodeAction.installNode, .useNode, .setDefaultNode, .uninstallNode].contains(request.action)
         let executableAllowed = requiresExplicitExecutable ? (payload.executable == true) : (payload.executable != false)
-        return payload.executeSupported == true && executableAllowed && payload.alreadyInstalled != true
+        let notAlreadySatisfied = request.action == .uninstallPackage || payload.alreadyInstalled != true
+        let uninstallablePackage = request.action != .uninstallPackage || (
+            payload.packageName == request.subject
+            && payload.installedVersion?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        )
+        return payload.executeSupported == true && executableAllowed && notAlreadySatisfied
+            && uninstallablePackage
             && (request.action != .updatePackage || exactUpdateSpec != nil)
     }
 

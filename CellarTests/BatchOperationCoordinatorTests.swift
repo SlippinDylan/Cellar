@@ -746,8 +746,9 @@ actor FakeBatchProvider: BatchOperationProviding {
         }
         let packageName = identity.name.hasPrefix("npm@") ? "npm" : identity.name
         let targetVersion = identity.name.hasPrefix("npm@") ? String(identity.name.dropFirst(4)) : "2.0.0"
+        let alreadyInstalled = (operation == .install && alreadyInstalledNames.contains(identity.name)) || operation == .uninstall
         let payload = try JSONDecoder().decode(NodeActionPlanPayload.self, from: Data(
-            "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"packageName\":\"\(packageName)\",\"installedVersion\":\"1.0.0\",\"targetVersion\":\"\(targetVersion)\",\"executeSupported\":true,\"executable\":true,\"alreadyInstalled\":\(operation == .install && alreadyInstalledNames.contains(identity.name))}".utf8
+            "{\"action\":\"\(action.rawValue)\",\"subject\":\"\(identity.name)\",\"packageName\":\"\(packageName)\",\"installedVersion\":\"1.0.0\",\"targetVersion\":\"\(targetVersion)\",\"executeSupported\":true,\"executable\":true,\"alreadyInstalled\":\(alreadyInstalled)}".utf8
         ))
         let plan = NodeActionPlan(id: UUID(), request: .init(action: action, subject: identity.name),
                               payload: payload, generatedAt: Date(),

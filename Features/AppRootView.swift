@@ -4,6 +4,9 @@ struct AppRootView: View {
     @FocusedValue(\.discoverToolbar) private var discoverToolbar
     @FocusedValue(\.libraryTabs) private var libraryTabs
     @StateObject private var uninstall: LibraryUninstallModel
+    @StateObject private var discoverSearch: DiscoverSearchModel
+    @StateObject private var discoverInstallation: DiscoverInstallationModel
+    @StateObject private var discoverUpdates: PackageUpdatesModel
     @State private var parentWindowHeight: CGFloat?
     @ObservedObject var model: AppModel
     @ObservedObject private var operationStore: OperationStore
@@ -11,6 +14,8 @@ struct AppRootView: View {
     @FocusState private var focusedSidebarDestination: AppDestination?
     @State private var libraryQuery = ""
     @State private var librarySearchFocusRequest: UUID?
+    @State private var discoverScope = DiscoverSearchScope.all
+    @State private var discoverQuery = ""
 
     init(model: AppModel, updateController: ApplicationUpdateController) {
         self.init(model: model, updateController: updateController, uninstall: LibraryUninstallModel(model: model))
@@ -19,6 +24,9 @@ struct AppRootView: View {
     init(model: AppModel, updateController: ApplicationUpdateController, uninstall: LibraryUninstallModel) {
         self.model = model
         _uninstall = StateObject(wrappedValue: uninstall)
+        _discoverSearch = StateObject(wrappedValue: DiscoverSearchModel(dependencies: .live(service: model.service), operationStore: model.operationStore))
+        _discoverInstallation = StateObject(wrappedValue: DiscoverInstallationModel(model: model))
+        _discoverUpdates = StateObject(wrappedValue: PackageUpdatesModel(model: model))
         self.updateController = updateController
         operationStore = model.operationStore
     }
@@ -147,6 +155,11 @@ struct AppRootView: View {
                 librarySearchFocusRequest = nil
             }
         }
+        .onChange(of: model.discoverContext) { _, context in
+            if discoverSearch.resultContext != nil, discoverSearch.resultContext?.npm != context.npm {
+                discoverSearch.invalidate()
+            }
+        }
         .task { await model.refreshOnLaunch() }
         .alert("Operation in Progress", isPresented: Binding(
             get: { operationStore.terminationBlockedNotice },
@@ -232,7 +245,15 @@ struct AppRootView: View {
         case .library:
             LibraryView(model: model, uninstall: uninstall, query: $libraryQuery, searchFocusRequest: $librarySearchFocusRequest)
         case .discover:
-            DiscoverView(model: model, uninstall: uninstall)
+            DiscoverView(
+                model: model,
+                uninstall: uninstall,
+                search: discoverSearch,
+                installation: discoverInstallation,
+                updates: discoverUpdates,
+                scope: $discoverScope,
+                query: $discoverQuery
+            )
         case .tools:
             ToolsView(model: model)
         case .maintenance:

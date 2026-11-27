@@ -258,7 +258,8 @@ private struct TerminalApplyConfirmation: View {
         MaintenanceModalFrame(
             title: LocalizedStringResource("Apply Terminal Changes"),
             systemImage: "terminal.fill",
-            tint: .blue
+            tint: .blue,
+            width: 440
         ) {
             if isRunning {
                 Text("Running").foregroundStyle(.secondary)
@@ -298,12 +299,14 @@ private struct TerminalApplyConfirmation: View {
                     Label { Text(ActivityItemReason.stateUnavailable.message) } icon: {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 4)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 10) {
                     Text("Back up .zshrc, update its managed plugin and theme sections, and check syntax. The login shell stays unchanged.")
                         .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     MaintenanceDetailWell(maxHeight: 220) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(plan.plans) { change in

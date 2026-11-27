@@ -4,6 +4,7 @@ struct CatalogCardGrid: View {
     let states: [CatalogCardState]
     var minimumCardWidth: CGFloat = 260
     var updateTargets: [CatalogCardState] = []
+    var activeOperations: [BatchItem: BatchOperation] = [:]
     var isActionEnabled = true
     var isUninstallEnabled: Bool? = nil
     var isItemActionEnabled: (CatalogCardState) -> Bool = { _ in true }
@@ -22,6 +23,7 @@ struct CatalogCardGrid: View {
                 let showsBottomDivider = index + columnCount < states.count
                 let itemEnabled = isItemActionEnabled(state)
                 CatalogCardView(state: state, updateTarget: target,
+                                activeOperation: activeOperations[state.batchItem],
                                 isActionEnabled: isActionEnabled && itemEnabled,
                                 isUninstallEnabled: (isUninstallEnabled ?? isActionEnabled) && itemEnabled,
                                 showsBottomDivider: showsBottomDivider) { selectedAction in
@@ -43,6 +45,7 @@ struct CatalogCardGrid: View {
 struct CatalogCardView: View {
     let state: CatalogCardState
     var updateTarget: CatalogCardState? = nil
+    var activeOperation: BatchOperation? = nil
     var isActionEnabled = true
     var isUninstallEnabled = true
     var showsBottomDivider = true
@@ -108,10 +111,26 @@ struct CatalogCardView: View {
             } else {
                 ActivityTaskStage.executing.title
             }
-            CatalogCircularProgressView(tint: state.primaryAction == .update ? .green : .accentColor)
+            CatalogCircularProgressView(tint: progressTint)
                 .accessibilityLabel(Text(label))
         } else {
             controls
+        }
+    }
+
+    private var progressTint: Color {
+        if let activeOperation {
+            switch activeOperation {
+            case .uninstall: return .red
+            case .update: return .green
+            case .install: return .accentColor
+            }
+        }
+        if state.progress == .verifying { return .accentColor }
+        return switch state.primaryAction {
+        case .update: .green
+        case .uninstall: updateTarget != nil && state.versionStatus == .behind ? .green : .red
+        case .install, nil: .accentColor
         }
     }
 
@@ -189,8 +208,10 @@ struct CatalogCardView: View {
 }
 
 /// Compact App Store-style indeterminate circular spinner shown in place of card buttons while queued or running.
-private struct CatalogCircularProgressView: View {
+struct CatalogCircularProgressView: View {
     var tint: Color = .accentColor
+    var size: CGFloat = 22
+    var horizontalPadding: CGFloat = 6
     @State private var isSpinning = false
 
     var body: some View {
@@ -203,8 +224,8 @@ private struct CatalogCircularProgressView: View {
                 .rotationEffect(.degrees(isSpinning ? 360 : 0))
                 .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: isSpinning)
         }
-        .frame(width: 22, height: 22)
-        .padding(.horizontal, 6)
+        .frame(width: size, height: size)
+        .padding(.horizontal, horizontalPadding)
         .onAppear { isSpinning = true }
     }
 }

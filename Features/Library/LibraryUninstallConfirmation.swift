@@ -163,9 +163,7 @@ struct LibraryUninstallConfirmation: View {
                     HStack(alignment: .center, spacing: 12) {
                         Text(item.displayIdentifier).textSelection(.enabled)
                         Spacer(minLength: 0)
-                        if uninstall.isExecuting {
-                            ProgressView().controlSize(.small)
-                        } else if uninstall.hasFinished {
+                        if uninstall.hasFinished {
                             if uninstall.error == nil && uninstall.result?.outcome.status == .succeeded {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundStyle(.green)

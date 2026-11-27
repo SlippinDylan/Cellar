@@ -5,21 +5,31 @@ struct DiscoverView: View {
     @ObservedObject private var coordinator: BatchOperationCoordinator
     @ObservedObject private var operationStore: OperationStore
     @ObservedObject private var uninstall: LibraryUninstallModel
-    @StateObject private var search: DiscoverSearchModel
-    @StateObject private var installation: DiscoverInstallationModel
-    @StateObject private var updates: PackageUpdatesModel
-    @State private var scope = DiscoverSearchScope.all
-    @State private var query = ""
+    @ObservedObject private var search: DiscoverSearchModel
+    @ObservedObject private var installation: DiscoverInstallationModel
+    @ObservedObject private var updates: PackageUpdatesModel
+    @Binding private var scope: DiscoverSearchScope
+    @Binding private var query: String
     @State private var searchFocusRequest: UUID?
 
-    init(model: AppModel, uninstall: LibraryUninstallModel) {
+    init(
+        model: AppModel,
+        uninstall: LibraryUninstallModel,
+        search: DiscoverSearchModel,
+        installation: DiscoverInstallationModel,
+        updates: PackageUpdatesModel,
+        scope: Binding<DiscoverSearchScope>,
+        query: Binding<String>
+    ) {
         self.model = model
         coordinator = model.batchCoordinator
         operationStore = model.operationStore
         self.uninstall = uninstall
-        _search = StateObject(wrappedValue: DiscoverSearchModel(dependencies: .live(service: model.service), operationStore: model.operationStore))
-        _installation = StateObject(wrappedValue: DiscoverInstallationModel(model: model))
-        _updates = StateObject(wrappedValue: PackageUpdatesModel(model: model))
+        self.search = search
+        self.installation = installation
+        self.updates = updates
+        _scope = scope
+        _query = query
     }
 
     var body: some View {
@@ -34,6 +44,7 @@ struct DiscoverView: View {
                         let updateTargets = LibraryCatalog.updateTargets(for: visibleCards, from: model.updateCards)
                             .filter { model.canMutatePackages(in: $0.batchItem.scope) }
                         CatalogCardGrid(states: visibleCards, minimumCardWidth: 360, updateTargets: updateTargets,
+                                        activeOperations: activeOperations,
                                         isActionEnabled: uninstall.presentedItem == nil && !model.isRefreshing,
                                         isUninstallEnabled: !model.isBusy && !installation.isQueueActive && !updates.isQueueActive && uninstall.presentedItem == nil,
                                         isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, selectedAction in
@@ -69,27 +80,49 @@ struct DiscoverView: View {
                 search.invalidate()
             }
         }
-        .onChange(of: model.discoverContext) { _, context in
-            // Mutation reconciliation updates cards from local state; environment changes invalidate cached npm search.
-            if search.resultContext != nil, search.resultContext?.npm != context.npm { search.invalidate() }
-        }
         .onDisappear {
-            search.invalidate()
-            installation.cancelPendingQueue()
-            updates.cancelPendingQueue()
+            search.cancelInFlightSearch()
         }
         .task(id: model.refreshedAt) {
             if model.checkedOutdatedRefresh != model.refreshedAt { await model.refreshHomeBackground(after: model.refreshedAt) }
         }
     }
 
+    private var activeOperations: [BatchItem: BatchOperation] {
+        var map: [BatchItem: BatchOperation] = [:]
+        if uninstall.isExecuting, let item = uninstall.presentedItem {
+            map[item] = .uninstall
+        }
+        for intent in coordinator.activeIntents {
+            for item in intent.items {
+                map[item] = intent.operation
+            }
+        }
+        for item in installation.queuedItems { map[item] = .install }
+        if let active = installation.activeItem { map[active] = .install }
+        for item in updates.queuedItems { map[item] = .update }
+        if let active = updates.activeItem { map[active] = .update }
+        return map
+    }
+
     private var cards: [CatalogCardState] {
         let queued = Set(installation.queuedItems).union(updates.queuedItems)
         let activeItems = Set([installation.activeItem, updates.activeItem].compactMap { $0 })
+        let inventoryAvailable = model.homebrew?.snapshot?.sectionErrors[.packages] == nil
+        let refreshedAt = model.homebrewPackagesRefreshedAt ?? .distantPast
         return search.results(for: scope).map { result in
+            let homebrewInventoryIsAuthoritative: Bool
+            if case .homebrew(let package) = result {
+                let providerScope: CatalogProviderScope = package.identity.kind == .formula ? .homebrewFormula : .homebrewCask
+                let scopeSearchedAt = search.searchedAtByScope[providerScope] ?? .distantPast
+                homebrewInventoryIsAuthoritative = inventoryAvailable && refreshedAt >= scopeSearchedAt
+            } else {
+                homebrewInventoryIsAuthoritative = true
+            }
             let base = result.card(homebrew: model.homebrew?.snapshot, node: model.node, activeIntent: coordinator.activeIntent,
                                    running: coordinator.runningItem, canInstall: result.identity.providerScope == .npm ? model.discoverContext.npm != nil : model.canMutatePackages(in: .homebrew(.formula)),
-                                   stage: operationStore.currentOperation?.context.stage)
+                                   stage: operationStore.currentOperation?.context.stage,
+                                   homebrewInventoryIsAuthoritative: homebrewInventoryIsAuthoritative)
             let progress: CatalogCardProgress = if base.progress != .idle {
                 base.progress
             } else if activeItems.contains(base.batchItem) {

@@ -245,20 +245,21 @@ private struct NodeDirectActionSheet: View {
         MaintenanceModalFrame(
             title: request.action == .installNode ? LocalizedStringResource("Install Node Version") : LocalizedStringResource("Use for Cellar"),
             systemImage: "shippingbox.fill",
-            tint: .green
+            tint: .green,
+            width: 420
         ) {
             Text(verbatim: request.subject).foregroundStyle(.secondary)
         } content: {
             if isRunning {
                 MaintenanceLoadingState(title: LocalizedStringResource("Running"))
             } else {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: errorMessage == nil ? .center : .top, spacing: 10) {
                     Image(systemName: errorMessage == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .font(.title2)
+                        .font(.title3)
                         .foregroundStyle(errorMessage == nil ? .green : .orange)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(errorMessage == nil ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
-                            .font(.headline)
+                        Text(errorMessage == nil ? LocalizedStringResource("All actions finished successfully.") : LocalizedStringResource("Operation Failed"))
+                            .font(.body.weight(.medium))
                         if let errorMessage {
                             Text(verbatim: errorMessage)
                                 .font(.callout)
@@ -269,7 +270,7 @@ private struct NodeDirectActionSheet: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                .padding(.vertical, 4)
             }
         } footer: {
             Spacer()
@@ -309,7 +310,8 @@ private struct NodeHomebrewInstallSheet: View {
         MaintenanceModalFrame(
             title: LocalizedStringResource("Install Node with Homebrew"),
             systemImage: "shippingbox.fill",
-            tint: .green
+            tint: .green,
+            width: 420
         ) {
             if isRunning {
                 Text("Running").foregroundStyle(.secondary)
@@ -321,13 +323,13 @@ private struct NodeHomebrewInstallSheet: View {
             if isRunning {
                 MaintenanceLoadingState(title: LocalizedStringResource("Installing Node.js with Homebrew…"))
             } else {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: succeeded ? .center : .top, spacing: 10) {
                     Image(systemName: succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .font(.title2)
+                        .font(.title3)
                         .foregroundStyle(succeeded ? .green : .orange)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(succeeded ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
-                            .font(.headline)
+                        Text(succeeded ? LocalizedStringResource("All actions finished successfully.") : LocalizedStringResource("Operation Failed"))
+                            .font(.body.weight(.medium))
                         if succeeded, let installedVersion {
                             Text("Node \(installedVersion)")
                                 .font(.callout)
@@ -342,7 +344,7 @@ private struct NodeHomebrewInstallSheet: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                .padding(.vertical, 4)
             }
         } footer: {
             Spacer()

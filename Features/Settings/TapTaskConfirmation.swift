@@ -13,7 +13,8 @@ struct TapTaskConfirmation: View {
         MaintenanceModalFrame(
             title: plan.action == .addTap ? LocalizedStringResource("Add Homebrew Tap") : LocalizedStringResource("Remove Homebrew Tap"),
             systemImage: plan.action == .addTap ? "plus.circle.fill" : "minus.circle.fill",
-            tint: plan.action == .removeTap ? .red : .orange
+            tint: plan.action == .removeTap ? .red : .orange,
+            width: 440
         ) {
             if isRunning {
                 Text("Running").foregroundStyle(.secondary)
@@ -27,20 +28,21 @@ struct TapTaskConfirmation: View {
             if isRunning {
                 MaintenanceLoadingState(title: LocalizedStringResource("Running"))
             } else if hasFinished {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: errorMessage == nil ? .center : .top, spacing: 10) {
                     Image(systemName: errorMessage == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .font(.title2)
+                        .font(.title3)
                         .foregroundStyle(errorMessage == nil ? .green : .orange)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(errorMessage == nil ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
-                            .font(.headline)
+                        Text(errorMessage == nil ? LocalizedStringResource("All actions finished successfully.") : LocalizedStringResource("Operation Failed"))
+                            .font(.body.weight(.medium))
                         if let errorMessage {
                             Text(verbatim: errorMessage).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                .padding(.vertical, 4)
             } else {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(plan.action == .addTap ? LocalizedStringResource("Homebrew will download this Tap’s metadata and use it as a software source.") : LocalizedStringResource("Remove this Tap’s metadata. Installed software is checked again before removal."))

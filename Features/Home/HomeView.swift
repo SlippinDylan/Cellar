@@ -393,7 +393,8 @@ private struct HomeSetupSheet: View {
         MaintenanceModalFrame(
             title: title,
             systemImage: systemImage,
-            tint: tint
+            tint: tint,
+            width: 420
         ) {
             if isRunning {
                 Text("Running").foregroundStyle(.secondary)
@@ -405,13 +406,13 @@ private struct HomeSetupSheet: View {
             if isRunning {
                 MaintenanceLoadingState(title: loadingTitle)
             } else if let outcome {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: 10) {
                     Image(systemName: outcome.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .font(.title2)
+                        .font(.title3)
                         .foregroundStyle(outcome.succeeded ? .green : .orange)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(outcome.succeeded ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
-                            .font(.headline)
+                        Text(outcome.succeeded ? LocalizedStringResource("All actions finished successfully.") : LocalizedStringResource("Operation Failed"))
+                            .font(.body.weight(.medium))
                         switch outcome {
                         case .success(let detail), .failure(let detail):
                             Text(detail)
@@ -428,7 +429,7 @@ private struct HomeSetupSheet: View {
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                .padding(.vertical, 4)
             }
         } footer: {
             Spacer()
@@ -545,6 +546,7 @@ extension HomeSetupFailure {
         case .homebrew(let failure):
             switch failure {
             case .releaseMetadata: LocalizedStringResource("The official Homebrew installer release could not be verified.")
+            case .rateLimited: LocalizedStringResource("GitHub API rate limit reached while checking the official Homebrew installer. Wait a moment or switch network, then try again.")
             case .digestMissing: LocalizedStringResource("The official release does not provide the required SHA-256. The installer was not opened.")
             case .digestInvalid: LocalizedStringResource("The official SHA-256 is invalid. The installer was not opened.")
             case .digestMismatch: LocalizedStringResource("The downloaded installer does not match the official SHA-256. The installer was not opened.")

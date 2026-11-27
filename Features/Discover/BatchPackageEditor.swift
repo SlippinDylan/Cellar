@@ -25,6 +25,7 @@ struct BatchPackageEditor: NSViewRepresentable {
         editor.textColor = .labelColor
         editor.drawsBackground = false
         editor.textContainerInset = NSSize(width: 4, height: 8)
+        editor.minSize = NSSize(width: 0, height: 184)
         editor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         editor.isVerticallyResizable = true
         editor.autoresizingMask = [.width]
@@ -37,6 +38,7 @@ struct BatchPackageEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        scroll.contentView.copiesOnScroll = false
         scroll.documentView = editor
         let ruler = PackageLineNumberRuler(scrollView: scroll, editor: editor)
         scroll.verticalRulerView = ruler
@@ -52,9 +54,15 @@ struct BatchPackageEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.text = $text
         guard let editor = scroll.documentView as? NSTextView else { return }
+        let minimumHeight = max(scroll.contentSize.height, 184)
+        if editor.minSize.height != minimumHeight {
+            editor.minSize = NSSize(width: 0, height: minimumHeight)
+        }
         editor.isEditable = isEditable
         if editor.string != text {
             editor.string = text
+            editor.needsDisplay = true
+            scroll.contentView.needsDisplay = true
             context.coordinator.ruler?.updateLines()
         }
     }
@@ -71,6 +79,8 @@ struct BatchPackageEditor: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard let editor = notification.object as? NSTextView else { return }
             text.wrappedValue = editor.string
+            editor.needsDisplay = true
+            editor.enclosingScrollView?.contentView.needsDisplay = true
             ruler?.updateLines()
         }
         func textViewDidChangeSelection(_ notification: Notification) { ruler?.needsDisplay = true }

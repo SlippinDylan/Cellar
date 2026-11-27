@@ -12,7 +12,8 @@ struct UpdatesConfirmationSheet: View {
         MaintenanceModalFrame(
             title: LocalizedStringResource("Update All in This Scope"),
             systemImage: "arrow.up.circle.fill",
-            tint: .green
+            tint: .green,
+            width: 540
         ) {
             if updates.isSubmitting {
                 Text("Running").foregroundStyle(.secondary)
@@ -85,38 +86,29 @@ struct UpdatesResultView: View {
     let result: BatchUpdateExecutionResult
     var dismiss: (() -> Void)? = nil
     var body: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                if result.groups.contains(where: { $0.refreshStatus == .failed }) {
-                    Label("Updates finished, but an environment could not be refreshed. Item results are retained. Use Refresh to check the current state.", systemImage: "exclamationmark.circle")
-                }
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ForEach(Array(result.groups.enumerated()), id: \.offset) { _, group in
-                            Text(group.outcome.intent.scope.updatesTitle).font(.headline)
-                            ForEach(group.outcome.itemOutcomes, id: \.item) { outcome in
-                                ViewThatFits(in: .horizontal) {
-                                    HStack { Text(outcome.item.displayIdentifier); Spacer(); Text(outcome.status.updatesTitle) }
-                                    VStack(alignment: .leading) { Text(outcome.item.displayIdentifier); Text(outcome.status.updatesTitle) }
-                                }.accessibilityElement(children: .combine)
-                                if let reason = outcome.reason { Text(reason.message).foregroundStyle(.secondary) }
-                            }
+        VStack(alignment: .leading, spacing: 10) {
+            if result.groups.contains(where: { $0.refreshStatus == .failed }) {
+                Label("Updates finished, but an environment could not be refreshed. Item results are retained. Use Refresh to check the current state.", systemImage: "exclamationmark.circle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            MaintenanceDetailWell(maxHeight: 240) {
+                VStack(alignment: .leading, spacing: 12) {
+                    ForEach(Array(result.groups.enumerated()), id: \.offset) { _, group in
+                        Text(group.outcome.intent.scope.updatesTitle).font(.headline)
+                        ForEach(group.outcome.itemOutcomes, id: \.item) { outcome in
+                            ViewThatFits(in: .horizontal) {
+                                HStack { Text(outcome.item.displayIdentifier); Spacer(); Text(outcome.status.updatesTitle).foregroundStyle(.secondary) }
+                                VStack(alignment: .leading) { Text(outcome.item.displayIdentifier); Text(outcome.status.updatesTitle).foregroundStyle(.secondary) }
+                            }.accessibilityElement(children: .combine)
+                            if let reason = outcome.reason { Text(reason.message).font(.callout).foregroundStyle(.secondary) }
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
-                }.frame(maxHeight: 200)
-            }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        } label: {
-            HStack {
-                Text("Update Results")
-                Spacer()
-                if let dismiss {
-                    Button("Dismiss Feedback", systemImage: "xmark", action: dismiss)
-                        .labelStyle(.iconOnly).buttonStyle(.plain)
-                        .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
-                        .help("Dismiss Feedback")
+                    }
                 }
+                .textSelection(.enabled)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 

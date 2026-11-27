@@ -1,6 +1,84 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "All actions finished successfully.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Alle Aktionen wurden erfolgreich abgeschlossen." } },
+        "en": { "stringUnit": { "state": "translated", "value": "All actions finished successfully." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Todas las acciones se completaron correctamente." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Toutes les actions se sont terminées avec succès." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "すべての処理が正常に完了しました。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "모든 작업이 성공적으로 완료되었습니다." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "所有操作均已成功完成。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "所有操作均已成功完成。" } }
+      }
+    },
+    "Download the official Oh My Zsh installer to %@. Keep the existing .zshrc and login shell; do not launch a new shell.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Das offizielle Oh-My-Zsh-Installationsprogramm nach %@ herunterladen. Die vorhandene .zshrc und Anmeldeshell beibehalten; keine neue Shell starten." } },
+        "en": { "stringUnit": { "state": "translated", "value": "Download the official Oh My Zsh installer to %@. Keep the existing .zshrc and login shell; do not launch a new shell." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Descargar el instalador oficial de Oh My Zsh en %@. Conservar el .zshrc existente y el shell de inicio de sesión; no iniciar un shell nuevo." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Télécharger le programme d’installation officiel d’Oh My Zsh dans %@. Conserver le .zshrc existant et le shell de connexion ; ne pas lancer de nouveau shell." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "公式の Oh My Zsh インストーラを %@ にダウンロードします。既存の .zshrc とログインシェルを保持し、新しいシェルは起動しません。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "공식 Oh My Zsh 설치 프로그램을 %@에 다운로드합니다. 기존 .zshrc와 로그인 셸을 유지하며 새 셸을 실행하지 않습니다." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "下载官方 Oh My Zsh 安装器到 %@，保留现有 .zshrc 和登录 Shell，不启动新 Shell。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "下載官方 Oh My Zsh 安裝程式至 %@，保留現有 .zshrc 和登入 Shell，不啟動新 Shell。" } }
+      }
+    },
+    "GitHub API rate limit reached while checking the official Homebrew installer. Wait a moment or switch network, then try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Das GitHub-API-Ratenlimit wurde beim Prüfen des offiziellen Homebrew-Installationsprogramms erreicht. Warten Sie kurz oder wechseln Sie das Netzwerk und versuchen Sie es erneut." } },
+        "en": { "stringUnit": { "state": "translated", "value": "GitHub API rate limit reached while checking the official Homebrew installer. Wait a moment or switch network, then try again." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Se alcanzó el límite de solicitudes de la API de GitHub al verificar el instalador oficial de Homebrew. Espera un momento o cambia de red e inténtalo de nuevo." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "La limite de requêtes de l’API GitHub a été atteinte lors de la vérification du programme d’installation officiel de Homebrew. Patientez un instant ou changez de réseau, puis réessayez." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "公式 Homebrew インストーラの確認中に GitHub API のレート制限に達しました。しばらく待つかネットワークを切り替えてもう一度お試しください。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "공식 Homebrew 설치 프로그램을 확인하는 동안 GitHub API 요청 한도에 도달했습니다. 잠시 기다리거나 네트워크를 전환한 뒤 다시 시도하세요." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "检查官方 Homebrew 安装器时触发了 GitHub API 速率限制，请稍等片刻或切换网络后重试。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "檢查官方 Homebrew 安裝程式時觸發了 GitHub API 速率限制，請稍候或切換網路後重試。" } }
+      }
+    },
+    "Installing…": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Installieren…" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Installing…" } },
+        "es": { "stringUnit": { "state": "translated", "value": "Instalando…" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Installation…" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "インストール中…" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "설치 중…" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在安装…" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "正在安裝…" } }
+      }
+    },
+    "Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into %@.": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Speichert ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), bereinigt veraltete zcompdump-Caches und verschiebt ältere Backups nach %@." } },
+        "en": { "stringUnit": { "state": "translated", "value": "Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into %@." } },
+        "es": { "stringUnit": { "state": "translated", "value": "Guarda ZSH_COMPDUMP en ~/.zshenv (~/.cache/zsh), limpia las cachés antiguas de zcompdump y mueve las copias de seguridad anteriores a %@." } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Enregistre ZSH_COMPDUMP dans ~/.zshenv (~/.cache/zsh), nettoie les anciens caches zcompdump et déplace les sauvegardes historiques vers %@." } },
+        "ja": { "stringUnit": { "state": "translated", "value": "ZSH_COMPDUMP を ~/.zshenv（~/.cache/zsh）に設定し、古い zcompdump キャッシュを削除して、過去のバックアップを %@ へ移動します。" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "ZSH_COMPDUMP를 ~/.zshenv(~/.cache/zsh)에 저장하고, 오래된 zcompdump 캐시를 정리하며, 이전 백업을 %@로 이동합니다." } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "将 ZSH_COMPDUMP 配置写入 ~/.zshenv（指向 ~/.cache/zsh），清理旧位置的 zcompdump 缓存，并将历史备份移至 %@。" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "將 ZSH_COMPDUMP 設定寫入 ~/.zshenv（指向 ~/.cache/zsh），清理舊位置的 zcompdump 快取，並將歷史備份移至 %@。" } }
+      }
+    },
+    "Unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "de": { "stringUnit": { "state": "translated", "value": "Nicht verfügbar" } },
+        "en": { "stringUnit": { "state": "translated", "value": "Unavailable" } },
+        "es": { "stringUnit": { "state": "translated", "value": "No disponible" } },
+        "fr": { "stringUnit": { "state": "translated", "value": "Indisponible" } },
+        "ja": { "stringUnit": { "state": "translated", "value": "利用不可" } },
+        "ko": { "stringUnit": { "state": "translated", "value": "사용 불가" } },
+        "zh-Hans": { "stringUnit": { "state": "translated", "value": "不可用" } },
+        "zh-Hant": { "stringUnit": { "state": "translated", "value": "無法使用" } }
+      }
+    },
     "Cannot quit while a task is running. Wait for it to finish, then try again.": {
       "localizations": {
         "de": {

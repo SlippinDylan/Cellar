@@ -22,7 +22,8 @@ struct HomebrewHealthSheet: View {
         MaintenanceModalFrame(
             title: LocalizedStringResource("Homebrew Health"),
             systemImage: "stethoscope.circle.fill",
-            tint: .orange
+            tint: .orange,
+            width: 540
         ) {
             if isChecking {
                 Text("Checking Homebrew…").foregroundStyle(.secondary)
@@ -139,7 +140,8 @@ struct NodeMaintenanceSheet: View {
         MaintenanceModalFrame(
             title: action.title,
             systemImage: action.symbolName,
-            tint: action.tint
+            tint: action.tint,
+            width: 540
         ) {
             switch phase {
             case .preparing:

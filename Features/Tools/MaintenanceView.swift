@@ -181,13 +181,13 @@ struct MaintenanceLoadingState: View {
     let title: LocalizedStringResource
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             ProgressView()
             Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, minHeight: 140)
+        .frame(maxWidth: .infinity, minHeight: 72)
     }
 }
 
@@ -195,6 +195,7 @@ struct MaintenanceModalFrame<Subtitle: View, Content: View, Footer: View>: View 
     let title: LocalizedStringResource
     let systemImage: String
     let tint: Color
+    var width: CGFloat = 460
     @ViewBuilder let subtitle: Subtitle
     @ViewBuilder let content: Content
     @ViewBuilder let footer: Footer
@@ -215,13 +216,12 @@ struct MaintenanceModalFrame<Subtitle: View, Content: View, Footer: View>: View 
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
-            .frame(minHeight: 60)
 
             Divider()
 
             content
                 .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+                .padding(.vertical, 14)
 
             Divider()
 
@@ -229,27 +229,40 @@ struct MaintenanceModalFrame<Subtitle: View, Content: View, Footer: View>: View 
                 footer
             }
             .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .frame(minHeight: 60)
+            .padding(.vertical, 10)
             .buttonStyle(.glass)
             .buttonBorderShape(.capsule)
             .controlSize(.large)
         }
-        .constrainedSheetWidth(560)
+        .constrainedSheetWidth(width)
     }
 }
 
 struct MaintenanceDetailWell<Content: View>: View {
     var maxHeight: CGFloat = 260
     @ViewBuilder let content: Content
+    @State private var measuredHeight: CGFloat?
 
     var body: some View {
+        let boundedHeight = measuredHeight.map { min($0, maxHeight) }
+        let overflows = measuredHeight.map { $0 > maxHeight } ?? false
+
         ScrollView {
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
+                .padding(12)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { height in
+                    if measuredHeight != height {
+                        measuredHeight = height
+                    }
+                }
         }
-        .frame(minHeight: 110, maxHeight: maxHeight)
+        .scrollDisabled(!overflows)
+        .scrollIndicators(overflows ? .automatic : .hidden)
+        .frame(height: boundedHeight)
+        .frame(idealHeight: boundedHeight ?? maxHeight, maxHeight: maxHeight)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .overlay {

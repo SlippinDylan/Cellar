@@ -124,6 +124,7 @@ struct LibraryView: View {
 
     private func catalogGrid(_ states: [CatalogCardState], updateTargets: [CatalogCardState]) -> some View {
         CatalogCardGrid(states: states, minimumCardWidth: 360, updateTargets: updateTargets,
+                        activeOperations: activeOperations,
                         isActionEnabled: updates.confirmation == nil && uninstall.presentedItem == nil && !model.isRefreshing,
                         isUninstallEnabled: canPerformAction,
                         isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, action in
@@ -133,6 +134,21 @@ struct LibraryView: View {
             case .install: preconditionFailure("The installed library does not offer installation")
             }
         }
+    }
+
+    private var activeOperations: [BatchItem: BatchOperation] {
+        var map: [BatchItem: BatchOperation] = [:]
+        if uninstall.isExecuting, let item = uninstall.presentedItem {
+            map[item] = .uninstall
+        }
+        for intent in coordinator.activeIntents {
+            for item in intent.items {
+                map[item] = intent.operation
+            }
+        }
+        for item in updates.queuedItems { map[item] = .update }
+        if let active = updates.activeItem { map[active] = .update }
+        return map
     }
 
     private var canPerformAction: Bool {

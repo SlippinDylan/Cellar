@@ -13,7 +13,8 @@ struct ShellTaskConfirmation: View {
         MaintenanceModalFrame(
             title: title,
             systemImage: systemImage,
-            tint: .blue
+            tint: .blue,
+            width: 440
         ) {
             if isRunning {
                 Text("Running").foregroundStyle(.secondary)
@@ -27,49 +28,59 @@ struct ShellTaskConfirmation: View {
             if isRunning {
                 MaintenanceLoadingState(title: runningMessage)
             } else if hasFinished {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: errorMessage == nil ? .center : .top, spacing: 10) {
                     Image(systemName: errorMessage == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .font(.title2)
+                        .font(.title3)
                         .foregroundStyle(errorMessage == nil ? .green : .orange)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(errorMessage == nil ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
-                            .font(.headline)
+                        Text(errorMessage == nil ? LocalizedStringResource("All actions finished successfully.") : LocalizedStringResource("Operation Failed"))
+                            .font(.body.weight(.medium))
                         if let errorMessage {
                             Text(verbatim: errorMessage)
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
                     Spacer(minLength: 0)
                 }
-                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                .padding(.vertical, 4)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
+                let targetPath = plan.payload.targetPath
+                VStack(alignment: .leading, spacing: 10) {
                     if plan.request.action == .installOhMyZsh {
-                        Text("Download the official Oh My Zsh installer. Keep the existing .zshrc and login shell; do not launch a new shell.")
+                        Text("Download the official Oh My Zsh installer to \(targetPath). Keep the existing .zshrc and login shell; do not launch a new shell.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
                     } else if plan.request.action == .tidy {
-                        Text("Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into ~/.zsh/backups.")
+                        Text("Store ZSH_COMPDUMP in ~/.zshenv (~/.cache/zsh), clean stale zcompdump caches, and move historical backups into \(targetPath).")
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .textSelection(.enabled)
+                        if !plan.candidates.isEmpty {
+                            MaintenanceDetailWell(maxHeight: 200) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(plan.candidates, id: \.self) {
+                                        Text($0).font(.callout.monospaced()).textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
                     } else {
                         Text("Download this GitHub repository and enable the plugin. Back up .zshrc and validate its syntax.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
-                    }
-                    MaintenanceDetailWell(maxHeight: 200) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            if plan.request.action == .tidy {
-                                ForEach(plan.candidates, id: \.self) {
-                                    Text($0).font(.callout.monospaced()).textSelection(.enabled)
-                                }
-                            } else if plan.request.action != .installOhMyZsh {
+                            .fixedSize(horizontal: false, vertical: true)
+                        MaintenanceDetailWell(maxHeight: 200) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 Text(plan.request.subject).font(.callout.monospaced()).textSelection(.enabled)
-                            }
-                            LabeledContent("Target Path") {
-                                Text(plan.payload.targetPath).font(.callout.monospaced()).textSelection(.enabled)
+                                LabeledContent("Target Path") {
+                                    Text(plan.payload.targetPath).font(.callout.monospaced()).textSelection(.enabled)
+                                }
                             }
                         }
                     }

@@ -623,6 +623,182 @@ final class DiscoverTests: XCTestCase {
         model.homebrew = HomebrewStatus(executablePath: "/fixture/brew", version: "5.0.0", managerAvailable: true, snapshot: nil)
         return model
     }
+
+    func testHomebrewCardFlipsFromUninstallToInstallWhenRemovedFromLiveSnapshot() {
+        let cached = HomebrewPackage(
+            identity: .init(name: "itsycal", kind: .cask),
+            displayName: "Itsycal",
+            description: "Menu bar calendar",
+            homepage: nil,
+            installedVersions: ["0.29.0"],
+            currentVersion: "0.29.0",
+            tap: nil,
+            dependencies: [],
+            pinned: false,
+            deprecated: false,
+            disabled: false,
+            artifacts: []
+        )
+        let installedSnapshot = HomebrewSnapshot(
+            executablePath: "/fixture/brew",
+            version: "5.0.0",
+            configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]),
+            packages: [cached],
+            outdatedPackages: [],
+            taps: [],
+            sectionErrors: [:],
+            controlledPath: "",
+            commandLineToolsAvailable: true
+        )
+        let uninstalledSnapshot = HomebrewSnapshot(
+            executablePath: "/fixture/brew",
+            version: "5.0.0",
+            configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]),
+            packages: [],
+            outdatedPackages: [],
+            taps: [],
+            sectionErrors: [:],
+            controlledPath: "",
+            commandLineToolsAvailable: true
+        )
+        let result = DiscoverResult.homebrew(cached)
+        let before = result.card(homebrew: installedSnapshot, node: nil, activeIntent: nil, running: nil, canInstall: true)
+        XCTAssertEqual(before.primaryAction, .uninstall)
+        XCTAssertEqual(before.currentVersion, "0.29.0")
+
+        let after = result.card(homebrew: uninstalledSnapshot, node: nil, activeIntent: nil, running: nil, canInstall: true)
+        XCTAssertEqual(after.primaryAction, .install)
+        XCTAssertNil(after.currentVersion)
+
+        let erroredSnapshot = HomebrewSnapshot(
+            executablePath: "/fixture/brew",
+            version: "5.0.0",
+            configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]),
+            packages: [],
+            outdatedPackages: [],
+            taps: [],
+            sectionErrors: [.packages: "failed"],
+            controlledPath: "",
+            commandLineToolsAvailable: true
+        )
+        let erroredCard = result.card(homebrew: erroredSnapshot, node: nil, activeIntent: nil, running: nil, canInstall: true)
+        XCTAssertEqual(erroredCard.primaryAction, .uninstall)
+        XCTAssertEqual(erroredCard.currentVersion, "0.29.0")
+
+        let staleInventoryCard = result.card(homebrew: uninstalledSnapshot, node: nil, activeIntent: nil, running: nil, canInstall: true, homebrewInventoryIsAuthoritative: false)
+        XCTAssertEqual(staleInventoryCard.primaryAction, .uninstall)
+        XCTAssertEqual(staleInventoryCard.currentVersion, "0.29.0")
+
+        let freshUninstalledSearch = DiscoverResult.homebrew(HomebrewPackage(
+            identity: .init(name: "itsycal", kind: .cask),
+            displayName: "Itsycal",
+            description: "Menu bar calendar",
+            homepage: nil,
+            installedVersions: [],
+            currentVersion: "0.29.0",
+            tap: nil,
+            dependencies: [],
+            pinned: false,
+            deprecated: false,
+            disabled: false,
+            artifacts: []
+        ))
+        let externallyRemovedCard = freshUninstalledSearch.card(
+            homebrew: installedSnapshot,
+            node: nil,
+            activeIntent: nil,
+            running: nil,
+            canInstall: true,
+            homebrewInventoryIsAuthoritative: false
+        )
+        XCTAssertEqual(externallyRemovedCard.primaryAction, .install)
+        XCTAssertNil(externallyRemovedCard.currentVersion)
+    }
+
+    func testCancelInFlightSearchStopsBackgroundScopesWhileRetainingCompletedResults() async {
+        let npmStarted = expectation(description: "npm scope finished")
+        let formulaBlocking = expectation(description: "formula search blocked")
+        let gate = DeferredDiscoverSearch { formulaBlocking.fulfill() }
+        let dependencies = DiscoverSearchDependencies(
+            homebrew: { query, kind, _, _ in
+                if kind == .formula {
+                    return .init(packages: await gate.search("old", kind: kind), failedDetailCount: 0)
+                }
+                return .init(packages: [DiscoverSearchFixture.package(query, kind: kind)], failedDetailCount: 0)
+            },
+            npm: { query, context, _ in
+                npmStarted.fulfill()
+                return [.init(identity: .init(name: query, environment: context.environment), version: "1.0.0",
+                              description: nil, websiteURL: nil, registryURL: context.registryURL)]
+            }
+        )
+        let model = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
+        let context = DiscoverContext(homebrewAvailable: true, npm: .init(environment: environment, registryURL: CatalogWebsites.npmRegistry))
+        let searchTask = Task { await model.searchGlobally("ripgrep", preferredScope: .npm, context: context) }
+        await fulfillment(of: [npmStarted, formulaBlocking], timeout: 3)
+        for _ in 0..<20 where model.results(for: .npm).isEmpty {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        XCTAssertEqual(model.results(for: .npm).count, 1)
+
+        model.cancelInFlightSearch()
+        await gate.finishOld()
+        await searchTask.value
+
+        XCTAssertEqual(model.state(for: .npm, context: context), .available)
+        XCTAssertEqual(model.results(for: .npm).count, 1)
+        XCTAssertEqual(model.state(for: .homebrewFormula, context: context), .cancelled)
+    }
+
+    func testPreExecutionCancellationDoesNotLeaveStaleLoadingScopes() async {
+        let model = DiscoverSearchModel(
+            dependencies: DiscoverSearchDependencies(
+                homebrew: { query, kind, _, _ in .init(packages: [DiscoverSearchFixture.package(query, kind: kind)], failedDetailCount: 0) },
+                npm: { _, _, _ in [] }
+            ),
+            operationStore: OperationStore()
+        )
+        let context = DiscoverContext(homebrewAvailable: true, npm: nil)
+        let searchTask = Task { await model.searchGlobally("ripgrep", preferredScope: .all, context: context) }
+        // Cancel immediately before runGlobal starts executing on the main actor.
+        model.cancelInFlightSearch()
+        await searchTask.value
+
+        XCTAssertTrue(model.loadingScopes.isEmpty)
+        XCTAssertNotEqual(model.state(for: .all, context: context), .loading)
+    }
+
+    func testScopeTimestampsAreTrackedIndependentlyAcrossBackgroundSources() async throws {
+        let formulaDone = expectation(description: "formula finished first")
+        let gate = DeferredDiscoverSearch {}
+        let dependencies = DiscoverSearchDependencies(
+            homebrew: { query, kind, _, _ in
+                if kind == .formula {
+                    formulaDone.fulfill()
+                    return .init(packages: [DiscoverSearchFixture.package(query, kind: kind)], failedDetailCount: 0)
+                }
+                return .init(packages: await gate.search("old", kind: kind), failedDetailCount: 0)
+            },
+            npm: { _, _, _ in [] }
+        )
+        let model = DiscoverSearchModel(dependencies: dependencies, operationStore: OperationStore())
+        let context = DiscoverContext(homebrewAvailable: true, npm: nil)
+        let searchTask = Task { await model.searchGlobally("git", preferredScope: .homebrewFormula, context: context) }
+        await fulfillment(of: [formulaDone], timeout: 3)
+        for _ in 0..<20 where model.searchedAtByScope[.homebrewFormula] == nil {
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        let formulaTimestamp = try XCTUnwrap(model.searchedAtByScope[.homebrewFormula])
+        let midRefresh = Date()
+        try? await Task.sleep(for: .milliseconds(20))
+        await gate.finishOld()
+        await searchTask.value
+
+        let caskTimestamp = try XCTUnwrap(model.searchedAtByScope[.homebrewCask])
+        XCTAssertEqual(model.searchedAtByScope[.homebrewFormula], formulaTimestamp)
+        XCTAssertGreaterThan(caskTimestamp, midRefresh)
+        XCTAssertLessThanOrEqual(formulaTimestamp, midRefresh)
+    }
 }
 
 private actor DiscoverSearchFixture {

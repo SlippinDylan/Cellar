@@ -200,6 +200,65 @@ struct NodeActionPlanPayload: Decodable, Sendable {
     let globalRegistry: String?
 }
 
+extension NodeActionPlanPayload {
+    init(
+        action: String,
+        subject: String? = nil,
+        packageSpec: String? = nil,
+        packageName: String? = nil,
+        installedVersion: String? = nil,
+        targetVersion: String? = nil,
+        alreadyInstalled: Bool? = nil,
+        requiresConfirmation: Bool? = nil,
+        executeSupported: Bool? = nil,
+        logFileHint: String? = nil
+    ) {
+        self.action = action
+        self.subject = subject
+        value = nil
+        targetType = nil
+        self.packageSpec = packageSpec
+        self.packageName = packageName
+        self.installedVersion = installedVersion
+        self.targetVersion = targetVersion
+        self.alreadyInstalled = alreadyInstalled
+        self.requiresConfirmation = requiresConfirmation
+        self.executeSupported = executeSupported
+        externalWrite = nil
+        executable = nil
+        blockedReason = nil
+        self.logFileHint = logFileHint
+        paths = nil
+        planToken = nil
+        nvmAvailable = nil
+        normalizedVersion = nil
+        currentVersion = nil
+        defaultVersion = nil
+        defaultStatus = nil
+        versionDir = nil
+        versionDirExists = nil
+        versionDirSize = nil
+        globalPackageSummary = nil
+        protectedByCurrent = nil
+        protectedByDefault = nil
+        processOnly = nil
+        persistent = nil
+        requestedVersion = nil
+        resolvedVersion = nil
+        installUrl = nil
+        sha256 = nil
+        sha256Configured = nil
+        allowUnverified = nil
+        targetDir = nil
+        pathExists = nil
+        pathIsDirectory = nil
+        effectiveRegistry = nil
+        userRegistry = nil
+        projectRegistry = nil
+        globalRegistry = nil
+    }
+}
+
 struct NodeActionPlan: Identifiable, Sendable {
     let id: UUID
     let request: NodeActionRequest

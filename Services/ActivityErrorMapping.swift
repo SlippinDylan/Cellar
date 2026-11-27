@@ -17,7 +17,7 @@ extension ActivityItemReason {
         if let error = error as? URLError { self = error.code == .cancelled ? .cancelledByUser : .network; return }
         if let error = error as? HomebrewSetupError {
             self = switch error.failure {
-            case .releaseMetadata, .download: .network
+            case .releaseMetadata, .download, .rateLimited: .network
             case .temporaryFile: .permission
             case .installationInProgress, .commandLineToolsRequired: .unavailable
             case .installationTarget: .stateChanged

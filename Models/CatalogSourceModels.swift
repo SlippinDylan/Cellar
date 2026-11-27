@@ -58,6 +58,7 @@ struct NodeOnlineVersions: Equatable, Sendable {
 
 enum HomebrewSetupFailure: Error, Equatable, Sendable {
     case releaseMetadata
+    case rateLimited
     case digestMissing
     case digestInvalid
     case digestMismatch

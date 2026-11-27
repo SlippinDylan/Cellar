@@ -7,8 +7,16 @@ extension NodeManagerClient {
         }
         let validated = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
         let registry = action != .uninstallPackage ? try await packageRegistry(identity.name, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory) : nil
-        let plan = try await plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
-                                  environment: validated.environment)
+        let plan: NodeActionPlan
+        do {
+            plan = try await self.plan(.init(action: action, subject: identity.name), managerDirectory: managerDirectory,
+                                       environment: validated.environment)
+        } catch BridgeError.managerFailure(code: "package-state-unavailable", _) where action == .installPackage {
+            plan = try await synthesizedAbsentInstallPlan(for: .init(action: action, subject: identity.name),
+                                                          summary: validated.summary,
+                                                          environment: validated.environment,
+                                                          managerDirectory: managerDirectory)
+        }
         if action != .uninstallPackage {
             let final = try await validatedPackageEnvironment(identity.environment, managerDirectory: managerDirectory)
             guard try packageDestination(validated.summary) == packageDestination(final.summary),
@@ -36,7 +44,15 @@ extension NodeManagerClient {
               confirmed.confirmedInstallRegistry == (try await packageRegistry(confirmed.request.subject, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory))
         else { throw changed }
         // Read the same request so changes to a tag or latest cannot silently change the confirmed version.
-        let current = try await plan(confirmed.request, managerDirectory: managerDirectory, environment: validated.environment)
+        let current: NodeActionPlan
+        do {
+            current = try await plan(confirmed.request, managerDirectory: managerDirectory, environment: validated.environment)
+        } catch BridgeError.managerFailure(code: "package-state-unavailable", _) where confirmed.request.action == .installPackage {
+            current = try await synthesizedAbsentInstallPlan(for: confirmed.request,
+                                                             summary: validated.summary,
+                                                             environment: validated.environment,
+                                                             managerDirectory: managerDirectory)
+        }
         guard current.payload.packageName == confirmed.payload.packageName,
               current.payload.targetVersion == confirmed.payload.targetVersion,
               let target = confirmed.payload.targetVersion else { throw changed }
@@ -74,7 +90,17 @@ extension NodeManagerClient {
                   confirmed == (try packageDestination(validated.summary)),
                   plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: validated.summary, environment: validated.environment, managerDirectory: managerDirectory))
             else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
-            let currentPlan = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: validated.environment)
+            let currentPlan: NodeActionPlan
+            var usedAbsentInstallFallback = false
+            do {
+                currentPlan = try await self.plan(plan.request, managerDirectory: managerDirectory, environment: validated.environment)
+            } catch BridgeError.managerFailure(code: "package-state-unavailable", _) where plan.request.action == .installPackage {
+                currentPlan = try await synthesizedAbsentInstallPlan(for: plan.request,
+                                                                     summary: validated.summary,
+                                                                     environment: validated.environment,
+                                                                     managerDirectory: managerDirectory)
+                usedAbsentInstallFallback = true
+            }
             guard currentPlan.canExecute,
                   currentPlan.payload.packageName == plan.payload.packageName,
                   currentPlan.payload.targetVersion == plan.payload.targetVersion,
@@ -84,7 +110,20 @@ extension NodeManagerClient {
             guard confirmed == (try packageDestination(finalEnvironment.summary)),
                   plan.confirmedInstallRegistry == (try await packageRegistry(plan.request.subject, summary: finalEnvironment.summary, environment: finalEnvironment.environment, managerDirectory: managerDirectory))
             else { throw BridgeError.managerFailure(code: changedCode, detail: nil) }
-            let result = try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
+            let result: NodeOperationResult
+            if usedAbsentInstallFallback {
+                result = try await executeAbsentPackageInstall(plan, summary: finalEnvironment.summary,
+                                                               environment: finalEnvironment.environment,
+                                                               managerDirectory: managerDirectory)
+            } else {
+                do {
+                    result = try await execute(plan, managerDirectory: managerDirectory, environment: finalEnvironment.environment)
+                } catch BridgeError.managerFailure(code: "package-state-unavailable", _) where plan.request.action == .installPackage {
+                    result = try await executeAbsentPackageInstall(plan, summary: finalEnvironment.summary,
+                                                                   environment: finalEnvironment.environment,
+                                                                   managerDirectory: managerDirectory)
+                }
+            }
             return await verifyPackageWrite(result, plan: plan, context: environment, managerDirectory: managerDirectory)
         }
         return try await execute(plan, managerDirectory: managerDirectory, environment: validated.environment)
@@ -314,5 +353,150 @@ extension NodeManagerClient {
             }
         }
         return arguments
+    }
+
+    private func synthesizedAbsentInstallPlan(
+        for request: NodeActionRequest,
+        summary: NodeSummary,
+        environment: [String: String],
+        managerDirectory: URL
+    ) async throws -> NodeActionPlan {
+        guard request.action == .installPackage, DiscoverBatchInput.validNPMSpec(request.subject) else {
+            throw BridgeError.managerFailure(code: "package-state-unavailable", detail: nil)
+        }
+        let parsed = parseNPMPackageSpec(request.subject)
+        guard try await confirmNPMAbsent(packageName: parsed.name, summary: summary,
+                                          environment: environment, managerDirectory: managerDirectory) else {
+            throw BridgeError.managerFailure(code: "package-state-unavailable", detail: nil)
+        }
+        let targetVersion = try await resolveNPMInstallTargetVersion(spec: request.subject, summary: summary,
+                                                                     environment: environment, managerDirectory: managerDirectory)
+        return NodeActionPlan(
+            id: UUID(),
+            request: request,
+            payload: NodeActionPlanPayload(
+                action: NodeAction.installPackage.rawValue,
+                subject: request.subject,
+                packageSpec: request.subject,
+                packageName: parsed.name,
+                installedVersion: "",
+                targetVersion: targetVersion,
+                alreadyInstalled: false,
+                requiresConfirmation: true,
+                executeSupported: true
+            ),
+            generatedAt: Date()
+        )
+    }
+
+    private func executeAbsentPackageInstall(
+        _ plan: NodeActionPlan,
+        summary: NodeSummary,
+        environment: [String: String],
+        managerDirectory: URL
+    ) async throws -> NodeOperationResult {
+        guard plan.canExecute else {
+            throw BridgeError.managerFailure(code: plan.payload.blockedReason ?? "plan-not-executable", detail: nil)
+        }
+        guard Date().timeIntervalSince(plan.generatedAt) <= 300 else {
+            throw BridgeError.managerFailure(code: "plan-expired", detail: nil)
+        }
+        guard let packageName = plan.payload.packageName, let spec = plan.exactInstallSpec else {
+            throw BridgeError.managerFailure(code: "npm-install-target-unavailable", detail: nil)
+        }
+        guard try await confirmNPMAbsent(packageName: packageName, summary: summary,
+                                          environment: environment, managerDirectory: managerDirectory) else {
+            throw BridgeError.managerFailure(code: "npm-install-state-changed", detail: nil)
+        }
+        let process = try await runner.run(ProcessRequest(
+            executableURL: URL(filePath: summary.npmPath),
+            arguments: ["install", "-g", spec],
+            environment: environment,
+            currentDirectoryURL: managerDirectory,
+            timeout: .seconds(1_800)
+        ))
+        let trimmedError = process.errorText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return NodeOperationResult(
+            operationId: "install-\(UUID().uuidString)",
+            action: NodeAction.installPackage.rawValue,
+            subject: packageName,
+            exitCode: Int(process.terminationStatus),
+            status: process.terminationStatus == 0 ? "ok" : "failed",
+            logFile: "",
+            detail: process.terminationStatus == 0 || trimmedError.isEmpty ? nil : trimmedError,
+            residues: nil
+        )
+    }
+
+    private func parseNPMPackageSpec(_ spec: String) -> (name: String, version: String?) {
+        let scoped = spec.hasPrefix("@")
+        let body = spec.dropFirst(scoped ? 1 : 0)
+        let parts = body.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false)
+        let name = (scoped ? "@" : "") + parts[0]
+        let version = parts.count > 1 && !parts[1].isEmpty ? String(parts[1]) : nil
+        return (name, version)
+    }
+
+    private func confirmNPMAbsent(
+        packageName: String,
+        summary: NodeSummary,
+        environment: [String: String],
+        managerDirectory: URL
+    ) async throws -> Bool {
+        let result = try await runner.run(ProcessRequest(
+            executableURL: URL(filePath: summary.npmPath),
+            arguments: ["ls", "-g", packageName, "--depth=0", "--json"],
+            environment: environment,
+            currentDirectoryURL: managerDirectory,
+            timeout: .seconds(30)
+        ))
+        guard result.terminationStatus == 1,
+              !result.standardOutputWasTruncated,
+              !result.standardErrorWasTruncated,
+              let object = try? JSONSerialization.jsonObject(with: result.standardOutput) as? [String: Any],
+              object["error"] == nil else {
+            return false
+        }
+        guard let dependencies = object["dependencies"] else {
+            // npm 11 omits the "dependencies" object when checking an uninstalled global package.
+            return true
+        }
+        if dependencies is NSNull { return true }
+        guard let dictionary = dependencies as? [String: Any] else { return false }
+        return dictionary[packageName] == nil
+    }
+
+    private func resolveNPMInstallTargetVersion(
+        spec: String,
+        summary: NodeSummary,
+        environment: [String: String],
+        managerDirectory: URL
+    ) async throws -> String {
+        let parsed = parseNPMPackageSpec(spec)
+        if let requested = parsed.version,
+           requested.range(of: #"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"#,
+                           options: .regularExpression) != nil {
+            return requested
+        }
+        let queryTarget = parsed.version == nil ? parsed.name : spec
+        let result = try await runner.run(ProcessRequest(
+            executableURL: URL(filePath: summary.npmPath),
+            arguments: ["view", queryTarget, "version", "--json"],
+            environment: environment,
+            currentDirectoryURL: managerDirectory,
+            timeout: .seconds(30)
+        ))
+        guard result.terminationStatus == 0,
+              !result.standardOutputWasTruncated,
+              !result.standardErrorWasTruncated else {
+            throw BridgeError.managerFailure(code: "target-version-unavailable", detail: nil)
+        }
+        if let version = try? JSONDecoder().decode(String.self, from: result.standardOutput), !version.isEmpty {
+            return version
+        }
+        if let versions = try? JSONDecoder().decode([String].self, from: result.standardOutput), let last = versions.last, !last.isEmpty {
+            return last
+        }
+        throw BridgeError.managerFailure(code: "target-version-unavailable", detail: nil)
     }
 }

@@ -1005,4 +1005,89 @@ extension NodePackageEnvironmentTests {
         try FileManager.default.removeItem(at: bin.appending(path: "npm"))
         XCTAssertNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: [], approvedSystemPrefixes: [prefix]))
     }
+
+    func testNPM11UninstalledPackageWithoutDependenciesKeySucceedsInPlanRenewAndExecute() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarNPM11AbsentTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prefix = root.appending(path: "opt/homebrew", directoryHint: .isDirectory)
+        let bin = prefix.appending(path: "bin", directoryHint: .isDirectory)
+        let cellarBin = prefix.appending(path: "Cellar/node/22.14.0/bin", directoryHint: .isDirectory)
+        let npmBin = prefix.appending(path: "lib/node_modules/npm/bin", directoryHint: .isDirectory)
+        for dir in [bin, cellarBin, npmBin] {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let realNode = cellarBin.appending(path: "node")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: realNode)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: realNode.path)
+
+        let npmCLI = npmBin.appending(path: "npm-cli.js")
+        let npmScript = #"""
+        #!/bin/bash
+        if [ "$1 $2 $3" = 'config get @antfu:registry' ]; then
+          printf '%s\n' undefined
+        elif [ "$1 $2 $3" = 'ls -g @antfu/ni' ]; then
+          if [ -e '\#(root.path)/installed-ni' ]; then
+            printf '%s\n' '{"name":"lib","dependencies":{"@antfu/ni":{"version":"30.6.0"}}}'
+          else
+            printf '%s\n' '{"name":"lib"}'
+            exit 1
+          fi
+        elif [ "$1 $2 $3" = 'view @antfu/ni version' ]; then
+          printf '"30.6.0"\n'
+        elif [ "$1 $2 $3" = 'install -g @antfu/ni@30.6.0' ]; then
+          /usr/bin/touch '\#(root.path)/installed-ni'
+          exit 0
+        else
+          exit 2
+        fi
+        """#
+        try Data(npmScript.utf8).write(to: npmCLI)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: npmCLI.path)
+
+        try FileManager.default.createSymbolicLink(at: cellarBin.appending(path: "npm"), withDestinationURL: npmCLI)
+        try FileManager.default.createSymbolicLink(at: bin.appending(path: "node"), withDestinationURL: realNode)
+        try FileManager.default.createSymbolicLink(at: bin.appending(path: "npm"), withDestinationURL: cellarBin.appending(path: "npm"))
+
+        let managerScript = #"""
+        #!/bin/bash
+        if [ "$2" = summary ]; then
+          printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(bin.path)/node","npmPath":"\#(bin.path)/npm","nodeVersion":"v22.14.0","npmVersion":"11.0.0","nvmLoaded":false,"globalPrefix":"\#(prefix.path)","globalRoot":"\#(prefix.path)/lib/node_modules","registry":"https://registry.npmjs.org/"}}\n'
+        elif [ "$2" = packages ]; then
+          if [ -e '\#(root.path)/installed-ni' ]; then
+            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{"@antfu/ni":{"version":"30.6.0"}}}}'
+          else
+            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{}}}'
+          fi
+        elif [ "$2" = config ]; then
+          printf '{"ok":true,"schemaVersion":1,"command":"config","data":{"registry":"https://registry.npmjs.org/","cache":"/fake/cache","prefix":"\#(prefix.path)","userRegistry":"","projectRegistry":"","globalRegistry":""}}\n'
+        elif [ "$2" = outdated ]; then
+          printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"outdated","data":{}}'
+        elif [ "$2" = plan ] && [ "$3" = install ]; then
+          printf '%s\n' '{"ok":false,"schemaVersion":1,"command":"plan","error":{"code":"package-state-unavailable","action":"install","packageName":"@antfu/ni"}}'
+          exit 1
+        elif [ "$2" = execute ] && [ "$3" = install ]; then
+          printf '%s\n' '{"ok":false,"schemaVersion":1,"command":"execute","error":{"code":"package-state-unavailable","action":"install","packageName":"@antfu/ni"}}'
+          exit 1
+        else
+          exit 2
+        fi
+        """#
+        try Data(managerScript.utf8).write(to: root.appending(path: "main.sh"))
+
+        let resolver = NodeEnvironmentResolver(homeDirectory: root, approvedSystemPrefixes: [prefix])
+        let client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: resolver)
+        let snapshot = try await client.loadSnapshot(managerDirectory: root)
+        let context = try XCTUnwrap(snapshot.packageEnvironment)
+
+        let plan = try await client.planPackage(.init(name: "@antfu/ni", environment: context), action: .installPackage, managerDirectory: root)
+        XCTAssertEqual(plan.payload.packageName, "@antfu/ni")
+        XCTAssertEqual(plan.payload.targetVersion, "30.6.0")
+        XCTAssertEqual(plan.exactInstallSpec, "@antfu/ni@30.6.0")
+
+        let renewedOptional = try await client.renewBatchPackagePlan(plan, environment: context, managerDirectory: root)
+        let renewed = try XCTUnwrap(renewedOptional)
+        let result = try await client.executePackage(renewed, environment: context, managerDirectory: root)
+        XCTAssertEqual(result.batchItemStatus, .succeeded)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appending(path: "installed-ni").path))
+    }
 }

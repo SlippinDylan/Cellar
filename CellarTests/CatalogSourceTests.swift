@@ -457,4 +457,47 @@ extension CatalogSourceTests {
             XCTAssertEqual(components.percentEncodedPath, base + "-/v1/search")
         }
     }
+
+    func testHomebrewReleaseClientRetriesTransientErrorsAndMapsRateLimit() async throws {
+        let digest = String(repeating: "a", count: 64)
+        let validPayload = Data(#"""
+        {"tag_name":"7.0.16","html_url":"https://github.com/Homebrew/brew/releases/tag/7.0.16","draft":false,"prerelease":false,"assets":[{"name":"Homebrew.pkg","browser_download_url":"https://github.com/Homebrew/brew/releases/download/7.0.16/Homebrew.pkg","digest":"sha256:\#(digest)","size":1024}]}
+        """#.utf8)
+        let retryTransport = HomebrewRetryTransport(validPayload: validPayload)
+        let client = HomebrewReleaseClient(http: CatalogHTTPClient(transport: retryTransport))
+        let metadata = try await client.installerMetadata()
+        XCTAssertEqual(metadata.version, "7.0.16")
+        let attempts = await retryTransport.attempts
+        XCTAssertEqual(attempts, 3)
+
+        for status in [403, 429] {
+            let transport = FakeCatalogTransport(body: Data())
+            await transport.setResponse(status: status, body: Data())
+            let rateLimitedClient = HomebrewReleaseClient(http: CatalogHTTPClient(transport: transport))
+            do {
+                _ = try await rateLimitedClient.installerMetadata()
+                XCTFail("Expected rateLimited for HTTP \(status)")
+            } catch let error as HomebrewSetupFailure {
+                XCTAssertEqual(error, .rateLimited)
+            }
+            let requests = await transport.requests
+            XCTAssertEqual(requests.count, 1)
+        }
+    }
+}
+
+private actor HomebrewRetryTransport: CatalogHTTPTransport {
+    let validPayload: Data
+    private(set) var attempts = 0
+
+    init(validPayload: Data) { self.validPayload = validPayload }
+
+    func data(for request: CatalogHTTPRequest) async throws -> CatalogHTTPResponse {
+        attempts += 1
+        if attempts == 1 { throw URLError(.timedOut) }
+        if attempts == 2 { return CatalogHTTPResponse(url: request.url, status: 502, body: Data(), etag: nil) }
+        return CatalogHTTPResponse(url: request.url, status: 200, body: validPayload, etag: nil)
+    }
+
+    func download(_ request: CatalogHTTPRequest, to destination: URL) async throws { throw URLError(.unsupportedURL) }
 }

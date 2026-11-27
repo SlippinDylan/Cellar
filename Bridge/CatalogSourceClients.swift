@@ -73,7 +73,7 @@ struct HomebrewReleaseClient: Sendable {
     func latestVersion() async throws -> String { try await release().tagName }
 
     func installerMetadata() async throws -> HomebrewInstallerMetadata {
-        let release = try await release()
+        let release = try await releaseWithRetry()
         let assets = release.assets.filter { $0.name == "Homebrew.pkg" }
         guard assets.count == 1, let asset = assets.first else { throw HomebrewSetupFailure.releaseMetadata }
         guard let digest = asset.digest else { throw HomebrewSetupFailure.digestMissing }
@@ -83,6 +83,31 @@ struct HomebrewReleaseClient: Sendable {
 
     private func release() async throws -> GitHubReleaseMetadata {
         try await latestGitHubRelease(owner: "Homebrew", repository: "brew", http: http)
+    }
+
+    private func releaseWithRetry() async throws -> GitHubReleaseMetadata {
+        let backoffs: [Duration] = [.milliseconds(500), .milliseconds(1500)]
+        for attempt in 0...backoffs.count {
+            try Task.checkCancellation()
+            do {
+                return try await release()
+            } catch let error as CatalogSourceError {
+                switch error {
+                case .httpStatus(let code) where code == 403 || code == 429:
+                    throw HomebrewSetupFailure.rateLimited
+                case .httpStatus(let code) where (500...599).contains(code):
+                    guard attempt < backoffs.count else { throw error }
+                case .invalidResponse, .httpStatus, .invalidURL, .invalidQuery, .responseTooLarge:
+                    throw error
+                }
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                guard attempt < backoffs.count else { throw error }
+            }
+            try await Task.sleep(for: backoffs[attempt])
+        }
+        preconditionFailure("Retry loop exited unexpectedly")
     }
 }
 

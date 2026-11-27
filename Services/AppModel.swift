@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var nodeRefreshFailed = false
     @Published private(set) var shellRefreshFailed = false
     @Published private(set) var homebrewRefreshedAt: Date?
+    @Published private(set) var homebrewPackagesRefreshedAt: Date?
     @Published private(set) var nodeRefreshedAt: Date?
     @Published var homebrewUpdateState = HomePackageUpdateState.notLoaded
     @Published var nodeUpdateState = HomePackageUpdateState.notLoaded
@@ -260,6 +261,9 @@ final class AppModel: ObservableObject {
             homebrewRefreshFailed = false
             if snapshot?.sectionErrors.keys.contains(where: { $0 != .outdated }) != true {
                 homebrewRefreshedAt = Date()
+            }
+            if status.snapshot != nil && status.snapshot?.sectionErrors[.packages] == nil {
+                homebrewPackagesRefreshedAt = Date()
             }
             homebrewUpdateState = includingOutdated && snapshot != nil
                 ? (snapshot?.sectionErrors[.outdated] == nil ? .available : .failed) : .notLoaded

@@ -49,7 +49,7 @@ enum DiscoverResult: Sendable {
     }
 
     func card(homebrew: HomebrewSnapshot?, node: NodeSnapshot?, activeIntent: BatchIntent?, running: BatchItem?,
-              canInstall: Bool, stage: ActivityTaskStage? = nil) -> CatalogCardState {
+              canInstall: Bool, stage: ActivityTaskStage? = nil, homebrewInventoryIsAuthoritative: Bool = true) -> CatalogCardState {
         let name: String
         let description: String?
         let available: String?
@@ -60,22 +60,31 @@ enum DiscoverResult: Sendable {
         let status: SemanticVersionStatus
         switch self {
         case .homebrew(let package):
-            let current = homebrew?.packages.first { $0.identity == package.identity } ?? package
-            let outdated = homebrew?.outdatedPackages.first { $0.identity == package.identity }
+            let livePackage = homebrew?.packages.first { $0.identity == package.identity }
+            let hasAuthoritativeInventory = homebrewInventoryIsAuthoritative
+                && homebrew != nil
+                && homebrew?.sectionErrors[.packages] == nil
+            let current = hasAuthoritativeInventory ? (livePackage ?? package) : package
+            let outdated = hasAuthoritativeInventory
+                ? homebrew?.outdatedPackages.first { $0.identity == package.identity }
+                : nil
             icon = .homebrew(current)
             name = package.displayName
             description = package.description
             available = outdated?.currentVersion ?? package.currentVersion
-            installed = current.isInstalled
+            let isInstalled = hasAuthoritativeInventory
+                ? (livePackage?.isInstalled ?? false)
+                : package.isInstalled
+            installed = isInstalled
                 ? (outdated == nil ? current.detectedAppVersion : nil) ?? current.installedVersions.joined(separator: ", ")
                 : nil
             let computed = SemanticVersionStatus(current: installed, available: available)
-            if current.isInstalled, homebrew?.sectionErrors[.outdated] != nil {
+            if isInstalled, homebrew?.sectionErrors[.outdated] != nil {
                 status = .unknown
-            } else if current.isInstalled, outdated != nil {
+            } else if isInstalled, outdated != nil {
                 status = .behind
             } else {
-                status = current.isInstalled && computed == .behind ? .current : computed
+                status = isInstalled && computed == .behind ? .current : computed
             }
             let component = package.identity.kind == .formula ? "formula" : "cask"
             let fallbackWebsite = package.identity.name.contains("/")

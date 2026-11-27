@@ -37,10 +37,12 @@ final class DiscoverSearchModel: ObservableObject {
     @Published private(set) var unavailableByScope: Set<CatalogProviderScope> = []
     @Published private(set) var partialByScope: Set<CatalogProviderScope> = []
     @Published private(set) var lastQuery = ""
+    @Published private(set) var searchedAtByScope: [CatalogProviderScope: Date] = [:]
     private let dependencies: DiscoverSearchDependencies
     private let operationStore: OperationStore
     private var latestRequest: UUID?
     private var owner: (id: UUID, task: Task<Void, Never>)?
+    private var cancelledIncompleteSearch = false
 
     init(dependencies: DiscoverSearchDependencies, operationStore: OperationStore) {
         self.dependencies = dependencies
@@ -50,6 +52,7 @@ final class DiscoverSearchModel: ObservableObject {
     func invalidate() {
         latestRequest = nil
         owner?.task.cancel()
+        owner = nil
         state = .idle
         results = []
         resultContext = nil
@@ -61,6 +64,26 @@ final class DiscoverSearchModel: ObservableObject {
         unavailableByScope = []
         partialByScope = []
         lastQuery = ""
+        searchedAtByScope = [:]
+        cancelledIncompleteSearch = false
+    }
+
+    func cancelInFlightSearch() {
+        guard let active = owner else { return }
+        latestRequest = nil
+        active.task.cancel()
+        owner = nil
+        loadingScopes = []
+        cancelledIncompleteSearch = true
+        if results.isEmpty {
+            if !lastQuery.isEmpty && completedScopes.isEmpty && state == .loading {
+                state = .cancelled
+            }
+        } else {
+            unavailableScopes = CatalogProviderScope.allCases.filter { unavailableByScope.contains($0) }
+            partialScopes = CatalogProviderScope.allCases.filter { partialByScope.contains($0) }
+            state = .available
+        }
     }
 
     func results(for scope: DiscoverSearchScope) -> [DiscoverResult] {
@@ -111,7 +134,7 @@ final class DiscoverSearchModel: ObservableObject {
         if targets.allSatisfy({ completedScopes.contains($0) }) {
             return .empty
         }
-        return state
+        return cancelledIncompleteSearch ? .cancelled : state
     }
 
     func searchGlobally(_ query: String, preferredScope: DiscoverSearchScope, context: DiscoverContext, limit: Int = 50) async {
@@ -126,6 +149,8 @@ final class DiscoverSearchModel: ObservableObject {
         completedScopes = []
         unavailableByScope = []
         partialByScope = []
+        searchedAtByScope = [:]
+        cancelledIncompleteSearch = false
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         lastQuery = term
         if let previous = owner {
@@ -163,6 +188,7 @@ final class DiscoverSearchModel: ObservableObject {
 
     private func runGlobal(_ query: String, preferredScope: DiscoverSearchScope, context: DiscoverContext, limit: Int,
                            request: UUID) async {
+        guard latestRequest == request, !Task.isCancelled else { return }
         let primaryScopes = providerScopes(for: preferredScope)
         let secondaryScopes = CatalogProviderScope.allCases.filter { !primaryScopes.contains($0) }
         loadingScopes = Set(CatalogProviderScope.allCases)
@@ -184,7 +210,18 @@ final class DiscoverSearchModel: ObservableObject {
         } catch {
             guard latestRequest == request else { return }
             loadingScopes = []
-            state = error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled ? .cancelled : .failed
+            if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                cancelledIncompleteSearch = true
+                if results.isEmpty {
+                    state = .cancelled
+                } else {
+                    unavailableScopes = CatalogProviderScope.allCases.filter { unavailableByScope.contains($0) }
+                    partialScopes = CatalogProviderScope.allCases.filter { partialByScope.contains($0) }
+                    state = .available
+                }
+            } else {
+                state = .failed
+            }
         }
     }
 
@@ -221,6 +258,7 @@ final class DiscoverSearchModel: ObservableObject {
             for try await (scope, packages, npm, failed, incomplete) in group {
                 try Task.checkCancellation()
                 guard latestRequest == request, !Task.isCancelled else { throw CancellationError() }
+                searchedAtByScope[scope] = Date()
                 cachedResultsByScope[scope] = packages
                 loadingScopes.remove(scope)
                 completedScopes.insert(scope)
@@ -279,6 +317,7 @@ final class DiscoverSearchModel: ObservableObject {
 
     private func run(_ query: String, scope: DiscoverSearchScope, context: DiscoverContext, limit: Int,
                      request: UUID) async {
+        guard latestRequest == request, !Task.isCancelled else { return }
         do {
             let values: [DiscoverResult]
             var effectiveContext = context
@@ -309,6 +348,10 @@ final class DiscoverSearchModel: ObservableObject {
             try Task.checkCancellation()
             guard latestRequest == request, !Task.isCancelled else { return }
             self.results = values
+            let timestamp = Date()
+            for providerScope in providerScopes(for: scope) {
+                searchedAtByScope[providerScope] = timestamp
+            }
             resultContext = effectiveContext
             unavailableScopes = unavailable
             partialScopes = partial
@@ -374,6 +417,7 @@ final class DiscoverInstallationModel: ObservableObject {
     @Published private(set) var error: DiscoverInputError?
     @Published private(set) var isPreparing = false
     @Published private(set) var isSubmitting = false
+    @Published private(set) var submittingPlan: BatchPlan?
     @Published private(set) var queuedItems: [BatchItem] = []
     @Published private(set) var activeItem: BatchItem?
     private let model: AppModel
@@ -383,6 +427,7 @@ final class DiscoverInstallationModel: ObservableObject {
     private var queueTask: Task<Void, Never>?
     private var stopWaitingForBusy = false
 
+    var coordinator: BatchOperationCoordinator { model.batchCoordinator }
     var isQueueActive: Bool { activeItem != nil || !queuedItems.isEmpty }
 
     init(model: AppModel) { self.model = model }
@@ -542,6 +587,8 @@ final class DiscoverInstallationModel: ObservableObject {
     private func execute(_ plan: BatchPlan) async {
         error = nil
         result = nil
+        submittingPlan = plan
+        defer { submittingPlan = nil }
         do {
             guard valid(plan.intent), !Task.isCancelled else { throw DiscoverInputError.staleContext }
             result = try await model.executeBatch(plan)

@@ -134,6 +134,7 @@ final class BatchOperationCoordinator: ObservableObject {
     @Published private(set) var activeIntent: BatchIntent?
     @Published private(set) var activeIntents: [BatchIntent] = []
     @Published private(set) var runningItem: BatchItem?
+    @Published private(set) var liveItemOutcomes: [BatchItem: BatchItemStatus] = [:]
     @Published private(set) var result: BatchExecutionResult?
     private var preparedUpdates: BatchUpdatePlan?
     private let provider: any BatchOperationProviding
@@ -279,6 +280,7 @@ final class BatchOperationCoordinator: ObservableObject {
 
     private func executePlans(_ plans: [BatchPlan], caskRemovalProgress: CaskRemovalProgressHandler? = nil) async throws -> [BatchExecutionResult] {
         activeIntents = plans.map(\.intent)
+        liveItemOutcomes = [:]
         let operationID = operationStore.begin(context: plans[0].intent.activityContext(stage: .executing))
         let total = plans.reduce(0) { $0 + $1.intent.items.count }
         operationStore.updateProgress(completed: 0, total: total)
@@ -286,6 +288,7 @@ final class BatchOperationCoordinator: ObservableObject {
             runningItem = nil
             activeIntent = nil
             activeIntents = []
+            liveItemOutcomes = [:]
             operationStore.end(operationID)
         }
         let executions = try await operationStore.performCancellable(operationID: operationID) {
@@ -343,12 +346,15 @@ final class BatchOperationCoordinator: ObservableObject {
                 operationStore.updateProgress(completed: completed + 1, total: total)
             }
             if case .unavailable(let preparation, let reason) = prepared {
-                outcomes.append(.init(item: item, status: preparation == .alreadyInstalled ? .skipped : .failed, userFacingMessage: nil, reason: reason))
+                let status: BatchItemStatus = preparation == .alreadyInstalled ? .skipped : .failed
+                outcomes.append(.init(item: item, status: status, userFacingMessage: nil, reason: reason))
+                liveItemOutcomes[item] = status
                 results.append(nil)
                 continue
             }
             if Task.isCancelled {
                 outcomes.append(.init(item: item, status: .cancelled, userFacingMessage: nil, reason: .cancelledByUser))
+                liveItemOutcomes[item] = .cancelled
                 results.append(nil)
                 continue
             }
@@ -363,6 +369,7 @@ final class BatchOperationCoordinator: ObservableObject {
                     if plan.intent.operation == .install || plan.intent.operation == .update {
                         guard let renewed = try await self.provider.renewHomebrew(providerPlan) else {
                             outcomes.append(.init(item: item, status: .skipped, userFacingMessage: nil, reason: .alreadySatisfied))
+                            liveItemOutcomes[item] = .skipped
                             results.append(nil)
                             continue
                         }
@@ -388,6 +395,7 @@ final class BatchOperationCoordinator: ObservableObject {
                     if plan.intent.operation == .install || plan.intent.operation == .update {
                         guard let renewed = try await self.provider.renewNPM(providerPlan, environment: environment) else {
                             outcomes.append(.init(item: item, status: .skipped, userFacingMessage: nil, reason: .alreadySatisfied))
+                            liveItemOutcomes[item] = .skipped
                             results.append(nil)
                             continue
                         }
@@ -410,10 +418,13 @@ final class BatchOperationCoordinator: ObservableObject {
                 case .unavailable: preconditionFailure("Unavailable preparation never enters execution")
                 }
                 outcomes.append(.init(item: item, status: status, userFacingMessage: nil, reason: reason))
+                liveItemOutcomes[item] = status
             } catch {
                 let cancelled = error is CancellationError || Task.isCancelled
-                outcomes.append(.init(item: item, status: cancelled ? .cancelled : ActivityItemReason.postWriteStatus(error: error) ?? .failed,
+                let status: BatchItemStatus = cancelled ? .cancelled : ActivityItemReason.postWriteStatus(error: error) ?? .failed
+                outcomes.append(.init(item: item, status: status,
                                       userFacingMessage: nil, reason: cancelled ? .cancelledByUser : .init(error: error)))
+                liveItemOutcomes[item] = status
                 results.append(nil)
                 diagnosticsStore.record(operation: plan.intent.activityOperation, scope: plan.intent.scope.activityScope, detail: error.localizedDescription)
             }

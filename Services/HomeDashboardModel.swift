@@ -11,10 +11,11 @@ struct HomeDashboardDependencies: Sendable {
     var finishInstallerHandoff: @Sendable () async throws -> Void
 
     static func live(runner: ProcessRunner) -> Self {
+        let http = CatalogHTTPClient()
         let tools = CommandLineToolsService(runner: runner)
-        let installer = HomebrewSetupService(runner: runner)
-        let homebrew = HomebrewReleaseClient()
-        let node = NodeVersionMetadataClient()
+        let installer = HomebrewSetupService(runner: runner, http: http)
+        let homebrew = HomebrewReleaseClient(http: http)
+        let node = NodeVersionMetadataClient(http: http)
         return Self(
             commandLineTools: { try await tools.state() },
             homebrewLocationOccupied: { !Self.installationLocationIsClear(at: URL(filePath: "/opt/homebrew")) },

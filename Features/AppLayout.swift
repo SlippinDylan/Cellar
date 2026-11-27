@@ -133,6 +133,7 @@ struct SettingsSection<Content: View>: View {
     var websiteTitle: LocalizedStringResource = "Official Website"
     var detail: String? = nil
     var action: SettingsSectionAction? = nil
+    var footer: LocalizedStringResource? = nil
     @ViewBuilder var content: Content
 
     var body: some View {
@@ -159,6 +160,13 @@ struct SettingsSection<Content: View>: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+            if let footer {
+                Text(footer)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 6)
+            }
         }
     }
 }

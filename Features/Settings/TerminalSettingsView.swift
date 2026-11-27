@@ -8,6 +8,7 @@ struct TerminalSettingsView: View {
     @State private var showsPluginSelection = false
     @State private var showsPluginInstallation = false
     @State private var submittedPluginURL: URL?
+    @State private var retainedConfigPlan: ShellConfigurationPlan?
     var body: some View {
         SettingsPage(fillsViewport: true) {
             if let shell = model.shell, !shell.ohMyZshInstalled {
@@ -21,7 +22,12 @@ struct TerminalSettingsView: View {
                 }
             }
             if let shell = model.shell, shell.ohMyZshInstalled {
-                SettingsSection(title: "Plugins and Theme", website: CatalogWebsites.url(host: "github.com", path: "/ohmyzsh/ohmyzsh"), websiteTitle: "Oh My Zsh Project") {
+                SettingsSection(
+                    title: "Plugins and Theme",
+                    website: CatalogWebsites.url(host: "github.com", path: "/ohmyzsh/ohmyzsh"),
+                    websiteTitle: "Oh My Zsh Project",
+                    footer: "Apply saves the selected plugins and theme."
+                ) {
                     HStack {
                         Text("Local Theme")
                         Spacer()
@@ -70,10 +76,6 @@ struct TerminalSettingsView: View {
                     .frame(minHeight: AppLayout.minimumControlRowHeight)
                     Divider()
                     HStack(alignment: .center, spacing: 24) {
-                        Text("Apply saves the selected plugins and theme.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         Button("Apply") { Task { await model.prepareTerminalConfiguration(plugins: plugins.sorted(), theme: theme) } }
                             .disabled(model.isBusy || !hasChanges(shell) || (!shell.availableThemes.contains(theme) && theme != shell.currentTheme))
@@ -90,28 +92,18 @@ struct TerminalSettingsView: View {
                     .frame(minHeight: AppLayout.minimumControlRowHeight)
                 }
             }
-            SettingsSection(title: "Terminal Maintenance") {
+            SettingsSection(
+                title: "Terminal Maintenance",
+                footer: "Move the listed Zsh completion files and historical backups into .zsh. Back up .zshrc before updating its managed completion location."
+            ) {
                 HStack(spacing: 24) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Zsh Files")
-                        Text("Move the listed Zsh completion files and historical backups into .zsh. Back up .zshrc before updating its managed completion location.")
-                            .font(.callout).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text("Zsh Files")
                     Spacer(minLength: 0)
                     Button("Tidy Zsh Files") { Task { await model.prepareShellAction(.init(action: .tidy, subject: "zsh-files")) } }
                         .disabled(model.shell?.zshrcExists != true || model.isBusy)
                         .fixedSize()
                 }
-                .frame(minHeight: AppLayout.minimumDescribedRowHeight)
-            }
-            if let result = model.terminalConfigurationResult {
-                SettingsSection(title: "Plugins and Theme") {
-                    Label(result.status == .succeeded ? LocalizedStringResource("Terminal Changes Applied") : LocalizedStringResource("Terminal Changes Incomplete"), systemImage: "info.circle")
-                    ForEach(Array(result.stepOutcomes.enumerated()), id: \.offset) { _, outcome in
-                        Label { Text(outcome.step.title); Text(outcome.status.activityTitle) } icon: { Image(systemName: outcome.status.systemImage) }
-                    }
-                }
+                .frame(minHeight: AppLayout.minimumControlRowHeight)
             }
             Spacer(minLength: 0)
             EnvironmentFooterView {
@@ -138,8 +130,28 @@ struct TerminalSettingsView: View {
             pluginInstallationSheet
         }
         .modifier(ProviderTaskPresentation(model: model, surface: .terminal))
-        .sheet(item: $model.terminalConfigurationPlan) { plan in
-            TerminalApplyConfirmation(plan: plan, cancel: { model.terminalConfigurationPlan = nil }, confirm: { Task { await model.executeTerminalConfiguration(plan) } })
+        .onChange(of: model.terminalConfigurationPlan?.id) { _, _ in
+            if let plan = model.terminalConfigurationPlan { retainedConfigPlan = plan }
+        }
+        .sheet(item: Binding(get: { retainedConfigPlan ?? model.terminalConfigurationPlan }, set: {
+            if $0 == nil {
+                retainedConfigPlan = nil
+                model.terminalConfigurationPlan = nil
+                model.dismissShellFeedback()
+            }
+        })) { plan in
+            TerminalApplyConfirmation(plan: plan, cancel: {
+                retainedConfigPlan = nil
+                model.terminalConfigurationPlan = nil
+                model.dismissShellFeedback()
+            }, confirm: {
+                retainedConfigPlan = plan
+                model.dismissShellFeedback()
+                await model.executeTerminalConfiguration(plan)
+                return (model.terminalConfigurationResult, model.shellOperationError)
+            })
+            .onAppear { model.beginModalPresentation() }
+            .onDisappear { model.endModalPresentation() }
         }
     }
     private var pluginInstallationSheet: some View {
@@ -235,25 +247,105 @@ struct TerminalSettingsView: View {
 private struct TerminalApplyConfirmation: View {
     let plan: ShellConfigurationPlan
     let cancel: () -> Void
-    let confirm: () -> Void
+    let confirm: () async -> (result: ShellConfigurationResult?, refreshError: String?)
+
+    @State private var isRunning = false
+    @State private var hasFinished = false
+    @State private var result: ShellConfigurationResult?
+    @State private var refreshError: String?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Apply Terminal Changes").font(.title2.bold())
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Back up .zshrc, update its managed plugin and theme sections, and check syntax. The login shell stays unchanged.")
-                    Text("Each completed change is retained if a later change fails.")
-                    ForEach(plan.plans) { change in
-                        LabeledContent(change.request.action == .setPlugins ? LocalizedStringResource("Plugins") : LocalizedStringResource("Local Theme")) { Text(change.request.subject).textSelection(.enabled) }
-                    }
-                    if !plan.canExecute { Text("This action is blocked by the current environment. Refresh and review the protected target or file type.") }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxHeight: 280)
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
-                Button("Apply", action: confirm).disabled(!plan.canExecute)
+        MaintenanceModalFrame(
+            title: LocalizedStringResource("Apply Terminal Changes"),
+            systemImage: "terminal.fill",
+            tint: .blue
+        ) {
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else if hasFinished {
+                let succeeded = refreshError == nil && result?.status == .succeeded
+                Text(succeeded ? LocalizedStringResource("Terminal Changes Applied") : LocalizedStringResource("Terminal Changes Incomplete"))
+                    .foregroundStyle(succeeded ? .green : .orange)
+            } else {
+                Text("Plugins and Theme").foregroundStyle(.secondary)
             }
-        }.padding(24).constrainedSheetWidth(540)
+        } content: {
+            if isRunning {
+                MaintenanceLoadingState(title: LocalizedStringResource("Running"))
+            } else if hasFinished {
+                if let refreshError {
+                    Label {
+                        Text(verbatim: refreshError).textSelection(.enabled)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                }
+                if let result {
+                    MaintenanceDetailWell(maxHeight: 220) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(result.stepOutcomes.enumerated()), id: \.offset) { _, outcome in
+                                Label {
+                                    Text(outcome.step.title)
+                                    Text(outcome.status.activityTitle).foregroundStyle(.secondary)
+                                } icon: {
+                                    Image(systemName: outcome.status.systemImage)
+                                        .foregroundStyle(outcome.status == .succeeded ? .green : .orange)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Label { Text(ActivityItemReason.stateUnavailable.message) } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Back up .zshrc, update its managed plugin and theme sections, and check syntax. The login shell stays unchanged.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    MaintenanceDetailWell(maxHeight: 220) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(plan.plans) { change in
+                                LabeledContent(change.request.action == .setPlugins ? LocalizedStringResource("Plugins") : LocalizedStringResource("Local Theme")) {
+                                    Text(change.request.subject).textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                    if !plan.canExecute {
+                        Label("This action is blocked by the current environment. Refresh and review the protected target or file type.", systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(.orange)
+                    }
+                }
+            }
+        } footer: {
+            Spacer()
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else if hasFinished {
+                Button("OK", action: cancel)
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .keyboardShortcut(.defaultAction)
+            } else {
+                Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
+                Button("Apply") {
+                    guard !isRunning else { return }
+                    isRunning = true
+                    Task {
+                        let completion = await confirm()
+                        result = completion.result
+                        refreshError = completion.refreshError
+                        isRunning = false
+                        hasFinished = true
+                    }
+                }
+                .buttonStyle(.glassProminent)
+                .tint(.blue)
+                .disabled(!plan.canExecute)
+            }
+        }
+        .interactiveDismissDisabled(isRunning)
     }
 }

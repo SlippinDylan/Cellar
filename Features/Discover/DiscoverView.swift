@@ -23,103 +23,108 @@ struct DiscoverView: View {
     }
 
     var body: some View {
+        let currentState = search.state(for: scope, context: model.discoverContext)
+        let unavailableScopes = scope == .all && currentState == .available ? search.unavailableScopes(for: scope) : []
+        let partialScopes = scope == .all && currentState == .available ? search.partialScopes(for: scope) : []
         GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: AppLayout.spacing) {
-                    ForEach(search.unavailableScopes, id: \.self) { source in
-                        LabeledContent { Text("Search Unavailable") } label: { Text(source.cardTitle) }
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(search.partialScopes, id: \.self) { source in
-                        LabeledContent { Text("Some search results could not be loaded.") } label: { Text(source.cardTitle) }
-                            .foregroundStyle(.secondary)
-                    }
-                    if let error = installation.error { Label { Text(error.discoverMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
-                    if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
-                    if let error = uninstall.error {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(error.libraryMessage).foregroundStyle(.secondary)
-                                if let reason = uninstall.failureReason {
-                                    Text(reason.message).foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
-                                .labelStyle(.iconOnly).buttonStyle(.plain)
-                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
-                                .help("Dismiss Feedback")
-                        }
-                    } else if let reason = uninstall.failureReason {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(reason.message).foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
-                                .labelStyle(.iconOnly).buttonStyle(.plain)
-                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
-                                .help("Dismiss Feedback")
-                        }
-                    }
-                    if (installation.isSubmitting || updates.isSubmitting), let current = operationStore.currentOperation {
-                        ProgressView { Text(current.context.stage.title) }
-                    }
-                    if let result = installation.result { DiscoverInstallResultView(result: result, dismiss: installation.dismissResult) }
-                    if let result = updates.result { UpdatesResultView(result: result, dismiss: updates.dismissResult) }
-                    if let result = uninstall.result { LibraryResultView(result: result, dismiss: uninstall.dismissResult) }
-                    if search.state == .available, let context = search.resultContext {
+                    if currentState == .available, let context = search.resultContext {
                         let visibleCards = cards
                         let updateTargets = LibraryCatalog.updateTargets(for: visibleCards, from: model.updateCards)
                             .filter { model.canMutatePackages(in: $0.batchItem.scope) }
                         CatalogCardGrid(states: visibleCards, minimumCardWidth: 360, updateTargets: updateTargets,
-                                        isActionEnabled: !model.isBusy && !installation.isSubmitting && !updates.isSubmitting && uninstall.presentedItem == nil,
+                                        isActionEnabled: uninstall.presentedItem == nil && !model.isRefreshing,
+                                        isUninstallEnabled: !model.isBusy && !installation.isQueueActive && !updates.isQueueActive && uninstall.presentedItem == nil,
                                         isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, selectedAction in
                             switch selectedAction {
-                            case .install: Task { await installation.install(card, context: context) }
-                            case .update: Task { await updates.update(card) }
+                            case .install: installation.enqueueInstall(card, context: context)
+                            case .update: updates.enqueueUpdate(card)
                             case .uninstall: Task { await uninstall.prepare(card.batchItem) }
                             }
                         }
-                    } else { searchContent }
+                        if !unavailableScopes.isEmpty || !partialScopes.isEmpty {
+                            Spacer(minLength: 0)
+                            EnvironmentFooterView {
+                                ForEach(unavailableScopes, id: \.self) { source in
+                                    LabeledContent { Text("Search Unavailable") } label: { Text(source.cardTitle) }
+                                }
+                                ForEach(partialScopes, id: \.self) { source in
+                                    LabeledContent { Text("Some search results could not be loaded.") } label: { Text(source.cardTitle) }
+                                }
+                            }
+                        }
+                    } else { searchContent(for: currentState) }
                 }
                 .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - AppLayout.spacing * 2),
-                       alignment: search.state == .available ? .topLeading : .center)
+                       alignment: currentState == .available ? .topLeading : .center)
             }
             .contentMargins(AppLayout.spacing, for: .scrollContent)
         }
         .focusedSceneValue(\.catalogSearchAction) { searchFocusRequest = UUID() }
         .focusedSceneValue(\.discoverToolbar, DiscoverToolbarContext(scope: $scope, query: $query,
                                                                     focusRequest: searchFocusRequest, submit: runSearch))
-        .onChange(of: query) { search.invalidate() }
-        .onChange(of: scope) { search.invalidate() }
-        .onChange(of: model.discoverContext) { _, context in
-            // Mutation reconciliation updates cards from local state; environment changes invalidate npm search.
-            if scope == .all || scope == .npm, search.resultContext?.npm != context.npm { search.invalidate() }
+        .onChange(of: query) { _, newValue in
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                search.invalidate()
+            }
         }
-        .onDisappear { search.invalidate() }
+        .onChange(of: model.discoverContext) { _, context in
+            // Mutation reconciliation updates cards from local state; environment changes invalidate cached npm search.
+            if search.resultContext != nil, search.resultContext?.npm != context.npm { search.invalidate() }
+        }
+        .onDisappear {
+            search.invalidate()
+            installation.cancelPendingQueue()
+            updates.cancelPendingQueue()
+        }
         .task(id: model.refreshedAt) {
             if model.checkedOutdatedRefresh != model.refreshedAt { await model.refreshHomeBackground(after: model.refreshedAt) }
         }
     }
 
     private var cards: [CatalogCardState] {
-        search.results.map { result in
-            result.card(homebrew: model.homebrew?.snapshot, node: model.node, activeIntent: coordinator.activeIntent,
-                        running: coordinator.runningItem, canInstall: result.identity.providerScope == .npm ? model.discoverContext.npm != nil : model.canMutatePackages(in: .homebrew(.formula)),
-                        stage: operationStore.currentOperation?.context.stage)
+        let queued = Set(installation.queuedItems).union(updates.queuedItems)
+        let activeItems = Set([installation.activeItem, updates.activeItem].compactMap { $0 })
+        return search.results(for: scope).map { result in
+            let base = result.card(homebrew: model.homebrew?.snapshot, node: model.node, activeIntent: coordinator.activeIntent,
+                                   running: coordinator.runningItem, canInstall: result.identity.providerScope == .npm ? model.discoverContext.npm != nil : model.canMutatePackages(in: .homebrew(.formula)),
+                                   stage: operationStore.currentOperation?.context.stage)
+            let progress: CatalogCardProgress = if base.progress != .idle {
+                base.progress
+            } else if activeItems.contains(base.batchItem) {
+                .running
+            } else if queued.contains(base.batchItem) {
+                .queued
+            } else {
+                .idle
+            }
+            if progress == base.progress { return base }
+            return CatalogCardState(
+                identity: base.identity,
+                displayName: base.displayName,
+                description: base.description,
+                currentVersion: base.currentVersion,
+                availableVersion: base.availableVersion,
+                versionStatus: base.versionStatus,
+                websiteURL: base.websiteURL,
+                progress: progress,
+                primaryAction: base.primaryAction,
+                icon: base.icon
+            ) ?? base
         }
     }
 
     private func runSearch() {
         let term = query
-        guard !term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              !model.isBusy || search.state == .loading else { return }
+        guard !term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let selectedScope = scope
         let context = model.discoverContext
-        Task { await search.search(term, scope: selectedScope, context: context) }
+        Task { await search.searchGlobally(term, preferredScope: selectedScope, context: context) }
     }
 
-    @ViewBuilder private var searchContent: some View {
-        let state = search.state == .idle ? DiscoverSearchModel.guidance(scope, context: model.discoverContext) ?? .idle : search.state
+    @ViewBuilder private func searchContent(for currentState: DiscoverSearchState) -> some View {
+        let state = currentState == .idle ? DiscoverSearchModel.guidance(scope, context: model.discoverContext) ?? .idle : currentState
         switch state {
         case .loading:
             ProgressView()

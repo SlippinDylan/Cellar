@@ -88,7 +88,11 @@ actor NodeManagerClient {
         try Task.checkCancellation()
         let outdatedError = outdatedResult.failure?.localizedDescription
         let installations = environmentResolver.installations(preferredNodeVersion: preferredNodeVersion)
-        let packageEnvironment = NodeEnvironmentResolver.packageInstallation(summary: summary, installations: installations).map { _ in LibraryCatalog.context(summary) }
+        let packageEnvironment = NodeEnvironmentResolver.packageInstallation(
+            summary: summary,
+            installations: installations,
+            approvedSystemPrefixes: environmentResolver.approvedSystemPrefixes
+        ).map { _ in LibraryCatalog.context(summary) }
         return NodeSnapshot(
             summary: summary,
             configuration: configurationValue,

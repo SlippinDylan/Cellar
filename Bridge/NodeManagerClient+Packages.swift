@@ -232,6 +232,9 @@ extension NodeManagerClient {
     }
 
     private func requirePackageInstallation(_ context: NodeEnvironmentContext) throws -> NodeInstallation {
+        if let systemInstallation = environmentResolver.approvedSystemPackageInstallation(for: context) {
+            return systemInstallation
+        }
         let installations = environmentResolver.installations(preferredNodeVersion: context.nodeVersion)
         guard let installation = installations.first(where: { $0.version == context.nodeVersion }) else {
             throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil)
@@ -240,7 +243,11 @@ extension NodeManagerClient {
     }
 
     private func validatePackageEntries(_ summary: NodeSummary, installation: NodeInstallation) throws {
-        guard NodeEnvironmentResolver.packageInstallation(summary: summary, installations: [installation]) != nil
+        guard NodeEnvironmentResolver.packageInstallation(
+            summary: summary,
+            installations: [installation],
+            approvedSystemPrefixes: []
+        ) != nil
         else { throw BridgeError.managerFailure(code: "node-environment-changed", detail: nil) }
     }
 

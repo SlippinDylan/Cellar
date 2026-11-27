@@ -5,6 +5,7 @@ struct CatalogCardGrid: View {
     var minimumCardWidth: CGFloat = 260
     var updateTargets: [CatalogCardState] = []
     var isActionEnabled = true
+    var isUninstallEnabled: Bool? = nil
     var isItemActionEnabled: (CatalogCardState) -> Bool = { _ in true }
     let action: (CatalogCardState, CatalogCardAction) -> Void
     @State private var columnCount = 1
@@ -19,7 +20,10 @@ struct CatalogCardGrid: View {
                 let target = targets[state.identity]
                 let index = indices[state.identity] ?? states.count
                 let showsBottomDivider = index + columnCount < states.count
-                CatalogCardView(state: state, updateTarget: target, isActionEnabled: isActionEnabled && isItemActionEnabled(state),
+                let itemEnabled = isItemActionEnabled(state)
+                CatalogCardView(state: state, updateTarget: target,
+                                isActionEnabled: isActionEnabled && itemEnabled,
+                                isUninstallEnabled: (isUninstallEnabled ?? isActionEnabled) && itemEnabled,
                                 showsBottomDivider: showsBottomDivider) { selectedAction in
                     if selectedAction == .update, state.primaryAction == .uninstall {
                         guard let target else { preconditionFailure("An enabled library update requires its canonical target") }
@@ -40,6 +44,7 @@ struct CatalogCardView: View {
     let state: CatalogCardState
     var updateTarget: CatalogCardState? = nil
     var isActionEnabled = true
+    var isUninstallEnabled = true
     var showsBottomDivider = true
     let action: (CatalogCardAction) -> Void
 
@@ -47,18 +52,17 @@ struct CatalogCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 14) {
                 CatalogIconView(state: state)
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 3) {
                     name
                     if let description = nonEmptyDescription {
                         CatalogCardDescription(description: description)
-                            .padding(.top, 3)
                     }
                     metadataRow
-                        .padding(.top, 3)
-                    actionRow
-                        .padding(.top, 7)
                 }
-                .frame(maxWidth: .infinity, minHeight: 84, alignment: .leading)
+                .frame(maxWidth: .infinity, minHeight: 62, alignment: .leading)
+
+                trailingControl
+                    .fixedSize()
             }
             .padding(.vertical, 12)
 
@@ -95,14 +99,20 @@ struct CatalogCardView: View {
         }
     }
 
-    private var actionRow: some View {
-        HStack(alignment: .center, spacing: 8) {
+    @ViewBuilder private var trailingControl: some View {
+        if state.progress != .idle {
+            let label: LocalizedStringResource = if state.progress == .queued {
+                LocalizedStringResource("Queued")
+            } else if state.progress == .verifying {
+                ActivityTaskStage.reconciling.title
+            } else {
+                ActivityTaskStage.executing.title
+            }
+            CatalogCircularProgressView(tint: state.primaryAction == .update ? .green : .accentColor)
+                .accessibilityLabel(Text(label))
+        } else {
             controls
-            Spacer(minLength: 0)
-            taskStatus
-                .fixedSize()
         }
-        .frame(minHeight: 24, alignment: .leading)
     }
 
     private var name: some View {
@@ -146,24 +156,6 @@ struct CatalogCardView: View {
         }
     }
 
-    private var taskStatus: some View {
-        HStack(spacing: 8) {
-            if state.progress == .queued {
-                Label("Queued", systemImage: "clock")
-                    .font(.caption)
-                    .fixedSize()
-            } else if state.progress == .running || state.progress == .verifying {
-                HStack(spacing: 4) {
-                    ProgressView().controlSize(.small).accessibilityHidden(true)
-                    Text(state.progress == .verifying ? ActivityTaskStage.reconciling.title : ActivityTaskStage.executing.title)
-                }
-                .font(.caption)
-                .fixedSize()
-                .accessibilityElement(children: .combine)
-            }
-        }
-    }
-
     @ViewBuilder private var controls: some View {
         if state.primaryAction == .uninstall {
             HStack(spacing: 6) {
@@ -180,7 +172,7 @@ struct CatalogCardView: View {
                     Text("Uninstall")
                 }
                 .buttonStyle(CatalogCardPillButtonStyle(tint: .red))
-                .disabled(!isActionEnabled || state.progress != .idle)
+                .disabled(!isUninstallEnabled || state.progress != .idle)
                 .accessibilityLabel(Text("Uninstall \(state.displayName)"))
             }
             .fixedSize()
@@ -193,6 +185,27 @@ struct CatalogCardView: View {
             .disabled(!isActionEnabled || state.progress != .idle)
             .accessibilityLabel(Text("\(actionTitle) \(state.displayName)"))
         }
+    }
+}
+
+/// Compact App Store-style indeterminate circular spinner shown in place of card buttons while queued or running.
+private struct CatalogCircularProgressView: View {
+    var tint: Color = .accentColor
+    @State private var isSpinning = false
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .stroke(tint.opacity(0.22), lineWidth: 2.5)
+            Circle()
+                .trim(from: 0, to: 0.72)
+                .stroke(tint, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                .rotationEffect(.degrees(isSpinning ? 360 : 0))
+                .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: isSpinning)
+        }
+        .frame(width: 22, height: 22)
+        .padding(.horizontal, 6)
+        .onAppear { isSpinning = true }
     }
 }
 

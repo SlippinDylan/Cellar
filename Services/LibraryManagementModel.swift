@@ -198,6 +198,10 @@ final class LibraryUninstallModel: ObservableObject {
 
     func dismissConfirmation() {
         guard !isExecuting else { return }
+        if hasFinished {
+            error = nil
+            failureReason = nil
+        }
         if let preparationID {
             model.logStore?.record(level: .info, category: "uninstall-preview", message: "Preview dismissed", taskID: preparationID)
         }
@@ -256,7 +260,8 @@ final class LibraryUninstallModel: ObservableObject {
     func confirmUninstall() async {
         guard let confirmation, !isExecuting, !hasFinished else { return }
         guard let removal = confirmation.homebrewImpacts.first?.caskRemoval, let requestID = preparationID else {
-            dismissConfirmation()
+            executionState = .running
+            defer { executionState = .finished }
             do { result = try await model.executeBatch(confirmation) }
             catch { self.error = .executionRefused; failureReason = .init(error: error); _ = model.failureMessage(error) }
             return

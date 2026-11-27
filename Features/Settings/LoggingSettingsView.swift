@@ -8,7 +8,10 @@ struct LoggingSettingsView: View {
     @State private var showsDiagnostics = false
 
     var body: some View {
-        SettingsSection(title: "Logging") {
+        SettingsSection(
+            title: "Logging",
+            footer: "Logs contain redacted task summaries. Raw terminal output stays in session diagnostics."
+        ) {
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Log Level")
@@ -39,8 +42,6 @@ struct LoggingSettingsView: View {
                     Text(store.directory.path(percentEncoded: false))
                         .font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Logs contain redacted task summaries. Raw terminal output stays in session diagnostics.")
-                        .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
                 Button("Open Log Folder", systemImage: "folder") {

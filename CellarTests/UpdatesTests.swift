@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import XCTest
 @testable import Cellar
 
@@ -18,6 +19,63 @@ final class UpdatesTests: XCTestCase {
 
     override func tearDownWithError() throws {
         try FileManager.default.removeItem(at: capabilityRoot)
+    }
+
+    func testQueuedFailuresAccumulateAcrossPagesUntilDismissed() {
+        let model = fixtureModel(FakeBatchProvider())
+        model.recordQueuedBatchFailure("first")
+        model.selectedDestination = .home
+        model.recordQueuedBatchFailure("second")
+        XCTAssertEqual(model.queuedBatchFailureMessage, "first\nsecond")
+        model.dismissQueuedBatchFailure()
+        XCTAssertNil(model.queuedBatchFailureMessage)
+        model.recordQueuedBatchFailure("third")
+        XCTAssertEqual(model.queuedBatchFailureMessage, "third")
+    }
+
+    func testQueuedUpdateFailureIsReportedAfterChangingPage() async throws {
+        let model = fixtureModel(FakeBatchProvider(failingNames: ["behind"]))
+        let updates = PackageUpdatesModel(model: model)
+        let reported = expectation(description: "queued update failure reaches app model")
+        let observation = model.$queuedBatchFailureMessage.compactMap { $0 }.sink { _ in reported.fulfill() }
+        defer { observation.cancel() }
+        updates.enqueueUpdate(try XCTUnwrap(model.updateCards.first { $0.displayName == "behind" }))
+        model.selectedDestination = .home
+        await fulfillment(of: [reported], timeout: 3)
+        XCTAssertTrue(try XCTUnwrap(model.queuedBatchFailureMessage).hasPrefix("behind: "))
+        XCTAssertFalse(updates.isQueueActive)
+    }
+
+    func testQueuedNPMUpdateReportsStaleContextAfterNPMSelfUpdate() async throws {
+        let provider = FakeBatchProvider(versionSensitiveNPM: true)
+        let model = fixtureModel(provider)
+        let prior = try XCTUnwrap(model.node)
+        model.node = NodeSnapshot(summary: prior.summary, configuration: prior.configuration,
+                                  packages: [.init(name: "npm", installedVersion: "10.0.0", wantedVersion: nil, latestVersion: "11.0.0")] + prior.packages,
+                                  installations: prior.installations, managerStatus: prior.managerStatus, logs: [], outdatedError: nil,
+                                  maintenanceError: nil, packageEnvironment: prior.packageEnvironment)
+        let updates = PackageUpdatesModel(model: model)
+        let reported = expectation(description: "stale queued item is reported")
+        let observation = model.$queuedBatchFailureMessage.compactMap { $0 }.sink { _ in reported.fulfill() }
+        defer { observation.cancel() }
+        updates.enqueueUpdate(try XCTUnwrap(model.updateCards.first { $0.displayName == "npm" }))
+        updates.enqueueUpdate(try XCTUnwrap(model.updateCards.first { $0.displayName == "behind" }))
+        await fulfillment(of: [reported], timeout: 3)
+        let names = await provider.executedNames()
+        XCTAssertEqual(names, ["npm"])
+        XCTAssertNotEqual(model.node?.summary.npmVersion, context.npmVersion)
+        XCTAssertEqual(model.queuedBatchFailureMessage, "behind: \(String(localized: PackageUpdateError.staleContext.updatesMessage))")
+        XCTAssertFalse(updates.isQueueActive)
+    }
+
+    func testUpdateAllPreparationFailureIsReportedGlobally() async {
+        let model = fixtureModel(FakeBatchProvider())
+        let targets = model.updateCards
+        model.node = nil
+        let updates = PackageUpdatesModel(model: model)
+        await updates.prepareAll(targets, scope: .npm, subtype: .all)
+        XCTAssertNil(updates.confirmation)
+        XCTAssertEqual(model.queuedBatchFailureMessage, String(localized: PackageUpdateError.staleContext.updatesMessage))
     }
 
     func testLibraryPendingFilterIntersectsTypeSubtypeSearchAndCanonicalEligibility() throws {
@@ -254,7 +312,7 @@ final class UpdatesTests: XCTestCase {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appending(path: "Features/Library/LibraryView.swift"), encoding: .utf8)
         XCTAssertFalse(source.contains("updates.isSubmitting, coordinator.activeIntents.isEmpty"))
-        XCTAssertTrue(source.contains("current.context.stage.title"))
+        XCTAssertTrue(source.contains("stage: operationStore.currentOperation?.context.stage"))
         XCTAssertEqual(source.components(separatedBy: "model.updateCards").count, 2, "Build and filter the catalog once per body evaluation")
         XCTAssertFalse(source.contains("private var visible"))
         for (stage, expected) in [(ActivityTaskStage.preparing, "Preparing Task"), (.executing, "Running"), (.reconciling, "Verifying Changes")] {
@@ -422,6 +480,57 @@ final class UpdatesTests: XCTestCase {
         let otherBrew = HomebrewSnapshot(executablePath: "/other/brew", version: brew.version, configuration: brew.configuration, packages: brew.packages,
                                          outdatedPackages: [], taps: brew.taps, sectionErrors: [.outdated: "fixture"], controlledPath: "", commandLineToolsAvailable: true)
         XCTAssertTrue(otherBrew.retainingKnownOutdated(from: brew).outdatedPackages.isEmpty)
+    }
+
+    func testAutoUpdatedCaskExcludedFromBrewOutdatedUsesDetectedAppVersionAndIsNotMarkedBehind() throws {
+        let autoUpdatedCask = HomebrewPackage(
+            identity: .init(name: "alcove", kind: .cask),
+            displayName: "Alcove",
+            description: "Menu-bar utility",
+            homepage: nil,
+            installedVersions: ["0.4.0"],
+            currentVersion: "0.6.0",
+            tap: "slippindylan/tap",
+            dependencies: [],
+            pinned: false,
+            deprecated: false,
+            disabled: false,
+            artifacts: [],
+            detectedAppVersion: "0.6.0"
+        )
+        let staleAutoUpdateCask = HomebrewPackage(
+            identity: .init(name: "ghostty", kind: .cask),
+            displayName: "Ghostty",
+            description: "Terminal emulator",
+            homepage: nil,
+            installedVersions: ["1.3.1"],
+            currentVersion: "1.4.0",
+            tap: "homebrew/cask",
+            dependencies: [],
+            pinned: false,
+            deprecated: false,
+            disabled: false,
+            artifacts: []
+        )
+        let snapshot = HomebrewSnapshot(
+            executablePath: "/fake/brew",
+            version: "5.0.0",
+            configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]),
+            packages: [autoUpdatedCask, staleAutoUpdateCask],
+            outdatedPackages: [],
+            taps: [],
+            sectionErrors: [:],
+            controlledPath: "",
+            commandLineToolsAvailable: true
+        )
+        let cards = LibraryCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded)
+        let updates = UpdatesCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded)
+        let alcove = try XCTUnwrap(cards.first { $0.displayName == "Alcove" })
+        let ghostty = try XCTUnwrap(cards.first { $0.displayName == "Ghostty" })
+        XCTAssertEqual(alcove.currentVersion, "0.6.0")
+        XCTAssertEqual(alcove.versionStatus, .current)
+        XCTAssertEqual(ghostty.versionStatus, .current)
+        XCTAssertTrue(LibraryCatalog.updateTargets(for: cards, from: updates).isEmpty)
     }
 
     func testPageUsesInertSharedCardsAndScopedMenuActionWithoutMetadataUpdate() throws {

@@ -24,6 +24,7 @@ struct OnboardingView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @ObservedObject var model: AppModel
+    @ObservedObject private var operationStore: OperationStore
     @ObservedObject private var dashboard: HomeDashboardModel
     @ObservedObject var onboardingState: OnboardingState
     let isStandaloneWindow: Bool
@@ -42,6 +43,7 @@ struct OnboardingView: View {
     @State private var cltNeedsReinstall = false
 
     @State private var homebrewNeedsReinstall = false
+    @State private var isRefreshingHomebrewAfterInstall = false
     @State private var didConfigureTerminalBrew = false
 
     @State private var isInstallingNode = false
@@ -50,15 +52,18 @@ struct OnboardingView: View {
 
     @State private var requestedOhMyZshInstall = false
     @State private var omzNeedsReinstall = false
+    @State private var retainedShellPlan: ShellActionPlan?
 
     @State private var setupRequest: OnboardingSetupRequest?
     @State private var showsSkipConfirmation = false
+    @State private var showsBusyExitAlert = false
     @State private var fdaOpenFailed = false
     @State private var fdaVerificationRequestID = UUID()
     @State private var reactivationRefreshID: UUID?
 
     init(model: AppModel, onboardingState: OnboardingState, isStandaloneWindow: Bool = true) {
         self.model = model
+        operationStore = model.operationStore
         dashboard = model.homeDashboard
         self.onboardingState = onboardingState
         self.isStandaloneWindow = isStandaloneWindow
@@ -91,24 +96,41 @@ struct OnboardingView: View {
             }
             Button("Continue Setup", role: .cancel) {}
         } message: {
-            Text("You can run the setup guide again anytime from Settings.")
+            Text("You can configure developer tools anytime in Home, Environment, or Settings.")
+        }
+        .alert("Operation in Progress", isPresented: $showsBusyExitAlert) {
+            Button("Got It", role: .cancel) {
+                model.operationStore.dismissTerminationBlockedNotice()
+            }
+        } message: {
+            Text("Wait for the current installation or environment check to finish before quitting Cellar.")
+        }
+        .onChange(of: operationStore.terminationBlockedNotice) { _, blocked in
+            if blocked && isWindowVisible {
+                showsBusyExitAlert = true
+            }
         }
         .sheet(item: onboardingShellPlanBinding) { plan in
             ShellTaskConfirmation(
                 plan: plan,
                 cancel: {
+                    retainedShellPlan = nil
                     requestedOhMyZshInstall = false
-                    omzNeedsReinstall = true
                     model.dismissShellPlan(confirmed: plan)
+                    model.dismissShellFeedback()
                 },
                 confirm: {
-                    Task {
-                        await model.executeShellPlan(confirmed: plan)
-                        requestedOhMyZshInstall = false
-                        if model.shell?.ohMyZshInstalled != true {
-                            omzNeedsReinstall = true
-                        }
+                    retainedShellPlan = plan
+                    model.dismissShellFeedback()
+                    await model.executeShellPlan(confirmed: plan)
+                    if model.shell?.ohMyZshInstalled != true {
+                        omzNeedsReinstall = true
                     }
+                    if let error = model.shellOperationError { return error }
+                    guard let result = model.shellActionResult, result.plan.id == plan.id else {
+                        return String(localized: ActivityItemReason.stateUnavailable.message)
+                    }
+                    return result.operation.exitCode == 0 ? nil : String(localized: ActivityItemReason.providerFailure.message)
                 }
             )
         }
@@ -169,6 +191,8 @@ struct OnboardingView: View {
                 homebrewNeedsReinstall = false
                 let installed = await dashboard.installHomebrewSilently(installation: homebrewInstallation)
                 if installed {
+                    isRefreshingHomebrewAfterInstall = true
+                    defer { isRefreshingHomebrewAfterInstall = false }
                     if dashboard.isHomebrewInShellProfile {
                         didConfigureTerminalBrew = true
                     }
@@ -186,6 +210,7 @@ struct OnboardingView: View {
                 if !installed {
                     nodeNeedsReinstall = true
                     nodeInstallError = model.homebrewOperationError
+                    model.dismissHomebrewFeedback()
                 }
             case .finishInstaller:
                 if await dashboard.finishInstallerHandoff() {
@@ -210,6 +235,7 @@ struct OnboardingView: View {
             cltStartedAt = nil
             cltNeedsReinstall = false
             homebrewNeedsReinstall = false
+            isRefreshingHomebrewAfterInstall = false
             didConfigureTerminalBrew = false
             isInstallingNode = false
             nodeNeedsReinstall = false
@@ -221,8 +247,12 @@ struct OnboardingView: View {
             setupRequest = nil
             reactivationRefreshID = nil
             showsSkipConfirmation = false
+            showsBusyExitAlert = false
             requestedOhMyZshInstall = false
+            retainedShellPlan = nil
             fdaOpenFailed = false
+            model.dismissHomebrewFeedback()
+            model.dismissShellFeedback()
         }
     }
 
@@ -351,7 +381,7 @@ struct OnboardingView: View {
         ) {
             if isHomebrewInstalled {
                 installedCheckmark
-            } else if isInstalling || isProbing {
+            } else if isInstalling || isCheckingHomebrew {
                 ProgressView()
                     .controlSize(.small)
             } else if homebrewInstallation == .notInstalled {
@@ -516,6 +546,8 @@ struct OnboardingView: View {
                             .overlay(Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
+                    .disabled(isOnboardingBusy)
+                    .opacity(isOnboardingBusy ? 0.35 : 1)
                     .accessibilityLabel("Back")
                     .help("Back")
                 }
@@ -530,6 +562,8 @@ struct OnboardingView: View {
                         .background(Color.primary, in: Circle())
                 }
                 .buttonStyle(.plain)
+                .disabled(isOnboardingBusy)
+                .opacity(isOnboardingBusy ? 0.35 : 1)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityLabel(primaryActionTitle)
                 .help(primaryActionTitle)
@@ -559,6 +593,23 @@ struct OnboardingView: View {
 
     private var isCheckingCLT: Bool {
         !hasCompletedInitialProbe && (dashboard.commandLineTools == .notLoaded || dashboard.commandLineTools == .loading)
+    }
+
+    private var isCheckingHomebrew: Bool {
+        isProbing || isRefreshingHomebrewAfterInstall || (model.isRefreshing && !isHomebrewInstalled)
+    }
+
+    private var isOnboardingBusy: Bool {
+        isProbing
+            || isCheckingCLT
+            || isCheckingHomebrew
+            || isWaitingForCLT
+            || dashboard.setupState == .requestingCommandLineTools
+            || dashboard.setupState == .preparingInstaller
+            || isInstallingNode
+            || model.isShellWorking
+            || model.isRefreshing
+            || model.operationStore.hasActiveOperations
     }
 
     private var isCLTInstalled: Bool {
@@ -617,7 +668,6 @@ struct OnboardingView: View {
     }
 
     private var homebrewSubtitle: Text {
-        if isProbing { return Text("Checking…") }
         if case .installed(let info) = homebrewInstallation {
             if didConfigureTerminalBrew {
                 return Text("Installed (\(info.version)) · Ready in new Terminal windows.")
@@ -633,6 +683,7 @@ struct OnboardingView: View {
             case nil: return Text("Preparing System Installation")
             }
         }
+        if isCheckingHomebrew { return Text("Checking…") }
         if case .failed(.homebrew(let failure)) = dashboard.setupState { return Text(HomeSetupFailure.homebrew(failure).message) }
         if homebrewInstallation == .commandLineToolsRequired { return Text("Install Command Line Tools first.") }
         if case .unavailable = homebrewInstallation { return Text("Homebrew is unavailable. Check the official website for guidance.") }
@@ -670,6 +721,7 @@ struct OnboardingView: View {
     private var onboardingShellPlanBinding: Binding<ShellActionPlan?> {
         Binding(
             get: {
+                if let retainedShellPlan { return retainedShellPlan }
                 guard requestedOhMyZshInstall, let plan = model.shellPlan, plan.request.action == .installOhMyZsh else {
                     return nil
                 }
@@ -677,11 +729,12 @@ struct OnboardingView: View {
             },
             set: { newValue in
                 if newValue == nil {
+                    retainedShellPlan = nil
                     requestedOhMyZshInstall = false
                     if let plan = model.shellPlan, plan.request.action == .installOhMyZsh {
-                        omzNeedsReinstall = true
                         model.dismissShellPlan(confirmed: plan)
                     }
+                    model.dismissShellFeedback()
                 }
             }
         )
@@ -712,6 +765,7 @@ struct OnboardingView: View {
     }
 
     private func advance() {
+        guard !isOnboardingBusy else { return }
         if let next = step.next {
             withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
                 step = next
@@ -723,6 +777,10 @@ struct OnboardingView: View {
 
     private func handleWindowShouldClose() -> Bool {
         if closeController.allowsClose || onboardingState.isCompleted { return true }
+        if isOnboardingBusy {
+            showsBusyExitAlert = true
+            return false
+        }
         if step == .complete {
             finishAndOpenMainWindow()
             return isStandaloneWindow

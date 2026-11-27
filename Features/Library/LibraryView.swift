@@ -49,6 +49,9 @@ struct LibraryView: View {
         .sheet(item: Binding(get: { updates.confirmation }, set: { if $0 == nil { updates.dismissConfirmation() } })) { confirmation in
             UpdatesConfirmationSheet(confirmation: confirmation, updates: updates)
         }
+        .onDisappear {
+            updates.cancelPendingQueue()
+        }
         .task(id: model.refreshedAt) {
             if model.checkedOutdatedRefresh != model.refreshedAt { await model.refreshHomeBackground(after: model.refreshedAt) }
         }
@@ -56,44 +59,40 @@ struct LibraryView: View {
 
     private func libraryContent(cards: [CatalogCardState], scopedCount: Int, updateTargets: [CatalogCardState]) -> some View {
         let state = LibraryContentState(readStates: readStates(for: selectedTab.scope), totalCount: scopedCount, matchCount: cards.count)
+        let queued = Set(updates.queuedItems)
+        let active = updates.activeItem
+        let displayCards = cards.map { base -> CatalogCardState in
+            let progress: CatalogCardProgress = if base.progress != .idle {
+                base.progress
+            } else if active == base.batchItem {
+                .running
+            } else if queued.contains(base.batchItem) {
+                .queued
+            } else {
+                .idle
+            }
+            if progress == base.progress { return base }
+            return CatalogCardState(
+                identity: base.identity,
+                displayName: base.displayName,
+                description: base.description,
+                currentVersion: base.currentVersion,
+                availableVersion: base.availableVersion,
+                versionStatus: base.versionStatus,
+                websiteURL: base.websiteURL,
+                progress: progress,
+                primaryAction: base.primaryAction,
+                icon: base.icon
+            ) ?? base
+        }
         let updateTargetIDs = Set(updateTargets.map(\.identity))
-        let pendingCards = cards.filter { $0.versionStatus == .behind || updateTargetIDs.contains($0.identity) }
-        let installedCards = cards.filter { !($0.versionStatus == .behind || updateTargetIDs.contains($0.identity)) }
+        let pendingCards = displayCards.filter { updateTargetIDs.contains($0.identity) }
+        let installedCards = displayCards.filter { !updateTargetIDs.contains($0.identity) }
         return GeometryReader { viewport in
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     providerWarnings(for: selectedTab.scope)
-                    if updates.isSubmitting, let current = operationStore.currentOperation {
-                        ProgressView { Text(current.context.stage.title) }
-                    }
-                    if let error = updates.error { Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.circle") } }
-                    if let result = updates.result { UpdatesResultView(result: result, dismiss: updates.dismissResult) }
-                    if let error = uninstall.error {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(error.libraryMessage).foregroundStyle(.secondary)
-                                if let reason = uninstall.failureReason {
-                                    Text(reason.message).foregroundStyle(.secondary)
-                                }
-                            }
-                            Spacer()
-                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
-                                .labelStyle(.iconOnly).buttonStyle(.plain)
-                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
-                                .help("Dismiss Feedback")
-                        }
-                    } else if let reason = uninstall.failureReason {
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
-                            Text(reason.message).foregroundStyle(.secondary)
-                            Spacer()
-                            Button("Dismiss Feedback", systemImage: "xmark", action: uninstall.dismissError)
-                                .labelStyle(.iconOnly).buttonStyle(.plain)
-                                .frame(minWidth: 24, minHeight: 24).contentShape(Rectangle())
-                                .help("Dismiss Feedback")
-                        }
-                    }
-                    if let result = uninstall.result { LibraryResultView(result: result, dismiss: uninstall.dismissResult) }
-                    if !cards.isEmpty {
+                    if !displayCards.isEmpty {
                         if !pendingCards.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
                                 DashboardSectionHeader("Pending Updates", systemImage: "arrow.up.circle.fill", tint: .orange) {
@@ -117,17 +116,19 @@ struct LibraryView: View {
                     } else { emptyContent(state) }
                 }
                 .frame(maxWidth: .infinity, minHeight: max(0, viewport.size.height - AppLayout.spacing * 2),
-                       alignment: cards.isEmpty ? .center : .topLeading)
+                       alignment: displayCards.isEmpty ? .center : .topLeading)
             }
             .contentMargins(AppLayout.spacing, for: .scrollContent)
         }
     }
 
     private func catalogGrid(_ states: [CatalogCardState], updateTargets: [CatalogCardState]) -> some View {
-        CatalogCardGrid(states: states, minimumCardWidth: 360, updateTargets: updateTargets, isActionEnabled: canPerformAction,
+        CatalogCardGrid(states: states, minimumCardWidth: 360, updateTargets: updateTargets,
+                        isActionEnabled: updates.confirmation == nil && uninstall.presentedItem == nil && !model.isRefreshing,
+                        isUninstallEnabled: canPerformAction,
                         isItemActionEnabled: { model.canMutatePackages(in: $0.batchItem.scope) }) { card, action in
             switch action {
-            case .update: Task { await updates.update(card) }
+            case .update: updates.enqueueUpdate(card)
             case .uninstall: Task { await uninstall.prepare(card.batchItem) }
             case .install: preconditionFailure("The installed library does not offer installation")
             }
@@ -135,7 +136,7 @@ struct LibraryView: View {
     }
 
     private var canPerformAction: Bool {
-        !model.isBusy && !updates.isSubmitting && updates.confirmation == nil && uninstall.presentedItem == nil
+        !model.isBusy && !updates.isSubmitting && !updates.isQueueActive && updates.confirmation == nil && uninstall.presentedItem == nil
     }
 
     private func prepareAll(_ targets: [CatalogCardState], scope: CatalogScope, subtype: LibraryHomebrewSubtype) {

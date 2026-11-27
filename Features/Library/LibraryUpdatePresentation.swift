@@ -6,43 +6,78 @@ struct UpdatesConfirmationSheet: View {
     @Environment(\.dismiss) private var dismiss
     private var eligibleCount: String { String(confirmation.plan.executableCount) }
     private var totalCount: String { String(confirmation.plan.groups.reduce(0) { $0 + $1.items.count }) }
+    private var hasFinished: Bool { !updates.isSubmitting && (updates.result != nil || updates.error != nil) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Update All in This Scope").font(.title2.bold())
-            Text(confirmation.scope == .homebrew && confirmation.subtype != .all ? (confirmation.subtype == .formula ? LocalizedStringResource("Homebrew · Formula") : LocalizedStringResource("Homebrew · Cask")) : confirmation.scope.libraryTitle)
-            Text("\(eligibleCount) of \(totalCount) Items Can Be Updated")
-            Text("Updates run one item at a time. A failure does not stop other items. Completed updates cannot be rolled back.")
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    ForEach(confirmation.plan.groups) { group in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(group.intent.scope.updatesTitle).font(.headline)
-                            if let binding = group.npmBindings.first {
-                                Text("Node Environment: \(binding.environment.nodeVersion) · npm \(binding.environment.npmVersion)")
-                                DiscoverNPMDestinationView(destination: binding.destination)
-                            }
-                            ForEach(group.items) { item in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(item.item.displayIdentifier).textSelection(.enabled)
-                                    Text(item.status.updatesTitle).foregroundStyle(.secondary)
-                                    if let binding = group.npmBindings.first(where: { $0.item == item.item }) {
-                                        if let target = binding.targetVersion { Text("Available: \(target)") }
-                                        Text("Registry: \(binding.registryURL.absoluteString)").foregroundStyle(.secondary)
+        MaintenanceModalFrame(
+            title: LocalizedStringResource("Update All in This Scope"),
+            systemImage: "arrow.up.circle.fill",
+            tint: .green
+        ) {
+            if updates.isSubmitting {
+                Text("Running").foregroundStyle(.secondary)
+            } else if hasFinished {
+                Text("Update Results").foregroundStyle(.secondary)
+            } else {
+                Text("\(eligibleCount) of \(totalCount) Items Can Be Updated").foregroundStyle(.secondary)
+            }
+        } content: {
+            if updates.isSubmitting {
+                MaintenanceLoadingState(title: LocalizedStringResource("Updating…"))
+            } else if let result = updates.result {
+                UpdatesResultView(result: result)
+            } else if let error = updates.error {
+                Label { Text(error.updatesMessage) } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Updates run one item at a time. A failure does not stop other items. Completed updates cannot be rolled back.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    MaintenanceDetailWell(maxHeight: 280) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            ForEach(confirmation.plan.groups) { group in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(group.intent.scope.updatesTitle).font(.headline)
+                                    if let binding = group.npmBindings.first {
+                                        Text("Node Environment: \(binding.environment.nodeVersion) · npm \(binding.environment.npmVersion)")
+                                            .font(.callout).foregroundStyle(.secondary)
+                                        DiscoverNPMDestinationView(destination: binding.destination)
                                     }
-                                }.accessibilityElement(children: .combine)
+                                    ForEach(group.items) { item in
+                                        VStack(alignment: .leading, spacing: 3) {
+                                            Text(item.item.displayIdentifier).textSelection(.enabled)
+                                            Text(item.status.updatesTitle).font(.callout).foregroundStyle(.secondary)
+                                            if let binding = group.npmBindings.first(where: { $0.item == item.item }) {
+                                                if let target = binding.targetVersion { Text("Available: \(target)").font(.callout) }
+                                                Text("Registry: \(binding.registryURL.absoluteString)").font(.caption).foregroundStyle(.secondary)
+                                            }
+                                        }.accessibilityElement(children: .combine)
+                                    }
+                                }
                             }
                         }
                     }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(maxHeight: 320)
-            HStack {
-                Spacer()
+                }
+            }
+        } footer: {
+            Spacer()
+            if updates.isSubmitting {
+                Text("Updating…").foregroundStyle(.secondary)
+            } else if hasFinished {
+                Button("OK") { updates.dismissConfirmation(); dismiss() }
+                    .buttonStyle(.glassProminent)
+                    .tint(.green)
+                    .keyboardShortcut(.defaultAction)
+            } else {
                 Button("Cancel", role: .cancel) { updates.dismissConfirmation(); dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Update All") { Task { await updates.confirmUpdateAll() } }
-                    .keyboardShortcut(.defaultAction).disabled(confirmation.plan.executableCount == 0)
+                    .buttonStyle(.glassProminent)
+                    .tint(.green)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(confirmation.plan.executableCount == 0)
             }
-        }.padding(24).constrainedSheetWidth(520)
+        }
+        .interactiveDismissDisabled(updates.isSubmitting)
     }
 }
 

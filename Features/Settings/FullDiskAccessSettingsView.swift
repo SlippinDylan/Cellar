@@ -9,11 +9,12 @@ struct FullDiskAccessSettingsView: View {
     @State private var openFailed = false
 
     var body: some View {
-        SettingsSection(title: "Full Disk Access") {
+        SettingsSection(
+            title: "Full Disk Access",
+            footer: "Inspect protected application data during uninstallation."
+        ) {
             HStack(spacing: 24) {
-                Text("Inspect protected application data during uninstallation.")
-                    .font(.callout).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                Text("Full Disk Access")
                 Spacer(minLength: 0)
                 Button {
                     // Opening the settings pane does not establish whether access has been granted.
@@ -32,7 +33,7 @@ struct FullDiskAccessSettingsView: View {
                 .help("Open System Settings")
                 .fixedSize()
             }
-            .frame(minHeight: AppLayout.minimumDescribedRowHeight)
+            .frame(minHeight: AppLayout.minimumControlRowHeight)
             if verification.result == .denied {
                 Text("Access is blocked. Check Full Disk Access in System Settings.")
                     .font(.callout).foregroundStyle(.secondary)

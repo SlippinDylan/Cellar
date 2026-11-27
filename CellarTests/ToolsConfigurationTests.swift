@@ -15,15 +15,11 @@ final class ToolsConfigurationTests: XCTestCase {
     func testTapConfirmationBoundsAssociatedItemsAndKeepsActionsOutsideScrollingContent() throws {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         let source = try String(contentsOf: root.appending(path: "Features/Settings/TapTaskConfirmation.swift"), encoding: .utf8)
-        XCTAssertTrue(source.contains("ScrollView"))
+        XCTAssertTrue(source.contains("MaintenanceDetailWell"))
         XCTAssertTrue(source.contains("LazyVStack"))
-        XCTAssertTrue(source.contains(".frame(maxHeight: 240)"))
         XCTAssertTrue(source.contains(".keyboardShortcut(.cancelAction)"))
-        XCTAssertFalse(source.contains(".keyboardShortcut(.defaultAction)"))
-        if source.contains(".frame(maxHeight: 240)") {
-            let scrollEnd = try XCTUnwrap(source.range(of: ".frame(maxHeight: 240)"))
-            let cancel = try XCTUnwrap(source.range(of: "Button(\"Cancel\""))
-            XCTAssertTrue(scrollEnd.lowerBound < cancel.lowerBound)
+        if let well = source.range(of: "MaintenanceDetailWell"), let cancel = source.range(of: "Button(\"Cancel\"") {
+            XCTAssertTrue(well.lowerBound < cancel.lowerBound)
         }
     }
 
@@ -38,11 +34,11 @@ final class ToolsConfigurationTests: XCTestCase {
             } else {
                 source = fileSource
             }
-            XCTAssertTrue(source.contains(".frame(maxHeight: 280)"), file)
-            if let scrollEnd = source.range(of: ".frame(maxHeight: 280)"), let cancel = source.range(of: "Button(\"Cancel\"") {
-                XCTAssertTrue(scrollEnd.lowerBound < cancel.lowerBound, file)
+            XCTAssertTrue(source.contains("MaintenanceDetailWell"), file)
+            if let well = source.range(of: "MaintenanceDetailWell"), let cancel = source.range(of: "Button(\"Cancel\"") {
+                XCTAssertTrue(well.lowerBound < cancel.lowerBound, file)
             }
-            XCTAssertFalse(source.contains(".keyboardShortcut(.defaultAction)"), file)
+            XCTAssertTrue(source.contains(".keyboardShortcut(.cancelAction)"), file)
         }
     }
 

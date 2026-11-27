@@ -33,6 +33,7 @@ struct HomebrewPackage: Identifiable, Sendable {
     var aliases: [String] = []
     var oldTokens: [String] = []
     var installedCaskToken: String? = nil
+    var detectedAppVersion: String? = nil
 
     var id: HomebrewPackageIdentity { identity }
     var isInstalled: Bool { !installedVersions.isEmpty }

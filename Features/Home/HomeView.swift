@@ -1,8 +1,20 @@
 import AppKit
 import SwiftUI
 
-private enum HomeSetupRequest: Equatable {
-    case commandLineTools, homebrew, finishInstaller
+private enum HomeSetupModalAction: String, Identifiable {
+    case commandLineTools, homebrew, node
+    var id: String { rawValue }
+}
+
+private enum HomeSetupOutcome {
+    case success(LocalizedStringResource)
+    case failure(LocalizedStringResource)
+    case failureText(String)
+
+    var succeeded: Bool {
+        if case .success = self { return true }
+        return false
+    }
 }
 
 private enum HomeMetricPalette {
@@ -32,7 +44,8 @@ private enum HomeMetricPalette {
 struct HomeView: View {
     @ObservedObject var model: AppModel
     @ObservedObject private var dashboard: HomeDashboardModel
-    @State private var setupRequest: HomeSetupRequest?
+    @State private var activeSetupAction: HomeSetupModalAction?
+    @State private var finishInstallerRequested = false
 
     init(model: AppModel) {
         self.model = model
@@ -54,19 +67,13 @@ struct HomeView: View {
             guard !model.isRefreshing else { return }
             await model.refreshHomeBackground(after: model.refreshedAt)
         }
-        .task(id: setupRequest) {
-            guard let request = setupRequest else { return }
-            switch request {
-            case .commandLineTools: await dashboard.requestCommandLineTools(installation: .commandLineToolsRequired)
-            case .homebrew:
-                if await dashboard.installHomebrewSilently(installation: installation) {
-                    await model.refresh()
-                    dashboard.refreshShellProfileState()
-                }
-            case .finishInstaller:
-                if await dashboard.finishInstallerHandoff() { await model.refresh() }
-            }
-            setupRequest = nil
+        .task(id: finishInstallerRequested) {
+            guard finishInstallerRequested else { return }
+            if await dashboard.finishInstallerHandoff() { await model.refresh() }
+            finishInstallerRequested = false
+        }
+        .sheet(item: $activeSetupAction) { action in
+            HomeSetupSheet(action: action, model: model, dashboard: dashboard, installation: installation)
         }
     }
 
@@ -99,7 +106,7 @@ struct HomeView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Button("Install Node with Homebrew") {
-                        Task { _ = await model.installNodeWithHomebrew() }
+                        activeSetupAction = .node
                     }
                         .disabled(model.isBusy)
                 }
@@ -319,7 +326,7 @@ struct HomeView: View {
         switch dashboard.commandLineTools {
         case .available(.notInstalled):
             Text("Homebrew needs Apple’s Command Line Tools. macOS handles the installation.")
-            Button("Install Command Line Tools…") { setupRequest = .commandLineTools }
+            Button("Install Command Line Tools…") { activeSetupAction = .commandLineTools }
                 .disabled(model.isBusy)
         case .failed:
             inlineWarning("Command Line Tools could not be checked. Refresh to try again.")
@@ -327,44 +334,32 @@ struct HomeView: View {
             EmptyView()
         }
 
-        switch dashboard.setupState {
-        case .requestingCommandLineTools:
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Preparing System Installation")
+        if activeSetupAction == nil {
+            switch dashboard.setupState {
+            case .commandLineToolsRequested:
+                Text("Installation requested. Finish in the system dialog, then refresh.")
+            case .failed(.commandLineTools):
+                inlineWarning(HomeSetupFailure.commandLineTools.message)
+            case .idle, .requestingCommandLineTools, .preparingInstaller, .installerOpened, .failed(.homebrew):
+                EmptyView()
             }
-        case .commandLineToolsRequested:
-            Text("Installation requested. Finish in the system dialog, then refresh.")
-        case .failed(.commandLineTools):
-            inlineWarning(HomeSetupFailure.commandLineTools.message)
-        case .idle, .preparingInstaller, .installerOpened, .failed(.homebrew):
-            EmptyView()
         }
     }
 
     @ViewBuilder private var homebrewSetup: some View {
         if dashboard.installerHandoffPending {
             Text("Installer Opened. Complete or cancel the installation in macOS Installer, then recheck. Opening Installer does not confirm installation.")
-            Button("Finished in Installer — Recheck") { setupRequest = .finishInstaller }
+            Button("Finished in Installer — Recheck") { finishInstallerRequested = true }
                 .disabled(model.isBusy)
         } else if installation == .notInstalled {
             Label("Homebrew Not Installed", systemImage: "minus.circle")
-            Text("Cellar verifies the official signed package. macOS Installer handles authorization and installation.")
-            Button("Open Homebrew Installer…") { setupRequest = .homebrew }
+            Button("Install Now") { activeSetupAction = .homebrew }
                 .disabled(model.isBusy)
         } else if case .unavailable = installation {
             inlineWarning("Homebrew is unavailable. Refresh or use the official recovery guidance; existing files will not be replaced.")
         }
-        switch dashboard.setupState {
-        case .preparingInstaller:
-            HStack {
-                ProgressView().controlSize(.small)
-                Text("Preparing System Installation")
-            }
-        case .failed(.homebrew(let failure)):
+        if activeSetupAction == nil, case .failed(.homebrew(let failure)) = dashboard.setupState {
             inlineWarning(HomeSetupFailure.homebrew(failure).message)
-        case .idle, .requestingCommandLineTools, .commandLineToolsRequested, .installerOpened, .failed(.commandLineTools):
-            EmptyView()
         }
     }
 
@@ -380,6 +375,166 @@ struct HomeView: View {
     private func inlineWarning(_ message: LocalizedStringResource) -> some View {
         Label { Text(message) } icon: { Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange) }
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct HomeSetupSheet: View {
+    let action: HomeSetupModalAction
+    @ObservedObject var model: AppModel
+    @ObservedObject var dashboard: HomeDashboardModel
+    let installation: HomebrewInstallationState
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isRunning = true
+    @State private var hasStarted = false
+    @State private var outcome: HomeSetupOutcome?
+
+    var body: some View {
+        MaintenanceModalFrame(
+            title: title,
+            systemImage: systemImage,
+            tint: tint
+        ) {
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else if let outcome {
+                Text(outcome.succeeded ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
+                    .foregroundStyle(outcome.succeeded ? .green : .orange)
+            }
+        } content: {
+            if isRunning {
+                MaintenanceLoadingState(title: loadingTitle)
+            } else if let outcome {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: outcome.succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(outcome.succeeded ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(outcome.succeeded ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
+                            .font(.headline)
+                        switch outcome {
+                        case .success(let detail), .failure(let detail):
+                            Text(detail)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        case .failureText(let message):
+                            Text(verbatim: message)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            }
+        } footer: {
+            Spacer()
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else {
+                Button("OK") { dismiss() }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .interactiveDismissDisabled(isRunning)
+        .onAppear { model.beginModalPresentation() }
+        .onDisappear {
+            model.dismissHomebrewFeedback()
+            model.endModalPresentation()
+        }
+        .task {
+            guard !hasStarted else { return }
+            hasStarted = true
+            isRunning = true
+            defer { isRunning = false }
+            switch action {
+            case .commandLineTools:
+                await dashboard.requestCommandLineTools(installation: .commandLineToolsRequired)
+                if dashboard.setupState == .commandLineToolsRequested {
+                    outcome = .success(LocalizedStringResource("Installation requested. Finish in the system dialog, then refresh."))
+                } else if case .failed(.commandLineTools) = dashboard.setupState {
+                    outcome = .failure(HomeSetupFailure.commandLineTools.message)
+                } else {
+                    outcome = .failure(LocalizedStringResource("Operation Failed"))
+                }
+            case .homebrew:
+                let installed = await dashboard.installHomebrewSilently(installation: installation)
+                if installed {
+                    await model.refresh()
+                    dashboard.refreshShellProfileState()
+                    if let version = model.homebrew?.version {
+                        let normalized = HomeVersion.normalized(version)
+                        outcome = .success(LocalizedStringResource("Installed (\(normalized))"))
+                    } else {
+                        outcome = .success(LocalizedStringResource("Installed"))
+                    }
+                } else if case .failed(.homebrew(let failure)) = dashboard.setupState {
+                    outcome = .failure(HomeSetupFailure.homebrew(failure).message)
+                } else {
+                    outcome = .failure(LocalizedStringResource("Operation Failed"))
+                }
+            case .node:
+                let installed = await model.installNodeWithHomebrew()
+                if installed {
+                    if let version = model.node?.summary.nodeVersion {
+                        let normalized = HomeVersion.normalized(version)
+                        outcome = .success(LocalizedStringResource("Node \(normalized)"))
+                    } else {
+                        outcome = .success(LocalizedStringResource("Installed"))
+                    }
+                } else if let error = model.homebrewOperationError {
+                    outcome = .failureText(error)
+                } else {
+                    outcome = .failure(LocalizedStringResource("Operation Failed"))
+                }
+            }
+        }
+    }
+
+    private var title: LocalizedStringResource {
+        switch action {
+        case .commandLineTools: LocalizedStringResource("Command Line Tools")
+        case .homebrew: LocalizedStringResource("Homebrew")
+        case .node: LocalizedStringResource("Install Node with Homebrew")
+        }
+    }
+
+    private var systemImage: String {
+        switch action {
+        case .commandLineTools: "hammer.fill"
+        case .homebrew: "mug.fill"
+        case .node: "shippingbox.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch action {
+        case .commandLineTools: HomeMetricPalette.commandLineTools
+        case .homebrew: HomeMetricPalette.homebrew
+        case .node: HomeMetricPalette.node
+        }
+    }
+
+    private var loadingTitle: LocalizedStringResource {
+        switch action {
+        case .commandLineTools:
+            LocalizedStringResource("Preparing System Installation")
+        case .homebrew:
+            switch dashboard.homebrewInstallProgress {
+            case .fetchingRelease: LocalizedStringResource("Fetching official Homebrew release…")
+            case .downloading: LocalizedStringResource("Downloading official Homebrew installer…")
+            case .verifying: LocalizedStringResource("Verifying official package…")
+            case .installing: LocalizedStringResource("Installing Homebrew…")
+            case nil: LocalizedStringResource("Preparing System Installation")
+            }
+        case .node:
+            LocalizedStringResource("Installing Node.js with Homebrew…")
+        }
     }
 }
 

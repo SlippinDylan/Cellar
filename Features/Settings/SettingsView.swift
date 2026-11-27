@@ -1,7 +1,6 @@
 import SwiftUI
 
 struct SettingsView: View {
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
     @ObservedObject var relaunchController: ApplicationRelaunchController
     @ObservedObject var operationStore: OperationStore
@@ -48,17 +47,14 @@ struct SettingsView: View {
 
     private var generalPane: some View {
         SettingsPage {
-            SettingsSection(title: "Language") {
+            SettingsSection(
+                title: "Language",
+                footer: operationStore.hasActiveOperations
+                    ? LocalizedStringResource("Wait for the current task to finish before changing the language.")
+                    : LocalizedStringResource("Changing the language restarts Cellar.")
+            ) {
                 HStack(spacing: 24) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Language")
-                        Text(operationStore.hasActiveOperations
-                             ? LocalizedStringResource("Wait for the current task to finish before changing the language.")
-                             : LocalizedStringResource("Changing the language restarts Cellar."))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+                    Text("Language")
                     Spacer(minLength: 0)
                     Picker("Language", selection: languageSelection) {
                         ForEach(ApplicationLanguage.allCases) { language in
@@ -70,23 +66,9 @@ struct SettingsView: View {
                     .frame(width: 180)
                     .disabled(operationStore.hasActiveOperations)
                 }
-                .frame(minHeight: AppLayout.minimumDescribedRowHeight)
+                .frame(minHeight: AppLayout.minimumControlRowHeight)
             }
             FullDiskAccessSettingsView()
-            SettingsSection(title: "Setup Guide") {
-                HStack(spacing: 24) {
-                    Text("Review your developer tools and permissions with the setup guide.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    Button("Open Setup Guide") {
-                        openWindow(id: AppScene.onboardingWindowID)
-                    }
-                    .fixedSize()
-                }
-                .frame(minHeight: AppLayout.minimumDescribedRowHeight)
-            }
             if let logStore = model.logStore { LoggingSettingsView(store: logStore, diagnostics: model.activityDiagnostics) }
         }
     }

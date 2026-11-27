@@ -4,6 +4,8 @@ struct RuntimeToolsView: View {
     @ObservedObject var model: AppModel
     @State private var installations: [NodeInstallation] = []
     @State private var showsInstallation = false
+    @State private var nodeToUse: NodeInstallation?
+    @State private var showsHomebrewNodeInstall = false
     @State private var installationsLoaded = false
 
     init(model: AppModel) {
@@ -14,9 +16,17 @@ struct RuntimeToolsView: View {
         model.nvmInstalled
     }
 
+    private var nvmSectionFooter: LocalizedStringResource? {
+        switch nvmAvailable {
+        case true: nil
+        case false: "nvm manages multiple Node versions. Install it using the official guide to add or switch versions here."
+        case nil: "Check nvm availability before managing Node versions."
+        }
+    }
+
     var body: some View {
         SettingsPage(fillsViewport: true) {
-            SettingsSection(title: "nvm", website: CatalogWebsites.nvm, websiteTitle: "nvm Installation Guide") {
+            SettingsSection(title: "nvm", website: CatalogWebsites.nvm, websiteTitle: "nvm Installation Guide", footer: nvmSectionFooter) {
                 if model.node == nil && model.homebrew?.isInstalled == true {
                     HStack(spacing: 12) {
                         Text("Install Node.js directly with Homebrew without setting up nvm.")
@@ -25,7 +35,7 @@ struct RuntimeToolsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 0)
                         Button("Install Node with Homebrew") {
-                            Task { _ = await model.installNodeWithHomebrew() }
+                            showsHomebrewNodeInstall = true
                         }
                         .disabled(model.isBusy)
                         .fixedSize()
@@ -34,21 +44,10 @@ struct RuntimeToolsView: View {
                     Divider()
                 }
                 HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        switch nvmAvailable {
-                        case true: Label("Installed", systemImage: "checkmark.circle")
-                        case false: Text("Not Installed").foregroundStyle(.secondary)
-                        case nil: Text("Not Checked").foregroundStyle(.secondary)
-                        }
-                        switch nvmAvailable {
-                        case true: EmptyView()
-                        case false:
-                            Text("nvm manages multiple Node versions. Install it using the official guide to add or switch versions here.")
-                                .font(.callout).foregroundStyle(.secondary)
-                        case nil:
-                            Text("Check nvm availability before managing Node versions.")
-                                .font(.callout).foregroundStyle(.secondary)
-                        }
+                    switch nvmAvailable {
+                    case true: Label("Installed", systemImage: "checkmark.circle")
+                    case false: Text("Not Installed").foregroundStyle(.secondary)
+                    case nil: Text("Not Checked").foregroundStyle(.secondary)
                     }
                     Spacer()
                     Button("Recheck") {
@@ -81,10 +80,28 @@ struct RuntimeToolsView: View {
             installationsLoaded = true
         }
         .sheet(isPresented: $showsInstallation) {
-            NodeInstallationSheet(model: model, canInstall: nvmAvailable == true) { version in
-                showsInstallation = false
-                Task { await model.performDirectNodeAction(.init(action: .installNode, subject: version)) }
-            }
+            NodeInstallationSheet(model: model, canInstall: nvmAvailable == true)
+                .onAppear { model.beginModalPresentation() }
+                .onDisappear {
+                    model.dismissNodeFeedback()
+                    model.endModalPresentation()
+                }
+        }
+        .sheet(item: $nodeToUse) { installation in
+            NodeDirectActionSheet(model: model, request: .init(action: .useNode, subject: installation.version))
+                .onAppear { model.beginModalPresentation() }
+                .onDisappear {
+                    model.dismissNodeFeedback()
+                    model.endModalPresentation()
+                }
+        }
+        .sheet(isPresented: $showsHomebrewNodeInstall) {
+            NodeHomebrewInstallSheet(model: model)
+                .onAppear { model.beginModalPresentation() }
+                .onDisappear {
+                    model.dismissHomebrewFeedback()
+                    model.endModalPresentation()
+                }
         }
     }
 
@@ -130,7 +147,7 @@ struct RuntimeToolsView: View {
                     if item.isActive { Label("Used by Cellar", systemImage: "checkmark.circle").foregroundStyle(.secondary) }
                     if item.isDefault { Label("Default", systemImage: "star").foregroundStyle(.secondary) }
                     Spacer()
-                    Button("Use for Cellar") { Task { await model.performDirectNodeAction(.init(action: .useNode, subject: item.version)) } }
+                    Button("Use for Cellar") { nodeToUse = item }
                         .disabled(item.isActive || model.isBusy)
                     Menu {
                         Button("Set as Default…") { Task { await model.prepareNodeAction(.init(action: .setDefaultNode, subject: item.version)) } }
@@ -155,14 +172,22 @@ struct RuntimeToolsView: View {
 private struct NodeInstallationSheet: View {
     @ObservedObject var model: AppModel
     let canInstall: Bool
-    let install: (String) -> Void
     @StateObject private var runtime = RuntimeToolsModel()
     @State private var selectedRelease = ""
+    @State private var versionToInstall: String?
     @State private var didLoad = false
     @State private var retryTask: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        if let versionToInstall {
+            NodeDirectActionSheet(model: model, request: .init(action: .installNode, subject: versionToInstall))
+        } else {
+            installationForm
+        }
+    }
+
+    private var installationForm: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Install Node Version").font(.title2.bold())
             Text("Choose an official Node version to install with nvm.").foregroundStyle(.secondary)
@@ -189,7 +214,7 @@ private struct NodeInstallationSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-                Button("Install Node") { install(selectedRelease) }
+                Button("Install Node") { versionToInstall = selectedRelease }
                     .keyboardShortcut(.defaultAction)
                     .disabled(selectedRelease.isEmpty || runtime.isLoading || model.isBusy || !canInstall)
             }
@@ -204,6 +229,145 @@ private struct NodeInstallationSheet: View {
         .onDisappear {
             retryTask?.cancel()
             retryTask = nil
+        }
+    }
+}
+
+private struct NodeDirectActionSheet: View {
+    @ObservedObject var model: AppModel
+    let request: NodeActionRequest
+    @Environment(\.dismiss) private var dismiss
+    @State private var isRunning = true
+    @State private var hasStarted = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        MaintenanceModalFrame(
+            title: request.action == .installNode ? LocalizedStringResource("Install Node Version") : LocalizedStringResource("Use for Cellar"),
+            systemImage: "shippingbox.fill",
+            tint: .green
+        ) {
+            Text(verbatim: request.subject).foregroundStyle(.secondary)
+        } content: {
+            if isRunning {
+                MaintenanceLoadingState(title: LocalizedStringResource("Running"))
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: errorMessage == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(errorMessage == nil ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(errorMessage == nil ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
+                            .font(.headline)
+                        if let errorMessage {
+                            Text(verbatim: errorMessage)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            }
+        } footer: {
+            Spacer()
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else {
+                Button("OK") { dismiss() }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .interactiveDismissDisabled(isRunning)
+        .task {
+            guard !hasStarted else { return }
+            hasStarted = true
+            await model.performDirectNodeAction(request)
+            errorMessage = model.nodeOperationError
+            if errorMessage == nil, model.nodeActionResult?.operation.batchItemStatus != .succeeded {
+                errorMessage = String(localized: ActivityItemReason.stateUnavailable.message)
+            }
+            isRunning = false
+        }
+    }
+}
+
+private struct NodeHomebrewInstallSheet: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var isRunning = true
+    @State private var hasStarted = false
+    @State private var succeeded = false
+    @State private var installedVersion: String?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        MaintenanceModalFrame(
+            title: LocalizedStringResource("Install Node with Homebrew"),
+            systemImage: "shippingbox.fill",
+            tint: .green
+        ) {
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else {
+                Text(succeeded ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
+                    .foregroundStyle(succeeded ? .green : .orange)
+            }
+        } content: {
+            if isRunning {
+                MaintenanceLoadingState(title: LocalizedStringResource("Installing Node.js with Homebrew…"))
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: succeeded ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(succeeded ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(succeeded ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
+                            .font(.headline)
+                        if succeeded, let installedVersion {
+                            Text("Node \(installedVersion)")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        } else if let errorMessage {
+                            Text(verbatim: errorMessage)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            }
+        } footer: {
+            Spacer()
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else {
+                Button("OK") { dismiss() }
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .interactiveDismissDisabled(isRunning)
+        .task {
+            guard !hasStarted else { return }
+            hasStarted = true
+            isRunning = true
+            defer { isRunning = false }
+            let installed = await model.installNodeWithHomebrew()
+            succeeded = installed
+            if installed {
+                installedVersion = model.node.map { HomeVersion.normalized($0.summary.nodeVersion) }
+            } else {
+                errorMessage = model.homebrewOperationError
+            }
         }
     }
 }

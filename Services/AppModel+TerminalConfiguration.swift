@@ -17,6 +17,7 @@ extension AppModel {
     }
 
     func executeTerminalConfiguration(_ confirmed: ShellConfigurationPlan) async {
+        terminalConfigurationResult = nil
         guard !isBusy, let managers, terminalConfigurationPlan?.id == confirmed.id, confirmed.canExecute else { return }
         terminalConfigurationPlan = nil
         isShellWorking = true

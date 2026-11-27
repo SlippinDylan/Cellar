@@ -26,7 +26,6 @@ struct AppCommands: Commands {
         CommandGroup(after: .appInfo) {
             Button("Check for Updates…") { updateController.checkForUpdates() }
                 .disabled(!updateController.canCheckForUpdates)
-            Button("Setup Guide…") { openWindow(id: AppScene.onboardingWindowID) }
         }
         CommandGroup(replacing: .appSettings) {
             Button("Settings…") { model.showDestination(.settings) { openWindow(id: $0, value: $1) } }

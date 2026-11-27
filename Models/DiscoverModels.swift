@@ -22,11 +22,13 @@ struct DiscoverContext: Equatable, Sendable {
     let homebrewAvailable: Bool
     let npm: DiscoverNPMContext?
     let nodeAvailable: Bool
+    let registryAvailable: Bool
 
-    init(homebrewAvailable: Bool, npm: DiscoverNPMContext?, nodeAvailable: Bool = false) {
+    init(homebrewAvailable: Bool, npm: DiscoverNPMContext?, nodeAvailable: Bool = false, registryAvailable: Bool = false) {
         self.homebrewAvailable = homebrewAvailable
         self.npm = npm
         self.nodeAvailable = nodeAvailable
+        self.registryAvailable = registryAvailable
     }
 }
 
@@ -55,14 +57,26 @@ enum DiscoverResult: Sendable {
         let website: URL?
         let item: BatchItem
         let icon: CatalogIcon
+        let status: SemanticVersionStatus
         switch self {
         case .homebrew(let package):
             let current = homebrew?.packages.first { $0.identity == package.identity } ?? package
+            let outdated = homebrew?.outdatedPackages.first { $0.identity == package.identity }
             icon = .homebrew(current)
             name = package.displayName
             description = package.description
-            available = package.currentVersion
-            installed = current.isInstalled ? current.installedVersions.joined(separator: ", ") : nil
+            available = outdated?.currentVersion ?? package.currentVersion
+            installed = current.isInstalled
+                ? (outdated == nil ? current.detectedAppVersion : nil) ?? current.installedVersions.joined(separator: ", ")
+                : nil
+            let computed = SemanticVersionStatus(current: installed, available: available)
+            if current.isInstalled, homebrew?.sectionErrors[.outdated] != nil {
+                status = .unknown
+            } else if current.isInstalled, outdated != nil {
+                status = .behind
+            } else {
+                status = current.isInstalled && computed == .behind ? .current : computed
+            }
             let component = package.identity.kind == .formula ? "formula" : "cask"
             let fallbackWebsite = package.identity.name.contains("/")
                 ? nil
@@ -77,10 +91,10 @@ enum DiscoverResult: Sendable {
             if let node, LibraryCatalog.context(node.summary) == package.identity.environment {
                 installed = node.packages.first { $0.name == name }?.installedVersion
             } else { installed = nil }
+            status = SemanticVersionStatus(current: installed, available: available)
             website = package.websiteURL
             item = .npm(package.identity)
         }
-        let status = SemanticVersionStatus(current: installed, available: available)
         // Discover installs missing software and lets installed entries update or uninstall via the shared library flows.
         let primaryAction: CatalogCardAction? = if installed != nil {
             .uninstall

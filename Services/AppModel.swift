@@ -41,6 +41,28 @@ final class AppModel: ObservableObject {
     @Published var selectedSettingsCategory: SettingsCategory = .general
     @Published var terminalConfigurationPlan: ShellConfigurationPlan?
     @Published var terminalConfigurationResult: ShellConfigurationResult?
+    @Published private(set) var activeModalCount = 0
+    @Published private(set) var queuedBatchFailureMessage: String?
+
+    func recordQueuedBatchFailure(_ message: String) {
+        if let existing = queuedBatchFailureMessage, !existing.isEmpty {
+            queuedBatchFailureMessage = "\(existing)\n\(message)"
+        } else {
+            queuedBatchFailureMessage = message
+        }
+    }
+
+    func dismissQueuedBatchFailure() {
+        queuedBatchFailureMessage = nil
+    }
+
+    func beginModalPresentation() {
+        activeModalCount += 1
+    }
+
+    func endModalPresentation() {
+        activeModalCount = max(0, activeModalCount - 1)
+    }
 
     let service: SystemProbeService
     let operationStore: OperationStore
@@ -153,7 +175,6 @@ final class AppModel: ObservableObject {
             async let nodeResult: Void = self.refreshNodeState(snapshot: installedManagers)
             async let shellResult: Void = self.refreshShellState(snapshot: installedManagers)
             _ = await (homebrewResult, nodeResult, shellResult)
-            if !Task.isCancelled { self.refreshedAt = Date() }
             return Task.isCancelled
         }
         let readOnlyID = operationStore.registerReadOnlyOperation(
@@ -162,7 +183,7 @@ final class AppModel: ObservableObject {
         )
         defer {
             operationStore.unregisterReadOnlyOperation(readOnlyID)
-            isRefreshing = false
+            if isRefreshing { isRefreshing = false }
         }
 
         do {
@@ -181,7 +202,13 @@ final class AppModel: ObservableObject {
                 nodeUpdateState = .failed
                 errorMessages.append(failureMessage(error))
             }
-            if !cancelled { refreshedAt = Date() }
+        }
+
+        operationStore.unregisterReadOnlyOperation(readOnlyID)
+        isRefreshing = false
+        if !cancelled {
+            // Publish refreshedAt after isRefreshing resets so .task(id: refreshedAt) is not blocked by !isBusy.
+            refreshedAt = Date()
         }
 
         let detail = cancelled
@@ -288,7 +315,10 @@ final class AppModel: ObservableObject {
             applyHomebrewReadResult(.success(status), includingOutdated: true)
         case .npm(let snapshot), .nodeRuntime(let snapshot):
             applyNodeReadResult(.success(snapshot), includingOutdated: true)
-            preferredNodeVersion = snapshot.summary.nodeVersion
+            if NodeEnvironmentResolver.packageInstallation(summary: snapshot.summary, installations: snapshot.installations,
+                                                           approvedSystemPrefixes: []) != nil {
+                preferredNodeVersion = snapshot.summary.nodeVersion
+            }
         case nil:
             if result.refreshStatus == .failed {
                 switch result.outcome.intent.scope {

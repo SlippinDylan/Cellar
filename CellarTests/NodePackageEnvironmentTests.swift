@@ -864,4 +864,145 @@ extension NodePackageEnvironmentTests {
             XCTAssertEqual(retained.packageEnvironment, snapshot.packageEnvironment)
         }
     }
+
+    @MainActor
+    func testApprovedHomebrewPrefixProducesPackageEnvironmentAndSupportsPackageFlow() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarHomebrewNodeTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prefix = root.appending(path: "opt/homebrew", directoryHint: .isDirectory)
+        let bin = prefix.appending(path: "bin", directoryHint: .isDirectory)
+        let cellarBin = prefix.appending(path: "Cellar/node/22.14.0/bin", directoryHint: .isDirectory)
+        let npmBin = prefix.appending(path: "lib/node_modules/npm/bin", directoryHint: .isDirectory)
+        for dir in [bin, cellarBin, npmBin] {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        let realNode = cellarBin.appending(path: "node")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: realNode)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: realNode.path)
+
+        let npmCLI = npmBin.appending(path: "npm-cli.js")
+        let npmScript = #"""
+        #!/bin/bash
+        [ "$1 $2 $3" = 'config get @scope:registry' ] || exit 2
+        printf '%s\n' https://scope.fixture.invalid
+        """#
+        try Data(npmScript.utf8).write(to: npmCLI)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: npmCLI.path)
+
+        try FileManager.default.createSymbolicLink(at: cellarBin.appending(path: "npm"), withDestinationURL: npmCLI)
+        try FileManager.default.createSymbolicLink(at: bin.appending(path: "node"), withDestinationURL: realNode)
+        try FileManager.default.createSymbolicLink(at: bin.appending(path: "npm"), withDestinationURL: cellarBin.appending(path: "npm"))
+
+        let managerScript = #"""
+        #!/bin/bash
+        if [ "$2" = summary ]; then
+          printf '{"ok":true,"schemaVersion":1,"command":"summary","data":{"nodePath":"\#(bin.path)/node","npmPath":"\#(bin.path)/npm","nodeVersion":"v22.14.0","npmVersion":"10.9.2","nvmLoaded":false,"globalPrefix":"\#(prefix.path)","globalRoot":"\#(prefix.path)/lib/node_modules","registry":"https://registry.npmjs.org/"}}\n'
+        elif [ "$2" = packages ]; then
+          if [ -e '\#(root.path)/installed-example' ]; then
+            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{"example":{"version":"3.0.0"}}}}'
+          else
+            printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"packages","data":{"dependencies":{}}}'
+          fi
+        elif [ "$2" = config ]; then
+          printf '{"ok":true,"schemaVersion":1,"command":"config","data":{"registry":"https://registry.npmjs.org/","cache":"/fake/cache","prefix":"\#(prefix.path)","userRegistry":"","projectRegistry":"","globalRegistry":""}}\n'
+        elif [ "$2" = outdated ]; then
+          printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"outdated","data":{}}'
+        elif [ "$2" = plan ]; then
+          printf '{"ok":true,"schemaVersion":1,"command":"plan","data":{"action":"%s","subject":"%s","packageName":"example","installedVersion":"","targetVersion":"3.0.0","executeSupported":true,"executable":true}}\n' "$3" "$4"
+        elif [ "$2" = execute ]; then
+          /usr/bin/touch '\#(root.path)/installed-example'
+          printf '%s\n' '{"ok":true,"schemaVersion":1,"command":"execute","data":{"operationId":"fake","action":"install","subject":"example","exitCode":0,"status":"ok","logFile":"/fake/log"}}'
+        else
+          exit 2
+        fi
+        """#
+        try Data(managerScript.utf8).write(to: root.appending(path: "main.sh"))
+
+        let resolver = NodeEnvironmentResolver(homeDirectory: root, approvedSystemPrefixes: [prefix])
+        XCTAssertTrue(resolver.installations().isEmpty)
+
+        let client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: resolver)
+        let snapshot = try await client.loadSnapshot(managerDirectory: root)
+        let context = try XCTUnwrap(snapshot.packageEnvironment)
+        XCTAssertEqual(context.nodeVersion, "v22.14.0")
+        XCTAssertEqual(context.npmVersion, "10.9.2")
+
+        let runner = ProcessRunner()
+        let service = SystemProbeService(
+            runner: runner,
+            installer: ManagerSnapshotInstaller(applicationSupportDirectory: root.appending(path: "support")),
+            nodeClient: client,
+            shellClient: ShellManagerClient(runner: runner),
+            environmentResolver: resolver
+        )
+        let model = AppModel(service: service, operationStore: OperationStore())
+        model.applyNodeReadResult(.success(snapshot))
+        XCTAssertEqual(model.discoverContext.npm?.environment, context)
+        XCTAssertEqual(model.discoverContext.npm?.registryURL.absoluteString, "https://registry.npmjs.org/")
+        XCTAssertTrue(model.discoverContext.nodeAvailable)
+        XCTAssertTrue(model.discoverContext.registryAvailable)
+
+        let scopedRegistry = try await client.effectivePackageRegistry("@scope/example", environment: context, managerDirectory: root)
+        XCTAssertEqual(scopedRegistry.absoluteString, "https://scope.fixture.invalid/")
+
+        let plan = try await client.planPackage(.init(name: "example", environment: context), action: .installPackage, managerDirectory: root)
+        let result = try await client.executePackage(plan, environment: context, managerDirectory: root)
+        XCTAssertEqual(result.batchItemStatus, .succeeded)
+
+        let refreshed = try await client.loadPackageSnapshot(context, managerDirectory: root)
+        XCTAssertEqual(refreshed.packageEnvironment, context)
+        XCTAssertEqual(refreshed.packages.first?.name, "example")
+    }
+
+    func testApprovedHomebrewPrefixRejectsEscapingSymlinkMissingNPMAndUnapprovedPrefix() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarHomebrewRejectTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prefix = root.appending(path: "opt/homebrew", directoryHint: .isDirectory)
+        let bin = prefix.appending(path: "bin", directoryHint: .isDirectory)
+        let outside = root.appending(path: "outside", directoryHint: .isDirectory)
+        for dir in [bin, outside] {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        }
+        for name in ["node", "npm"] {
+            let file = bin.appending(path: name)
+            try Data("#!/bin/sh\nexit 0\n".utf8).write(to: file)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+        let escapedNPM = outside.appending(path: "npm")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: escapedNPM)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: escapedNPM.path)
+
+        let summary = NodeSummary(
+            nodePath: bin.appending(path: "node").path,
+            npmPath: bin.appending(path: "npm").path,
+            nodeVersion: "v22.14.0",
+            npmVersion: "10.9.2",
+            nvmLoaded: false,
+            globalPrefix: prefix.path,
+            globalRoot: prefix.appending(path: "lib/node_modules").path,
+            registry: "https://registry.npmjs.org/"
+        )
+
+        // Unapproved prefix must be rejected.
+        XCTAssertNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: [], approvedSystemPrefixes: []))
+        XCTAssertNotNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: [], approvedSystemPrefixes: [prefix]))
+
+        // Symlink escaping the approved prefix must be rejected.
+        try FileManager.default.removeItem(at: bin.appending(path: "npm"))
+        try FileManager.default.createSymbolicLink(at: bin.appending(path: "npm"), withDestinationURL: escapedNPM)
+        XCTAssertNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: [], approvedSystemPrefixes: [prefix]))
+
+        let resolver = NodeEnvironmentResolver(homeDirectory: root, approvedSystemPrefixes: [prefix])
+        let client = NodeManagerClient(runner: ProcessRunner(), environmentResolver: resolver)
+        do {
+            _ = try await client.planPackage(.init(name: "example", environment: LibraryCatalog.context(summary)), action: .installPackage, managerDirectory: root)
+            XCTFail("Escaping symlink in approved prefix must fail closed")
+        } catch BridgeError.managerFailure(let code, _) {
+            XCTAssertEqual(code, "node-environment-changed")
+        }
+
+        // Missing npm must be rejected.
+        try FileManager.default.removeItem(at: bin.appending(path: "npm"))
+        XCTAssertNil(NodeEnvironmentResolver.packageInstallation(summary: summary, installations: [], approvedSystemPrefixes: [prefix]))
+    }
 }

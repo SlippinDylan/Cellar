@@ -25,31 +25,47 @@ struct LibraryUninstallConfirmation: View {
             .clipped()
             VStack(spacing: 0) {
                 Divider()
-                HStack {
-                    Spacer()
-                    if removal != nil && uninstall.hasFinished {
+                HStack(alignment: .center, spacing: 12) {
+                    if let removal, !removal.warnings.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(removal.warnings.enumerated()), id: \.offset) { _, warning in
+                                Label {
+                                    Text(warning.uninstallMessage)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                } icon: {
+                                    Image(systemName: "exclamationmark.circle")
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    Spacer(minLength: 12)
+                    if uninstall.hasFinished {
                         Button("OK", action: uninstall.dismissConfirmation)
                             .keyboardShortcut(.defaultAction)
-                    } else if removal != nil && uninstall.isExecuting {
-                        Text("Uninstalling…").foregroundStyle(.secondary)
+                    } else if uninstall.isExecuting {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Uninstalling…").foregroundStyle(.secondary)
+                        }
                     } else {
                         Button("Cancel", role: .cancel, action: uninstall.dismissConfirmation)
                             .keyboardShortcut(.cancelAction)
                             .disabled(uninstall.isExecuting)
                         Button("Uninstall", role: .destructive) {
-                            if removal != nil { executionHeight = presentationHeight }
+                            if executionHeight == nil { executionHeight = presentationHeight }
                             Task { await uninstall.confirmUninstall() }
                         }
                         .tint(.red)
                         .disabled(uninstall.isPreparing || plan == nil || plan?.executableCount == 0 || uninstall.isExecuting)
                     }
                 }
-                .frame(height: 40)
                 .buttonStyle(.glass)
                 .buttonBorderShape(.capsule)
                 .controlSize(.large)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 16)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 12)
             }
             .fixedSize(horizontal: false, vertical: true)
         }
@@ -61,7 +77,7 @@ struct LibraryUninstallConfirmation: View {
         .presentationSizing(.fitted)
         .interactiveDismissDisabled(uninstall.isExecuting)
         .onChange(of: uninstall.isExecuting) { _, executing in
-            if executing && removal != nil && executionHeight == nil { executionHeight = presentationHeight }
+            if executing && executionHeight == nil { executionHeight = presentationHeight }
         }
     }
 
@@ -110,23 +126,25 @@ struct LibraryUninstallConfirmation: View {
                         }
                     }
                 }
-                ForEach(Array(removal.warnings.enumerated()), id: \.offset) { _, warning in
-                    Label { Text(warning.uninstallMessage) } icon: { Image(systemName: "exclamationmark.circle") }
-                        .font(.callout).foregroundStyle(.secondary)
-                }
                 if !uninstall.hasFinished {
                     Text("Application data will be permanently removed, except files marked as kept. This cannot be rolled back.")
                         .font(.callout).foregroundStyle(.secondary)
                 }
                 if uninstall.hasFinished {
                     if let result = uninstall.result {
-                        Text(result.outcome.status.libraryTitle).font(.headline)
                         if result.refreshStatus == .failed {
                             Text("Uninstall finished, but the environment could not be refreshed. Use Refresh to check the current state.")
                                 .font(.callout).foregroundStyle(.secondary)
                         }
                         ForEach(result.outcome.itemOutcomes, id: \.item) { outcome in
                             if let reason = outcome.reason { Text(reason.message).font(.callout).foregroundStyle(.secondary) }
+                            let residuePaths = npmResiduePaths(for: outcome.item, in: result)
+                            if !residuePaths.isEmpty {
+                                Text("Remaining npm Files").font(.headline)
+                                ForEach(residuePaths, id: \.self) {
+                                    Text($0).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                                }
+                            }
                         }
                     }
                     if let error = uninstall.error { Text(error.libraryMessage).font(.callout).foregroundStyle(.secondary) }
@@ -142,7 +160,22 @@ struct LibraryUninstallConfirmation: View {
                     Text("Each selected Node installation and its global npm packages will be removed. Current and default Node versions are protected.")
                 }
                 ForEach(plan.intent.items, id: \.self) { item in
-                    Text(item.displayIdentifier).textSelection(.enabled)
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(item.displayIdentifier).textSelection(.enabled)
+                        Spacer(minLength: 0)
+                        if uninstall.isExecuting {
+                            ProgressView().controlSize(.small)
+                        } else if uninstall.hasFinished {
+                            if uninstall.error == nil && uninstall.result?.outcome.status == .succeeded {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                    .accessibilityLabel("Removed")
+                            } else {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
                     if case .homebrew(let identity) = item, identity.kind == .formula,
                        let impact = plan.homebrewImpacts.first(where: { $0.targets == [identity] }), !impact.dependents.isEmpty {
                         Text("Installed Formula Dependents").font(.headline)
@@ -153,6 +186,26 @@ struct LibraryUninstallConfirmation: View {
                     ForEach(artifacts(for: item, plan: plan), id: \.self) {
                         Text($0).foregroundStyle(.secondary).textSelection(.enabled)
                     }
+                }
+                if uninstall.hasFinished {
+                    if let result = uninstall.result {
+                        if result.refreshStatus == .failed {
+                            Text("Uninstall finished, but the environment could not be refreshed. Use Refresh to check the current state.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        ForEach(result.outcome.itemOutcomes, id: \.item) { outcome in
+                            if let reason = outcome.reason { Text(reason.message).font(.callout).foregroundStyle(.secondary) }
+                            let residuePaths = npmResiduePaths(for: outcome.item, in: result)
+                            if !residuePaths.isEmpty {
+                                Text("Remaining npm Files").font(.headline)
+                                ForEach(residuePaths, id: \.self) {
+                                    Text($0).font(.callout.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                    if let error = uninstall.error { Text(error.libraryMessage).font(.callout).foregroundStyle(.secondary) }
+                    if let reason = uninstall.failureReason { Text(reason.message).font(.callout).foregroundStyle(.secondary) }
                 }
             }
         }
@@ -208,6 +261,13 @@ struct LibraryUninstallConfirmation: View {
         guard case .homebrew(let identity) = item else { return [] }
         return plan.homebrewImpacts.first { $0.targets == [identity] }?.artifacts
             .filter { $0.category == .installed }.flatMap(\.values) ?? []
+    }
+
+    private func npmResiduePaths(for item: BatchItem, in result: BatchExecutionResult) -> [String] {
+        guard let index = result.outcome.intent.items.firstIndex(of: item),
+              case .npm(let providerResult) = result.providerResults[index],
+              let residues = providerResult.residues else { return [] }
+        return residues.directories + residues.bins
     }
 }
 

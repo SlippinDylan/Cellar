@@ -32,12 +32,19 @@ enum LibraryCatalog {
         let outdated = Dictionary(uniqueKeysWithValues: (homebrew?.outdatedPackages ?? []).map { ($0.identity, $0) })
         let brewCards = (homebrew?.packages ?? []).filter(\.isInstalled).compactMap { package in
             let identity = CatalogItemIdentity.homebrew(package.identity)
-            let available = outdated[package.identity]?.currentVersion ?? package.currentVersion
-            let installed = package.installedVersions.joined(separator: ", ")
+            let outdatedEntry = outdated[package.identity]
+            let available = outdatedEntry?.currentVersion ?? package.currentVersion
+            let installed = (outdatedEntry == nil ? package.detectedAppVersion : nil)
+                ?? package.installedVersions.joined(separator: ", ")
             let status: SemanticVersionStatus
             if homebrewUpdates != .available || homebrew?.sectionErrors[.outdated] != nil { status = .unknown }
-            else if outdated[package.identity] != nil { status = .behind }
-            else { status = SemanticVersionStatus(current: installed, available: available) }
+            else if outdatedEntry != nil { status = .behind }
+            else {
+                let computed = SemanticVersionStatus(current: installed, available: available)
+                // `brew outdated` is authoritative for Homebrew update eligibility; excluded packages
+                // (such as `auto_updates true` Casks or pinned Formulae) must not be marked behind.
+                status = computed == .behind ? .current : computed
+            }
             return CatalogCardState(identity: identity, displayName: package.displayName, description: package.description,
                                     currentVersion: installed, availableVersion: available, versionStatus: status,
                                     websiteURL: package.homepage.flatMap(URL.init(string:)),

@@ -31,6 +31,12 @@ final class DiscoverSearchModel: ObservableObject {
     @Published private(set) var resultContext: DiscoverContext?
     @Published private(set) var partialScopes: [CatalogProviderScope] = []
     @Published private(set) var unavailableScopes: [CatalogProviderScope] = []
+    @Published private(set) var cachedResultsByScope: [CatalogProviderScope: [DiscoverResult]] = [:]
+    @Published private(set) var loadingScopes: Set<CatalogProviderScope> = []
+    @Published private(set) var completedScopes: Set<CatalogProviderScope> = []
+    @Published private(set) var unavailableByScope: Set<CatalogProviderScope> = []
+    @Published private(set) var partialByScope: Set<CatalogProviderScope> = []
+    @Published private(set) var lastQuery = ""
     private let dependencies: DiscoverSearchDependencies
     private let operationStore: OperationStore
     private var latestRequest: UUID?
@@ -49,6 +55,188 @@ final class DiscoverSearchModel: ObservableObject {
         resultContext = nil
         unavailableScopes = []
         partialScopes = []
+        cachedResultsByScope = [:]
+        loadingScopes = []
+        completedScopes = []
+        unavailableByScope = []
+        partialByScope = []
+        lastQuery = ""
+    }
+
+    func results(for scope: DiscoverSearchScope) -> [DiscoverResult] {
+        switch scope {
+        case .all:
+            CatalogProviderScope.allCases.flatMap { cachedResultsByScope[$0, default: []] }
+        case .homebrewFormula:
+            cachedResultsByScope[.homebrewFormula, default: []]
+        case .homebrewCask:
+            cachedResultsByScope[.homebrewCask, default: []]
+        case .npm:
+            cachedResultsByScope[.npm, default: []]
+        }
+    }
+
+    func unavailableScopes(for scope: DiscoverSearchScope) -> [CatalogProviderScope] {
+        let targets = providerScopes(for: scope)
+        return targets.filter { unavailableByScope.contains($0) }
+    }
+
+    func partialScopes(for scope: DiscoverSearchScope) -> [CatalogProviderScope] {
+        let targets = providerScopes(for: scope)
+        return targets.filter { partialByScope.contains($0) }
+    }
+
+    func state(for scope: DiscoverSearchScope, context: DiscoverContext) -> DiscoverSearchState {
+        if lastQuery.isEmpty {
+            return state
+        }
+        if let guidance = Self.guidance(scope, context: context) {
+            return guidance
+        }
+        let visible = results(for: scope)
+        if !visible.isEmpty {
+            return .available
+        }
+        let targets = providerScopes(for: scope)
+        if targets.contains(where: { loadingScopes.contains($0) }) {
+            return .loading
+        }
+        if state == .cancelled {
+            return .cancelled
+        }
+        let allUnavailable = !targets.isEmpty && targets.allSatisfy { unavailableByScope.contains($0) }
+        if allUnavailable {
+            return .failed
+        }
+        if targets.allSatisfy({ completedScopes.contains($0) }) {
+            return .empty
+        }
+        return state
+    }
+
+    func searchGlobally(_ query: String, preferredScope: DiscoverSearchScope, context: DiscoverContext, limit: Int = 50) async {
+        let request = UUID()
+        latestRequest = request
+        results = []
+        resultContext = nil
+        unavailableScopes = []
+        partialScopes = []
+        cachedResultsByScope = [:]
+        loadingScopes = []
+        completedScopes = []
+        unavailableByScope = []
+        partialByScope = []
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        lastQuery = term
+        if let previous = owner {
+            previous.task.cancel()
+            await previous.task.value
+        }
+        guard latestRequest == request, !Task.isCancelled else { return }
+        guard !term.isEmpty else { state = .idle; return }
+        guard term.utf8.count <= 512, (1...100).contains(limit) else { state = .failed; return }
+        if !context.homebrewAvailable && context.npm == nil {
+            state = Self.guidance(preferredScope, context: context) ?? .homebrewRequired
+            return
+        }
+        state = .loading
+        let searchID = UUID()
+        let task = Task { await self.runGlobal(term, preferredScope: preferredScope, context: context, limit: limit, request: request) }
+        let readOnlyID = operationStore.registerReadOnlyOperation(
+            cancel: { task.cancel() },
+            awaitCompletion: { await task.value }
+        )
+        owner = (searchID, task)
+        await withTaskCancellationHandler { await task.value } onCancel: { task.cancel() }
+        operationStore.unregisterReadOnlyOperation(readOnlyID)
+        if owner?.id == searchID { owner = nil }
+    }
+
+    private func providerScopes(for scope: DiscoverSearchScope) -> [CatalogProviderScope] {
+        switch scope {
+        case .all: CatalogProviderScope.allCases
+        case .homebrewFormula: [.homebrewFormula]
+        case .homebrewCask: [.homebrewCask]
+        case .npm: [.npm]
+        }
+    }
+
+    private func runGlobal(_ query: String, preferredScope: DiscoverSearchScope, context: DiscoverContext, limit: Int,
+                           request: UUID) async {
+        let primaryScopes = providerScopes(for: preferredScope)
+        let secondaryScopes = CatalogProviderScope.allCases.filter { !primaryScopes.contains($0) }
+        loadingScopes = Set(CatalogProviderScope.allCases)
+        resultContext = context
+
+        do {
+            // Query the active tab first so the user sees immediate results, then fetch remaining scopes in the background.
+            try await fetchScopes(primaryScopes, query: query, context: context, limit: limit, request: request)
+            if !secondaryScopes.isEmpty {
+                try await fetchScopes(secondaryScopes, query: query, context: context, limit: limit, request: request)
+            }
+            guard latestRequest == request, !Task.isCancelled else { return }
+            let allResults = results(for: .all)
+            results = allResults
+            unavailableScopes = CatalogProviderScope.allCases.filter { unavailableByScope.contains($0) }
+            partialScopes = CatalogProviderScope.allCases.filter { partialByScope.contains($0) }
+            let allUnavailable = unavailableByScope.count == CatalogProviderScope.allCases.count
+            state = allResults.isEmpty ? (allUnavailable ? .failed : .empty) : .available
+        } catch {
+            guard latestRequest == request else { return }
+            loadingScopes = []
+            state = error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled ? .cancelled : .failed
+        }
+    }
+
+    private func fetchScopes(_ scopes: [CatalogProviderScope], query: String, context: DiscoverContext, limit: Int,
+                             request: UUID) async throws {
+        guard !scopes.isEmpty else { return }
+        let dependencies = dependencies
+        let homebrewConcurrency = scopes.filter { $0 != .npm }.count > 1 ? 2 : 4
+        try await withThrowingTaskGroup(of: (CatalogProviderScope, [DiscoverResult], DiscoverNPMContext?, Bool, Bool).self) { group in
+            for scope in scopes {
+                group.addTask {
+                    do {
+                        switch scope {
+                        case .homebrewFormula, .homebrewCask:
+                            guard context.homebrewAvailable else { return (scope, [], nil, true, false) }
+                            let kind: HomebrewPackageKind = scope == .homebrewFormula ? .formula : .cask
+                            let discovery = try await dependencies.homebrew(query, kind, limit, homebrewConcurrency)
+                            return (scope, discovery.packages.prefix(limit).map(DiscoverResult.homebrew), nil,
+                                    discovery.isUnavailable, !discovery.isUnavailable && discovery.failedDetailCount > 0)
+                        case .npm:
+                            guard let base = context.npm else { return (scope, [], nil, true, false) }
+                            let npm = try await dependencies.resolveNPM(query, base)
+                            let packages = try await dependencies.npm(query, npm, limit)
+                            return (scope, packages.prefix(limit).map(DiscoverResult.npm), npm, false, false)
+                        }
+                    } catch {
+                        if error is CancellationError || Task.isCancelled || (error as? URLError)?.code == .cancelled {
+                            throw CancellationError()
+                        }
+                        return (scope, [], nil, true, false)
+                    }
+                }
+            }
+            for try await (scope, packages, npm, failed, incomplete) in group {
+                try Task.checkCancellation()
+                guard latestRequest == request, !Task.isCancelled else { throw CancellationError() }
+                cachedResultsByScope[scope] = packages
+                loadingScopes.remove(scope)
+                completedScopes.insert(scope)
+                if failed { unavailableByScope.insert(scope) }
+                if incomplete { partialByScope.insert(scope) }
+                if let npm {
+                    resultContext = .init(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true, registryAvailable: true)
+                }
+                results = results(for: .all)
+                unavailableScopes = CatalogProviderScope.allCases.filter { unavailableByScope.contains($0) }
+                partialScopes = CatalogProviderScope.allCases.filter { partialByScope.contains($0) }
+                if !results.isEmpty {
+                    state = .available
+                }
+            }
+        }
     }
 
     func search(_ query: String, scope: DiscoverSearchScope, context: DiscoverContext, limit: Int = 50) async {
@@ -85,7 +273,7 @@ final class DiscoverSearchModel: ObservableObject {
         switch scope {
         case .all: context.homebrewAvailable || context.npm != nil ? nil : .homebrewRequired
         case .homebrewFormula, .homebrewCask: context.homebrewAvailable ? nil : .homebrewRequired
-        case .npm: context.npm == nil ? (context.nodeAvailable ? .registryRequired : .nodeRequired) : nil
+        case .npm: context.npm == nil ? (context.nodeAvailable && !context.registryAvailable ? .registryRequired : .nodeRequired) : nil
         }
     }
 
@@ -113,7 +301,7 @@ final class DiscoverSearchModel: ObservableObject {
             case .npm:
                 guard let base = context.npm else { preconditionFailure("npm search requires a validated context") }
                 let npm = try await self.dependencies.resolveNPM(query, base)
-                effectiveContext = DiscoverContext(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true)
+                effectiveContext = DiscoverContext(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true, registryAvailable: true)
                 guard self.latestRequest == request else { throw CancellationError() }
                 self.resultContext = effectiveContext
                 values = try await self.dependencies.npm(query, npm, limit).prefix(limit).map(DiscoverResult.npm)
@@ -169,7 +357,7 @@ final class DiscoverSearchModel: ObservableObject {
                 results[scope] = packages
                 if failed { unavailable.append(scope) }
                 if incomplete { partial.append(scope) }
-                if let npm { effectiveContext = .init(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true) }
+                if let npm { effectiveContext = .init(homebrewAvailable: context.homebrewAvailable, npm: npm, nodeAvailable: true, registryAvailable: true) }
             }
             try Task.checkCancellation()
             return (CatalogProviderScope.allCases.flatMap { results[$0, default: []] }, effectiveContext,
@@ -186,11 +374,74 @@ final class DiscoverInstallationModel: ObservableObject {
     @Published private(set) var error: DiscoverInputError?
     @Published private(set) var isPreparing = false
     @Published private(set) var isSubmitting = false
+    @Published private(set) var queuedItems: [BatchItem] = []
+    @Published private(set) var activeItem: BatchItem?
     private let model: AppModel
     private var previewRequest: UUID?
     private var preparationTask: Task<BatchPlan, Error>?
+    private var pendingQueue: [(card: CatalogCardState, context: DiscoverContext)] = []
+    private var queueTask: Task<Void, Never>?
+    private var stopWaitingForBusy = false
+
+    var isQueueActive: Bool { activeItem != nil || !queuedItems.isEmpty }
 
     init(model: AppModel) { self.model = model }
+
+    func cancelPendingQueue() {
+        pendingQueue.removeAll()
+        queuedItems.removeAll()
+        stopWaitingForBusy = true
+    }
+
+    func enqueueInstall(_ card: CatalogCardState, context: DiscoverContext) {
+        guard card.primaryAction == .install, !isPreparing, preview == nil else { return }
+        let item = card.batchItem
+        guard activeItem != item, !queuedItems.contains(item) else { return }
+        stopWaitingForBusy = false
+        pendingQueue.append((card, context))
+        queuedItems.append(item)
+        if queueTask == nil {
+            queueTask = Task { await processQueue() }
+        }
+    }
+
+    private func processQueue() async {
+        defer {
+            activeItem = nil
+            queueTask = nil
+        }
+        while !pendingQueue.isEmpty && !Task.isCancelled {
+            while model.isBusy && !stopWaitingForBusy && !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+            guard !pendingQueue.isEmpty, !stopWaitingForBusy, !Task.isCancelled else { break }
+            let next = pendingQueue.removeFirst()
+            let item = next.card.batchItem
+            queuedItems.removeAll { $0 == item }
+            activeItem = item
+            error = nil
+            result = nil
+            await install(next.card, context: next.context)
+            var failureLine: String?
+            if let err = error {
+                failureLine = "\(next.card.displayName): \(String(localized: err.discoverMessage))"
+            } else if let res = result, res.outcome.status != .succeeded {
+                let reason = res.outcome.itemOutcomes.first?.reason?.message
+                if let reason {
+                    failureLine = "\(next.card.displayName): \(String(localized: reason))"
+                } else {
+                    failureLine = "\(next.card.displayName): \(String(localized: res.outcome.status.libraryTitle))"
+                }
+            }
+            if let failureLine {
+                model.recordQueuedBatchFailure(failureLine)
+            } else if let res = result, res.refreshStatus == .failed {
+                model.recordQueuedBatchFailure("\(next.card.displayName): \(String(localized: "Installation finished, but the environment could not be refreshed. Use Refresh to check the current state."))")
+            }
+            activeItem = nil
+        }
+        queuedItems.removeAll()
+    }
 
     func preview(_ input: String, scope: CatalogProviderScope) async {
         guard !Task.isCancelled, !isSubmitting, !isPreparing, !model.isBusy else { return }
@@ -305,12 +556,13 @@ final class DiscoverInstallationModel: ObservableObject {
 
 extension AppModel {
     var discoverContext: DiscoverContext {
+        let registry = node.flatMap { SourceConfiguration.registryURL($0.summary.registry) }
         let npm: DiscoverNPMContext?
-        if let node, let environment = nodePackageEnvironment,
-           let registry = SourceConfiguration.registryURL(node.summary.registry) {
+        if let environment = nodePackageEnvironment, let registry {
             npm = DiscoverNPMContext(environment: environment, registryURL: registry)
         } else { npm = nil }
         return DiscoverContext(homebrewAvailable: homebrew?.executablePath != nil && canMutatePackages(in: .homebrew(.formula)), npm: npm,
-                               nodeAvailable: !nodeRefreshFailed && node != nil && node?.summary.nodePath.isEmpty == false && node?.summary.npmPath.isEmpty == false)
+                               nodeAvailable: !nodeRefreshFailed && node != nil && node?.summary.nodePath.isEmpty == false && node?.summary.npmPath.isEmpty == false,
+                               registryAvailable: registry != nil)
     }
 }

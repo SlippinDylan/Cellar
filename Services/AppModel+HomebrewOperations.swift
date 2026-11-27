@@ -3,17 +3,28 @@ import Foundation
 extension AppModel {
     @discardableResult
     func installNodeWithHomebrew() async -> Bool {
-        guard !isBusy, homebrew?.isInstalled == true else { return false }
+        homebrewOperationError = nil
+        guard !isBusy, homebrew?.isInstalled == true else {
+            homebrewOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
+            return false
+        }
         let identity = HomebrewPackageIdentity(name: "node", kind: .formula)
         do {
             let plan = try await createHomebrewPlan(context: .init(operation: .install, scope: .homebrew(.formula), targets: [identity.name], stage: .preparing)) {
                 try await self.service.planHomebrewInstall(identity)
             }
-            guard plan.canExecute else { return false }
+            guard plan.canExecute else {
+                homebrewOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
+                return false
+            }
             await executeHomebrewAction(plan)
             if case .succeeded = homebrewActionResult?.outcome {
                 await refresh()
-                return node != nil
+                if node != nil {
+                    return true
+                }
+                homebrewOperationError = String(localized: ActivityItemReason.stateUnavailable.message)
+                return false
             }
             return false
         } catch {

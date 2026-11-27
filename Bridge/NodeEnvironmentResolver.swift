@@ -1,10 +1,20 @@
 import Foundation
 
 struct NodeEnvironmentResolver: Sendable {
-    private let homeDirectory: URL
+    static let defaultApprovedSystemPrefixes: [URL] = [
+        URL(filePath: "/opt/homebrew", directoryHint: .isDirectory),
+        URL(filePath: "/usr/local", directoryHint: .isDirectory)
+    ]
 
-    init(homeDirectory: URL = .homeDirectory) {
+    private let homeDirectory: URL
+    let approvedSystemPrefixes: [URL]
+
+    init(
+        homeDirectory: URL = .homeDirectory,
+        approvedSystemPrefixes: [URL] = Self.defaultApprovedSystemPrefixes
+    ) {
         self.homeDirectory = homeDirectory
+        self.approvedSystemPrefixes = approvedSystemPrefixes
     }
 
     func isNVMInstalled() -> Bool {
@@ -71,17 +81,75 @@ struct NodeEnvironmentResolver: Sendable {
         }
     }
 
-    static func packageInstallation(summary: NodeSummary, installations: [NodeInstallation]) -> NodeInstallation? {
-        guard let installation = installations.first(where: { $0.version == summary.nodeVersion }) else { return nil }
-        let directory = URL(filePath: installation.directory).resolvingSymlinksInPath().standardizedFileURL
+    static func packageInstallation(
+        summary: NodeSummary,
+        installations: [NodeInstallation],
+        approvedSystemPrefixes: [URL] = defaultApprovedSystemPrefixes
+    ) -> NodeInstallation? {
+        if let installation = installations.first(where: { $0.version == summary.nodeVersion }),
+           matchesPackageInstallation(summary: summary, directory: URL(filePath: installation.directory, directoryHint: .isDirectory)) {
+            return installation
+        }
+        return approvedSystemPackageInstallation(summary: summary, approvedSystemPrefixes: approvedSystemPrefixes)
+    }
+
+    func approvedSystemPackageInstallation(for context: NodeEnvironmentContext) -> NodeInstallation? {
+        guard context.identifier.hasPrefix("/"), !context.nodeVersion.isEmpty, !context.npmVersion.isEmpty else {
+            return nil
+        }
+        let actualNode = URL(filePath: context.identifier).resolvingSymlinksInPath().standardizedFileURL
+        for prefix in approvedSystemPrefixes {
+            let resolvedPrefix = prefix.resolvingSymlinksInPath().standardizedFileURL
+            let nodeEntry = resolvedPrefix.appending(path: "bin/node")
+            let npmEntry = resolvedPrefix.appending(path: "bin/npm")
+            let resolvedNode = nodeEntry.resolvingSymlinksInPath().standardizedFileURL
+            let resolvedNpm = npmEntry.resolvingSymlinksInPath().standardizedFileURL
+            guard FileManager.default.isExecutableFile(atPath: nodeEntry.path),
+                  FileManager.default.isExecutableFile(atPath: npmEntry.path),
+                  resolvedNode.path.hasPrefix(resolvedPrefix.path + "/"),
+                  resolvedNpm.path.hasPrefix(resolvedPrefix.path + "/"),
+                  actualNode == resolvedNode
+            else { continue }
+            return NodeInstallation(
+                version: context.nodeVersion,
+                directory: resolvedPrefix.path,
+                isActive: true,
+                isDefault: false
+            )
+        }
+        return nil
+    }
+
+    private static func approvedSystemPackageInstallation(
+        summary: NodeSummary,
+        approvedSystemPrefixes: [URL]
+    ) -> NodeInstallation? {
+        guard !summary.nodeVersion.isEmpty, !summary.npmVersion.isEmpty else { return nil }
+        for prefix in approvedSystemPrefixes {
+            let resolvedPrefix = prefix.resolvingSymlinksInPath().standardizedFileURL
+            if matchesPackageInstallation(summary: summary, directory: resolvedPrefix) {
+                return NodeInstallation(
+                    version: summary.nodeVersion,
+                    directory: resolvedPrefix.path,
+                    isActive: true,
+                    isDefault: false
+                )
+            }
+        }
+        return nil
+    }
+
+    private static func matchesPackageInstallation(summary: NodeSummary, directory: URL) -> Bool {
+        let resolvedDirectory = directory.resolvingSymlinksInPath().standardizedFileURL
         for (name, actual) in [("node", summary.nodePath), ("npm", summary.npmPath)] {
-            let entry = directory.appending(path: "bin/\(name)")
+            let entry = resolvedDirectory.appending(path: "bin/\(name)")
             let resolved = entry.resolvingSymlinksInPath().standardizedFileURL
             guard actual.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: entry.path),
-                  resolved.path.hasPrefix(directory.path + "/"),
-                  URL(filePath: actual).resolvingSymlinksInPath().standardizedFileURL == resolved else { return nil }
+                  resolved.path.hasPrefix(resolvedDirectory.path + "/"),
+                  URL(filePath: actual).resolvingSymlinksInPath().standardizedFileURL == resolved
+            else { return false }
         }
-        return installation
+        return true
     }
 
     func resolvedDefaultNodeBin(in nvmDirectory: URL) -> URL? {

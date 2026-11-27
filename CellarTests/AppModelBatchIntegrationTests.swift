@@ -3,6 +3,44 @@ import XCTest
 
 @MainActor
 final class AppModelBatchIntegrationTests: XCTestCase {
+    func testSystemNodeBatchReconciliationDoesNotSelectSameVersionNVMInstallation() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "CellarSystemNodeBatch-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let nvmDirectory = root.appending(path: ".nvm/versions/node/v22.0.0")
+        let systemDirectory = root.appending(path: "homebrew")
+        for directory in [nvmDirectory, systemDirectory] {
+            let bin = directory.appending(path: "bin")
+            try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+            for name in ["node", "npm"] {
+                let entry = bin.appending(path: name)
+                try Data("fixture only".utf8).write(to: entry)
+                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: entry.path)
+            }
+        }
+        let runner = ProcessRunner()
+        let resolver = NodeEnvironmentResolver(homeDirectory: root)
+        let service = SystemProbeService(runner: runner, installer: ManagerSnapshotInstaller(applicationSupportDirectory: root),
+                                         nodeClient: NodeManagerClient(runner: runner, environmentResolver: resolver),
+                                         shellClient: ShellManagerClient(runner: runner), environmentResolver: resolver)
+        let model = AppModel(service: service, operationStore: OperationStore())
+        let environment = NodeEnvironmentContext(identifier: systemDirectory.appending(path: "bin/node").path, nodeVersion: "v22.0.0", npmVersion: "10.0.0")
+        let snapshot = NodeSnapshot(summary: .init(nodePath: environment.identifier, npmPath: systemDirectory.appending(path: "bin/npm").path,
+                                                  nodeVersion: environment.nodeVersion, npmVersion: environment.npmVersion, nvmLoaded: false,
+                                                  globalPrefix: systemDirectory.path, globalRoot: systemDirectory.appending(path: "lib/node_modules").path,
+                                                  registry: "https://registry.npmjs.org"),
+                                    configuration: .init(registry: "", cache: "", prefix: "", userRegistry: "", projectRegistry: "", globalRegistry: ""),
+                                    packages: [], installations: [.init(version: environment.nodeVersion, directory: nvmDirectory.path, isActive: false, isDefault: true)],
+                                    managerStatus: nil, logs: [], outdatedError: nil, maintenanceError: nil, packageEnvironment: environment)
+        let item = BatchItem.npm(.init(name: "example", environment: environment))
+        let intent = try XCTUnwrap(BatchIntent(operation: .install, items: [item]))
+        let outcome = try XCTUnwrap(BatchOutcome(intent: intent, itemOutcomes: [.init(item: item, status: .succeeded, userFacingMessage: nil)]))
+        for state in [BatchRefreshedState.npm(snapshot), .nodeRuntime(snapshot)] {
+            model.applyBatchResult(.init(outcome: outcome, providerResults: [], refreshStatus: .succeeded, refreshedState: state))
+            XCTAssertNil(model.preferredNodeVersion)
+            XCTAssertEqual(model.nodePackageEnvironment, environment)
+        }
+    }
+
     func testHomebrewUnavailablePackagesReconciliationKeepsPriorInventoryAndTime() async throws {
         try await assertHomebrewPartialReconciliation(throughUpdateBatch: false)
     }

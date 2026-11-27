@@ -46,14 +46,7 @@ struct AppRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 280)
         } detail: {
-            GeometryReader { geometry in
-                VStack(spacing: 0) {
-                    if model.selectedDestination != .maintenance || operationStore.terminationBlockedNotice {
-                        TaskFeedbackView(model: model, maximumHeight: geometry.size.height * 0.45)
-                    }
-                    destinationContent
-                }
-            }
+            destinationContent
                 .buttonStyle(.glass)
                 .navigationTitle(model.selectedDestination.title)
                 .toolbar {
@@ -155,6 +148,60 @@ struct AppRootView: View {
             }
         }
         .task { await model.refreshOnLaunch() }
+        .alert("Operation in Progress", isPresented: Binding(
+            get: { operationStore.terminationBlockedNotice },
+            set: { if !$0 { operationStore.dismissTerminationBlockedNotice() } }
+        )) {
+            Button("Got It", role: .cancel) {
+                operationStore.dismissTerminationBlockedNotice()
+            }
+        } message: {
+            Text("Wait for the current task to finish before quitting Cellar.")
+        }
+        .alert("Operation Failed", isPresented: Binding(
+            get: { globalFailureAlertMessage != nil },
+            set: { if !$0 { dismissGlobalFailureAlert() } }
+        )) {
+            Button("Got It", role: .cancel) { dismissGlobalFailureAlert() }
+        } message: {
+            Text(verbatim: globalFailureAlertMessage ?? "")
+        }
+    }
+
+    private var globalFailureAlertMessage: String? {
+        var errors: [String] = []
+        if uninstall.presentedItem == nil, let error = uninstall.error {
+            if let reason = uninstall.failureReason {
+                errors.append("\(String(localized: error.libraryMessage))\n\(String(localized: reason.message))")
+            } else {
+                errors.append(String(localized: error.libraryMessage))
+            }
+        }
+        if !errors.isEmpty || (!model.isBusy && model.activeModalCount == 0) {
+            if let message = model.queuedBatchFailureMessage { errors.append(message) }
+        }
+        if !model.isBusy,
+           model.activeModalCount == 0,
+           model.nodePlan == nil,
+           model.homebrewPlan == nil,
+           model.shellPlan == nil,
+           model.terminalConfigurationPlan == nil,
+           model.selectedDestination != .home,
+           model.selectedDestination != .maintenance {
+            errors += [model.nodeOperationError, model.homebrewOperationError, model.shellOperationError].compactMap { $0 }
+        }
+        errors.removeAll { $0.isEmpty }
+        return errors.isEmpty ? nil : Array(Set(errors)).sorted().joined(separator: "\n")
+    }
+
+    private func dismissGlobalFailureAlert() {
+        model.dismissQueuedBatchFailure()
+        if uninstall.presentedItem == nil && uninstall.error != nil {
+            uninstall.dismissError()
+        }
+        model.dismissNodeFeedback()
+        model.dismissHomebrewFeedback()
+        model.dismissShellFeedback()
     }
 
     private var toolbarControlGroup: some View {

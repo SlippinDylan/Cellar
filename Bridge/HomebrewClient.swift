@@ -185,7 +185,58 @@ actor HomebrewClient {
     private func loadInstalledPackages() async throws -> [HomebrewPackage] {
         let rawPackages = try await checkedRun(["info", "--json=v2", "--installed"])
         let envelope: BrewInfoEnvelope = try decode(rawPackages)
-        return packages(from: envelope)
+        var loaded = packages(from: envelope)
+        if !AppRuntime.isRunningTests {
+            for index in loaded.indices where loaded[index].identity.kind == .cask && loaded[index].isInstalled {
+                loaded[index].detectedAppVersion = Self.detectInstalledCaskAppVersion(for: loaded[index])
+            }
+        }
+        return loaded
+    }
+
+    private static func detectInstalledCaskAppVersion(for package: HomebrewPackage) -> String? {
+        let appNames = package.artifacts
+            .filter { $0.category == .installed && $0.kind == "app" }
+            .flatMap { artifact -> [String] in
+                if let application = artifact.application {
+                    return [application.target ?? URL(filePath: application.source).lastPathComponent]
+                }
+                return artifact.values
+            }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let roots = [
+            URL(filePath: "/Applications"),
+            home.appending(path: "Applications"),
+            URL(filePath: "/Library/Input Methods"),
+            home.appending(path: "Library/Input Methods"),
+        ]
+        for value in appNames {
+            guard value.hasSuffix(".app"), !value.hasPrefix("/Volumes/"),
+                  !value.contains(".."), !value.contains("*"), !value.contains("?") else { continue }
+            let candidates: [URL]
+            if value.hasPrefix("/") {
+                candidates = [URL(filePath: value)]
+            } else if value.hasPrefix("~/") {
+                candidates = [home.appending(path: String(value.dropFirst(2)))]
+            } else if !value.contains("/") {
+                candidates = roots.map { $0.appending(path: value) }
+            } else {
+                continue
+            }
+            for appURL in candidates {
+                let infoPlistURL = appURL.appending(path: "Contents/Info.plist")
+                guard let data = try? Data(contentsOf: infoPlistURL),
+                      let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any]
+                else { continue }
+                if let shortVersion = (plist["CFBundleShortVersionString"] as? String)?.nilIfBlank {
+                    return shortVersion
+                }
+                if let bundleVersion = (plist["CFBundleVersion"] as? String)?.nilIfBlank {
+                    return bundleVersion
+                }
+            }
+        }
+        return nil
     }
 
     private func loadInstalledTaps() async throws -> [HomebrewTap] {

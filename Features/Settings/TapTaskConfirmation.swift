@@ -3,30 +3,93 @@ import SwiftUI
 struct TapTaskConfirmation: View {
     let plan: HomebrewActionPlan
     let cancel: () -> Void
-    let confirm: () -> Void
+    let confirm: () async -> String?
+
+    @State private var isRunning = false
+    @State private var hasFinished = false
+    @State private var errorMessage: String?
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(plan.action == .addTap ? LocalizedStringResource("Add Homebrew Tap") : LocalizedStringResource("Remove Homebrew Tap")).font(.title2.bold())
-            if let name = plan.tapName { Text(name).font(.body.monospaced()).textSelection(.enabled) }
-            Text(plan.action == .addTap ? LocalizedStringResource("Homebrew will download this Tap’s metadata and use it as a software source.") : LocalizedStringResource("Remove this Tap’s metadata. Installed software is checked again before removal."))
-            if !plan.associatedPackages.isEmpty {
-                Text("This Tap is required by installed software and cannot be removed.")
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(plan.associatedPackages, id: \.self) { package in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(package.name).textSelection(.enabled)
-                                Text(CatalogProviderScope.homebrew(package.kind).cardTitle).foregroundStyle(.secondary)
-                            }.accessibilityElement(children: .combine)
+        MaintenanceModalFrame(
+            title: plan.action == .addTap ? LocalizedStringResource("Add Homebrew Tap") : LocalizedStringResource("Remove Homebrew Tap"),
+            systemImage: plan.action == .addTap ? "plus.circle.fill" : "minus.circle.fill",
+            tint: plan.action == .removeTap ? .red : .orange
+        ) {
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else if hasFinished {
+                Text(errorMessage == nil ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
+                    .foregroundStyle(errorMessage == nil ? .green : .orange)
+            } else if let name = plan.tapName {
+                Text(verbatim: name).font(.subheadline.monospaced()).foregroundStyle(.secondary)
+            }
+        } content: {
+            if isRunning {
+                MaintenanceLoadingState(title: LocalizedStringResource("Running"))
+            } else if hasFinished {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: errorMessage == nil ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(errorMessage == nil ? .green : .orange)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(errorMessage == nil ? LocalizedStringResource("Completed") : LocalizedStringResource("Operation Failed"))
+                            .font(.headline)
+                        if let errorMessage {
+                            Text(verbatim: errorMessage).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
                         }
-                    }.frame(maxWidth: .infinity, alignment: .leading)
-                }.frame(maxHeight: 240)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(plan.action == .addTap ? LocalizedStringResource("Homebrew will download this Tap’s metadata and use it as a software source.") : LocalizedStringResource("Remove this Tap’s metadata. Installed software is checked again before removal."))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    if !plan.associatedPackages.isEmpty {
+                        Label("This Tap is required by installed software and cannot be removed.", systemImage: "exclamationmark.triangle")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                        MaintenanceDetailWell(maxHeight: 200) {
+                            LazyVStack(alignment: .leading, spacing: 8) {
+                                ForEach(plan.associatedPackages, id: \.self) { package in
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(package.name).textSelection(.enabled)
+                                        Text(CatalogProviderScope.homebrew(package.kind).cardTitle).font(.caption).foregroundStyle(.secondary)
+                                    }.accessibilityElement(children: .combine)
+                                }
+                            }
+                        }
+                    }
+                }
             }
-            HStack {
-                Spacer()
+        } footer: {
+            Spacer()
+            if isRunning {
+                Text("Running").foregroundStyle(.secondary)
+            } else if hasFinished {
+                Button("OK", action: cancel)
+                    .buttonStyle(.glassProminent)
+                    .tint(.blue)
+                    .keyboardShortcut(.defaultAction)
+            } else {
                 Button("Cancel", role: .cancel, action: cancel).keyboardShortcut(.cancelAction)
-                Button(role: plan.action == .removeTap ? .destructive : nil) { confirm() } label: { Text(plan.action == .addTap ? LocalizedStringResource("Add Tap") : LocalizedStringResource("Remove Tap")) }.disabled(!plan.canExecute)
+                Button(role: plan.action == .removeTap ? .destructive : nil) {
+                    guard !isRunning else { return }
+                    isRunning = true
+                    Task {
+                        errorMessage = await confirm()
+                        isRunning = false
+                        hasFinished = true
+                    }
+                } label: {
+                    Text(plan.action == .addTap ? LocalizedStringResource("Add Tap") : LocalizedStringResource("Remove Tap"))
+                }
+                .buttonStyle(.glassProminent)
+                .tint(plan.action == .removeTap ? .red : .blue)
+                .disabled(!plan.canExecute)
             }
-        }.padding(24).constrainedSheetWidth(500)
+        }
+        .interactiveDismissDisabled(isRunning)
     }
 }

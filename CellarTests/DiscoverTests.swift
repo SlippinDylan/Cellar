@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import Cellar
 
@@ -247,6 +248,8 @@ final class DiscoverTests: XCTestCase {
         XCTAssertEqual(model.state, .nodeRequired)
         await model.search("one", scope: .npm, context: .init(homebrewAvailable: true, npm: nil, nodeAvailable: true))
         XCTAssertEqual(model.state, .registryRequired)
+        await model.search("one", scope: .npm, context: .init(homebrewAvailable: true, npm: nil, nodeAvailable: true, registryAvailable: true))
+        XCTAssertEqual(model.state, .nodeRequired)
         await model.search("one", scope: .homebrewFormula, context: available, limit: 101)
         XCTAssertEqual(model.state, .failed)
         await model.search(String(repeating: "x", count: 513), scope: .homebrewFormula, context: available)
@@ -338,6 +341,44 @@ final class DiscoverTests: XCTestCase {
         let formula = DiscoverResult.homebrew(package).card(homebrew: nil, node: nil, activeIntent: nil, running: nil, canInstall: true)
         XCTAssertEqual(formula.websiteURL?.absoluteString, "https://formulae.brew.sh/formula/one")
         XCTAssertEqual(formula.description, "Fixture")
+    }
+
+    func testHomebrewCardUsesAuthoritativeOutdatedVersionsAndPreservesUnknownFailures() throws {
+        let package = HomebrewPackage(identity: .init(name: "one", kind: .cask), displayName: "One", description: nil,
+                                      homepage: nil, installedVersions: ["custom-old"], currentVersion: "custom-catalog",
+                                      tap: nil, dependencies: [], pinned: false, deprecated: false, disabled: false, artifacts: [],
+                                      detectedAppVersion: "custom-detected")
+        for hasOutdated in [false, true] {
+            for failed in [false, true] {
+                let snapshot = HomebrewSnapshot(executablePath: "/fake/brew", version: "5.0.0",
+                                               configuration: .init(prefix: "", repository: "", cache: "", cellar: "", values: [:]),
+                                               packages: [package], outdatedPackages: hasOutdated ? [.init(identity: package.identity, installedVersions: package.installedVersions, currentVersion: "custom-latest")] : [],
+                                               taps: [], sectionErrors: failed ? [.outdated: "fixture unavailable"] : [:],
+                                               controlledPath: "", commandLineToolsAvailable: true)
+                let card = DiscoverResult.homebrew(package).card(homebrew: snapshot, node: nil, activeIntent: nil, running: nil, canInstall: true)
+                let library = try XCTUnwrap(LibraryCatalog.cards(homebrew: snapshot, node: nil, homebrewUpdates: .available, nodeUpdates: .notLoaded).first)
+                XCTAssertEqual(card.currentVersion, library.currentVersion)
+                XCTAssertEqual(card.availableVersion, library.availableVersion)
+                XCTAssertEqual(card.versionStatus, library.versionStatus)
+                XCTAssertEqual(card.versionStatus, failed ? .unknown : hasOutdated ? .behind : .unknown)
+                XCTAssertEqual(card.currentVersion, hasOutdated ? "custom-old" : "custom-detected")
+                XCTAssertEqual(card.availableVersion, hasOutdated ? "custom-latest" : "custom-catalog")
+            }
+        }
+    }
+
+    func testQueuedInstallFailureIsReportedAfterChangingPage() async throws {
+        let model = fixtureModel(FakeBatchProvider(failingNames: ["one"]))
+        let installation = DiscoverInstallationModel(model: model)
+        let reported = expectation(description: "queued install failure reaches app model")
+        let observation = model.$queuedBatchFailureMessage.compactMap { $0 }.sink { _ in reported.fulfill() }
+        defer { observation.cancel() }
+        let card = npmResult("one").card(homebrew: nil, node: model.node, activeIntent: nil, running: nil, canInstall: true)
+        installation.enqueueInstall(card, context: model.discoverContext)
+        model.selectedDestination = .home
+        await fulfillment(of: [reported], timeout: 3)
+        XCTAssertTrue(try XCTUnwrap(model.queuedBatchFailureMessage).hasPrefix("one: "))
+        XCTAssertFalse(installation.isQueueActive)
     }
 
     func testBatchPreviewHasNoMutationAndConfirmationIsConsumedOnce() async throws {

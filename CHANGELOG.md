@@ -4,6 +4,19 @@ All notable user-facing changes to Cellar are documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0-beta.3] - 2026-11-27
+
+### Improved
+
+- Aligned modal body content, omitted empty footers on loading sheets, replaced plain-text running footers with disabled action buttons, and removed the redundant box wrapper on clean npm cache verification results.
+- Redesigned the Batch Install sheet with a taller package editor, a top-right header progress counter, the sequential execution note below the item grid, zero-jump in-place status transitions, and preserved npm context through execution and results.
+- Redesigned the Uninstall sheet into a narrower 500pt vertical header layout with grouped Cask removal sections, shortened SHA-256 download cache names with parent directories, full-width warnings, and stable footer buttons.
+
+### Fixed
+
+- Fixed preparing global npm package uninstalls when the bundled manager reports `alreadyInstalled: true`.
+- Animated the toolbar refresh indicator during initial and background Library update checks.
+
 ## [0.1.0-beta.2] - 2026-11-27
 
 ### Improved
